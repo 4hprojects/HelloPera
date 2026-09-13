@@ -62,6 +62,12 @@ GitHub Actions — is HTTP-shaped and would hit exactly this. So
 `run_recurring_generation()` takes, holds and releases the lock inside one
 function body.
 
+The lock key is also **per-user for a scoped run** and global only for the
+scheduled one. The lazy check (§19) runs a user-scoped generation on every
+`/forecast` load; had it taken the global key, one user opening the page would
+make every other user's on-load generation skip — contention over work that
+never overlaps, since the two runs touch different rows entirely.
+
 Worth keeping in view: **the lock is not what makes generation correct.** §65
 is explicit that the unique constraints are the guarantee and the lock is the
 optimisation. If the lock were lost entirely, two concurrent runs would still

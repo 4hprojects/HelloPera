@@ -164,6 +164,12 @@ set search_path = ''
 as $$
 declare
   v_job_type    text := 'recurring_generation';
+  -- The lock key is per-user for a scoped run and global for the scheduled
+  -- one. Without this, one user opening /forecast would take the same lock the
+  -- hourly job uses, and every other user's on-load generation in that moment
+  -- would skip — a lock contending on work that never overlaps, since the two
+  -- runs touch different rows.
+  v_lock_key    text;
   v_job_id      uuid;
   v_rule        record;
   v_today       date;
@@ -181,7 +187,12 @@ declare
 begin
   -- §20a — skip silently when another run owns this job type. Not an error:
   -- the schedule firing over a slow run is expected, not exceptional.
-  if not pg_try_advisory_lock(hashtext(v_job_type)) then
+  v_lock_key := case
+                  when p_user_id is null then v_job_type
+                  else v_job_type || ':' || p_user_id::text
+                end;
+
+  if not pg_try_advisory_lock(hashtext(v_lock_key)) then
     return jsonb_build_object('skipped', true, 'reason', 'locked');
   end if;
 
@@ -271,7 +282,7 @@ begin
                         )
    where id = v_job_id;
 
-  perform pg_advisory_unlock(hashtext(v_job_type));
+  perform pg_advisory_unlock(hashtext(v_lock_key));
 
   return jsonb_build_object(
     'job_id', v_job_id, 'status', v_status, 'rules', v_rules,
