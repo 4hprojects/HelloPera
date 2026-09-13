@@ -7,6 +7,7 @@ import { AccountBalances } from '@/components/dashboard/account-balances';
 import { CashFlowSummary } from '@/components/dashboard/cash-flow-summary';
 import { ExpectedIncomeSummary } from '@/components/dashboard/expected-income-summary';
 import { FinancialOverview } from '@/components/dashboard/financial-overview';
+import { ForecastCard } from '@/components/dashboard/forecast-card';
 import {
   ENCOURAGEMENTS,
   greetingFor,
@@ -25,6 +26,7 @@ import { EmptyState } from '@/components/ui/states';
 import { requireUser } from '@/lib/auth/guards';
 import { parseDashboardParams } from '@/schemas/analytics.schema';
 import { getDashboardData } from '@/services/dashboard.service';
+import { getProjectedBalance } from '@/services/forecast.service';
 
 export const metadata: Metadata = { title: 'Dashboard' };
 
@@ -55,6 +57,12 @@ export default async function DashboardPage({
     preferredCurrency: profile.default_currency,
     trendMonths: trend,
   });
+
+  // §52 — one lightweight number, fetched separately so the dashboard does not
+  // pay for a timeline it will not draw. Null when the user holds no liquid
+  // account in their default currency, in which case there is nothing to
+  // project and the card is simply not shown.
+  const projected = await getProjectedBalance(data.today, data.primary.currency);
 
   const firstName = profile.full_name?.split(' ')[0] ?? null;
   const hour = Number(
@@ -101,6 +109,10 @@ export default async function DashboardPage({
             <AccountBalances accounts={data.accounts} total={data.accountTotal} />
             <CashFlowSummary slice={primary} />
           </div>
+
+          {projected ? (
+            <ForecastCard opening={projected.opening} closing={projected.closing} />
+          ) : null}
 
           <MonthlyTrendChart
             points={primary.trend}

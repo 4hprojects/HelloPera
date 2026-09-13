@@ -33,6 +33,8 @@ export const appNav: NavItem[] = [
   { label: 'Receivables', href: '/receivables', icon: 'receivables' },
   { label: 'Expected income', href: '/expected-income', icon: 'calendar' },
   { label: 'Documents', href: '/documents', icon: 'documents' },
+  { label: 'Recurring', href: '/recurring', icon: 'calendar' },
+  { label: 'Forecast', href: '/forecast', icon: 'analytics' },
   { label: 'Analytics', href: '/analytics', icon: 'analytics' },
   { label: 'Settings', href: '/settings', icon: 'settings' },
 ];
