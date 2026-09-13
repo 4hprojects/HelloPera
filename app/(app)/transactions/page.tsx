@@ -1,0 +1,200 @@
+import type { Metadata } from 'next';
+import Link from 'next/link';
+import { Amount } from '@/components/finance/amount';
+import { Badge } from '@/components/ui/badge';
+import { Card } from '@/components/ui/card';
+import { PageHeader } from '@/components/ui/page-header';
+import { EmptyState } from '@/components/ui/states';
+import { requireUser } from '@/lib/auth/guards';
+import {
+  transactionFilterSchema,
+  type TransactionFilter,
+} from '@/schemas/finance.schema';
+import { listAccounts } from '@/services/account.service';
+import { listTransactions } from '@/services/transaction.service';
+import { TRANSACTION_TYPES } from '@/lib/finance/types';
+import { buttonClass } from '@/components/ui/button';
+
+export const metadata: Metadata = { title: 'Transactions' };
+
+const TYPE_LABELS: Record<string, string> = {
+  income: 'Income',
+  expense: 'Expense',
+  transfer: 'Transfer',
+  refund: 'Refund',
+  adjustment: 'Adjustment',
+  opening_balance: 'Opening balance',
+};
+
+export default async function TransactionsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | undefined>>;
+}) {
+  await requireUser();
+  const raw = await searchParams;
+
+  // Invalid filters fall back to defaults rather than erroring — a bad URL
+  // should not be a dead end.
+  const parsed = transactionFilterSchema.safeParse(raw);
+  const filter = parsed.success ? parsed.data : transactionFilterSchema.parse({});
+
+  const [{ transactions, total, page, pageCount }, accounts] = await Promise.all([
+    listTransactions(filter),
+    listAccounts({ includeArchived: true }),
+  ]);
+  const accountName = new Map(accounts.map((a) => [a.id, a.name]));
+
+  return (
+    <div className="mx-auto max-w-5xl">
+      <PageHeader
+        title="Transactions"
+        description={total === 1 ? '1 transaction' : `${total} transactions`}
+        actions={
+          <Link href="/transactions/new" className={buttonClass('primary', 'sm')}>
+            Add
+          </Link>
+        }
+      />
+
+      <form className="mb-4 flex flex-wrap gap-2" method="get">
+        <select
+          name="type"
+          defaultValue={filter.type ?? ''}
+          className="rounded-[var(--radius-hp)] border border-border-strong bg-surface px-3 py-2 text-sm text-text"
+          aria-label="Transaction type"
+        >
+          <option value="">All types</option>
+          {TRANSACTION_TYPES.map((t) => (
+            <option key={t} value={t}>
+              {TYPE_LABELS[t]}
+            </option>
+          ))}
+        </select>
+        <select
+          name="accountId"
+          defaultValue={filter.accountId ?? ''}
+          className="rounded-[var(--radius-hp)] border border-border-strong bg-surface px-3 py-2 text-sm text-text"
+          aria-label="Account"
+        >
+          <option value="">All accounts</option>
+          {accounts.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+            </option>
+          ))}
+        </select>
+        <input
+          type="search"
+          name="search"
+          defaultValue={filter.search ?? ''}
+          placeholder="Search merchant or note"
+          className="min-w-0 flex-1 rounded-[var(--radius-hp)] border border-border-strong bg-surface px-3 py-2 text-sm text-text"
+          aria-label="Search transactions"
+        />
+        <button
+          type="submit"
+          className="rounded-[var(--radius-hp)] border border-border-strong px-3 py-2 text-sm font-medium text-text"
+        >
+          Filter
+        </button>
+      </form>
+
+      {transactions.length === 0 ? (
+        <EmptyState
+          title="No transactions found"
+          description={
+            total === 0
+              ? 'Record your first income, expense or transfer.'
+              : 'No transactions match these filters.'
+          }
+        />
+      ) : (
+        <ul className="space-y-2">
+          {transactions.map((tx) => {
+            const account =
+              accountName.get(tx.source_account_id ?? '') ??
+              accountName.get(tx.destination_account_id ?? '') ??
+              '';
+            const voided = tx.status === 'voided';
+            return (
+              <li key={tx.id}>
+                <Card className={voided ? 'opacity-60' : undefined}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate font-medium text-text">
+                        {tx.merchant_name ?? tx.description ?? TYPE_LABELS[tx.type]}
+                      </p>
+                      <p className="hp-small text-text-muted">
+                        {tx.transaction_date}
+                        {account ? ` · ${account}` : ''} · {TYPE_LABELS[tx.type]}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {/* Voided is stated in words, not only by dimming. */}
+                      {voided ? <Badge tone="neutral">Voided</Badge> : null}
+                      <Amount
+                        value={tx.amount}
+                        tone={voided ? 'neutral' : tx.analytics}
+                        showSign={!voided && tx.analytics !== 'neutral'}
+                      />
+                    </div>
+                  </div>
+                </Card>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {pageCount > 1 ? (
+        <nav className="mt-4 flex items-center justify-between" aria-label="Pagination">
+          <span className="hp-small text-text-muted">
+            Page {page} of {pageCount}
+          </span>
+          <div className="flex gap-2">
+            {page > 1 ? (
+              <Link
+                href={pageHref(filter, page - 1)}
+                className="rounded-[var(--radius-hp)] border border-border-strong px-3 py-2 text-sm text-text"
+              >
+                Previous
+              </Link>
+            ) : null}
+            {page < pageCount ? (
+              <Link
+                href={pageHref(filter, page + 1)}
+                className="rounded-[var(--radius-hp)] border border-border-strong px-3 py-2 text-sm text-text"
+              >
+                Next
+              </Link>
+            ) : null}
+          </div>
+        </nav>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * A page link that keeps the active filters.
+ *
+ * These used to be a bare `?page=N`, which silently dropped the type, account,
+ * date range and search on every page change — so page 2 of a filtered list
+ * was page 2 of everything. The analytics page links in here with filters
+ * attached, which makes that far more visible.
+ */
+function pageHref(filter: TransactionFilter, page: number): string {
+  const params = new URLSearchParams();
+  if (filter.from) params.set('from', filter.from);
+  if (filter.to) params.set('to', filter.to);
+  if (filter.type) params.set('type', filter.type);
+  if (filter.accountId) params.set('accountId', filter.accountId);
+  if (filter.categoryId) params.set('categoryId', filter.categoryId);
+  if (filter.search) params.set('search', filter.search);
+  if (filter.sort !== 'newest') params.set('sort', filter.sort);
+  if (page > 1) params.set('page', String(page));
+
+  const query = params.toString();
+  return query ? `/transactions?${query}` : '/transactions';
+}

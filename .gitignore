@@ -1,0 +1,51 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Next.js build output
+.next/
+out/
+build/
+dist/
+
+# Production
+*.tsbuildinfo
+next-env.d.ts
+
+# Environment — never commit real secrets.
+# Ignore every .env variant, then allow the example back in.
+# The catch-all matters: backups like .env.backup-20260913 and editor
+# saves like .env.save would otherwise slip past a fixed list.
+.env*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Testing
+coverage/
+.nyc_output/
+
+# Temporary upload/processing scratch space
+tmp/
+temp/
+uploads/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# Supabase local tooling
+.branches
+.temp
+supabase/.temp/
+.gstack/

@@ -1,0 +1,407 @@
+@import 'tailwindcss';
+
+/* ===========================================================================
+   HelloPera Jade — design tokens
+   ---------------------------------------------------------------------------
+   One set of semantic names, redefined per theme. Components never reference
+   a theme; they reference a role. See docs/PHASE-00-PROJECT-FOUNDATION.md §7.
+
+   Three families of colour:
+     --hp-{role}        fills, borders, chart marks, large display figures
+     --hp-{role}-text   text and solid button fills — all >= 4.5:1 on every
+                        surface they are used on, WCAG 2.2 AA
+     --hp-tint-{role}   the pale pill/chip ground behind a -text colour
+
+   The showcase (docs/HelloPera Finance UI Showcase.png) paints small labels
+   in the raw brand hexes — "2.5% from last month" in Success #2E9B62 is
+   3.51:1 on white, "3 due this month" in Gold #C9963E is 2.65:1. Those are
+   amounts and deltas, the text a finance app exists to be read for, so the
+   -text variants carry the same hues at readable weight. Fills, chart marks,
+   chips and illustrations keep the brand hexes exactly.
+
+   Every ratio in this file is measured, not estimated.
+   =========================================================================== */
+
+:root {
+  color-scheme: light;
+
+  /* surfaces */
+  --hp-background: #f4f8f7;
+  --hp-surface: #ffffff;
+  --hp-surface-muted: #eaf1ef;
+  --hp-sand: #f3e7d3;
+  --hp-border: #d9e4e1;
+  --hp-border-strong: #bcccc8;
+
+  /* brand — fills, borders, chart marks */
+  --hp-primary: #138a72;
+  --hp-primary-soft: #45c2a5;
+  --hp-gold: #c9963e;
+  --hp-success: #2e9b62;
+  --hp-warning: #d58a34;
+  --hp-danger: #c94f5c;
+
+  /* Tints — chip, badge and icon-well grounds. Each pairs with the -text
+     colour of the same name; ratios on the tint are in the block below. */
+  --hp-tint-primary: #e3f3ee;
+  --hp-tint-success: #e5f4ec;
+  --hp-tint-warning: #fbeedd;
+  --hp-tint-danger: #fbe9eb;
+  --hp-tint-gold: #f8efdc;
+  --hp-tint-ink: #e9eef4;
+
+  /* text — first ratio is on --hp-background, second on its own tint */
+  --hp-text: #132238; /* 14.93  |  7.74 on ink */
+  --hp-text-muted: #647080; /*  4.70 */
+  --hp-primary-text: #107a66; /*  4.91  |  4.58 */
+  --hp-success-text: #217a4b; /*  4.97  |  4.68 */
+  --hp-warning-text: #96600f; /*  4.93  |  4.62 */
+  --hp-danger-text: #b8404e; /*  5.05  |  4.63 */
+  --hp-gold-text: #8a6413; /*  5.01  |  4.70 */
+  --hp-ink-text: #3c4a5c; /*  7.35  |  7.74 */
+
+  /* solid fills carrying white labels */
+  --hp-primary-fill: #107a66; /* white on it: 5.25:1 */
+  --hp-on-primary: #ffffff;
+
+  /* Secondary button — soft jade ground, jade label at 4.56:1. */
+  --hp-primary-wash: #e0f3ed;
+
+  /* Illustrated surfaces. The hero's ridges and the sand promo panel are
+     their own grounds, so their foregrounds are measured against the
+     composited illustration, not against --hp-background.
+
+     In light theme the ridges darken the sky; in dark theme they deepen it —
+     that flip is deliberate, and it is what keeps one text colour readable
+     across every band. Worst measured case: 6.27 light, 12.05 dark. */
+  --hp-hero-band: #138a72;
+  --hp-on-hero: #0e2a22; /* 6.27 at the lightest band */
+  --hp-on-hero-muted: #123c31; /* 5.02 */
+  --hp-on-sand: #3d3222; /* 10.24 on --hp-sand */
+  --hp-on-sand-accent: #0d6857; /* 5.48 on --hp-sand */
+
+  /* Dark navigation rail — Deep Ink, as the showcase draws it. */
+  --hp-nav: #132238;
+  --hp-nav-raised: #1d3350;
+  --hp-nav-border: #243b57;
+  --hp-nav-text: #e8eef4; /* 13.68 on the rail */
+  --hp-nav-muted: #9fb0c2; /*  7.20 on the rail, 5.76 raised */
+  --hp-nav-active: #107a66; /* white label on it: 5.25 */
+
+  /* Chart series — graphical marks, each >= 3:1 on --hp-surface so the
+     shape is distinguishable without relying on the legend swatch. */
+  --hp-chart-1: #138a72; /* 4.28 */
+  --hp-chart-2: #c94f5c; /* 4.42 */
+  --hp-chart-3: #3f77b8; /* 4.62 */
+  --hp-chart-4: #c07d1e; /* 3.39 */
+  --hp-chart-5: #7a5fb5; /* 5.08 */
+  --hp-chart-6: #5d6b78; /* 5.47 */
+  --hp-chart-grid: #e2eae8;
+
+  --hp-focus: #107a66;
+  --hp-radius: 0.75rem;
+}
+
+/* Explicit dark choice wins in both directions. */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --hp-background: #0b1420;
+  --hp-surface: #142235;
+  --hp-surface-muted: #1b2b41;
+  --hp-sand: #2a2418;
+  --hp-border: #24364e;
+  --hp-border-strong: #34495f;
+
+  --hp-primary: #2cb89a;
+  --hp-primary-soft: #63d2b8;
+  --hp-gold: #d8a857;
+  --hp-success: #4fc285;
+  --hp-warning: #e0a253;
+  --hp-danger: #e8697a;
+
+  --hp-tint-primary: #12332f;
+  --hp-tint-success: #123328;
+  --hp-tint-warning: #33281a;
+  --hp-tint-danger: #331d21;
+  --hp-tint-gold: #302819;
+  --hp-tint-ink: #1e2c3f;
+
+  /* first ratio on --hp-background, second on its own tint */
+  --hp-text: #f5f7f8; /* 17.22 */
+  --hp-text-muted: #98a5b3; /*  7.37  |  5.63 */
+  --hp-primary-text: #2cb89a; /*  7.43  |  5.47 */
+  --hp-success-text: #4fc285; /*  8.27  |  6.14 */
+  --hp-warning-text: #e0a253; /*  8.34  |  6.48 */
+  --hp-danger-text: #e8697a; /*  5.93  |  5.03 */
+  --hp-gold-text: #d8a857; /*  8.51  |  6.69 */
+  --hp-ink-text: #98a5b3; /*  7.37  |  5.63 */
+
+  --hp-primary-fill: #2cb89a;
+  --hp-on-primary: #06121b;
+  --hp-primary-wash: #12332f;
+
+  --hp-hero-band: #02120f;
+  --hp-on-hero: #e6f4f0; /* 12.05 at the lightest band */
+  --hp-on-hero-muted: #bcd8d1;
+  --hp-on-sand: #ece0cb; /* 11.80 on --hp-sand */
+  --hp-on-sand-accent: #45c2a5; /*  6.97 */
+
+  --hp-nav: #0f1c2e;
+  --hp-nav-raised: #1b2d45;
+  --hp-nav-border: #22374f;
+  --hp-nav-text: #e8eef4;
+  --hp-nav-muted: #9fb0c2;
+  --hp-nav-active: #2cb89a;
+
+  --hp-chart-1: #2cb89a; /* 6.44 on --hp-surface */
+  --hp-chart-2: #e8697a; /* 5.14 */
+  --hp-chart-3: #6ba4e8; /* 6.18 */
+  --hp-chart-4: #e0a253; /* 7.22 */
+  --hp-chart-5: #a98ce0; /* 5.74 */
+  --hp-chart-6: #8b9aa9; /* 5.57 */
+  --hp-chart-grid: #24364e;
+
+  --hp-focus: #63d2b8;
+}
+
+/* System preference, only when no explicit choice has been made. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+
+    --hp-background: #0b1420;
+    --hp-surface: #142235;
+    --hp-surface-muted: #1b2b41;
+    --hp-sand: #2a2418;
+    --hp-border: #24364e;
+    --hp-border-strong: #34495f;
+
+    --hp-primary: #2cb89a;
+    --hp-primary-soft: #63d2b8;
+    --hp-gold: #d8a857;
+    --hp-success: #4fc285;
+    --hp-warning: #e0a253;
+    --hp-danger: #e8697a;
+
+    --hp-tint-primary: #12332f;
+    --hp-tint-success: #123328;
+    --hp-tint-warning: #33281a;
+    --hp-tint-danger: #331d21;
+    --hp-tint-gold: #302819;
+    --hp-tint-ink: #1e2c3f;
+
+    --hp-text: #f5f7f8;
+    --hp-text-muted: #98a5b3;
+    --hp-primary-text: #2cb89a;
+    --hp-success-text: #4fc285;
+    --hp-warning-text: #e0a253;
+    --hp-danger-text: #e8697a;
+    --hp-gold-text: #d8a857;
+    --hp-ink-text: #98a5b3;
+
+    --hp-primary-fill: #2cb89a;
+    --hp-on-primary: #06121b;
+    --hp-primary-wash: #12332f;
+
+    --hp-hero-band: #02120f;
+    --hp-on-hero: #e6f4f0;
+    --hp-on-hero-muted: #bcd8d1;
+    --hp-on-sand: #ece0cb;
+    --hp-on-sand-accent: #45c2a5;
+
+    --hp-nav: #0f1c2e;
+    --hp-nav-raised: #1b2d45;
+    --hp-nav-border: #22374f;
+    --hp-nav-text: #e8eef4;
+    --hp-nav-muted: #9fb0c2;
+    --hp-nav-active: #2cb89a;
+
+    --hp-chart-1: #2cb89a;
+    --hp-chart-2: #e8697a;
+    --hp-chart-3: #6ba4e8;
+    --hp-chart-4: #e0a253;
+    --hp-chart-5: #a98ce0;
+    --hp-chart-6: #8b9aa9;
+    --hp-chart-grid: #24364e;
+
+    --hp-focus: #63d2b8;
+  }
+}
+
+/* Expose tokens to Tailwind. `inline` keeps the var reference so utilities
+   follow the theme at runtime rather than baking in a value at build time. */
+@theme inline {
+  --color-background: var(--hp-background);
+  --color-surface: var(--hp-surface);
+  --color-surface-muted: var(--hp-surface-muted);
+  --color-sand: var(--hp-sand);
+  --color-border: var(--hp-border);
+  --color-border-strong: var(--hp-border-strong);
+
+  --color-primary: var(--hp-primary);
+  --color-primary-soft: var(--hp-primary-soft);
+  --color-gold: var(--hp-gold);
+  --color-success: var(--hp-success);
+  --color-warning: var(--hp-warning);
+  --color-danger: var(--hp-danger);
+
+  --color-tint-primary: var(--hp-tint-primary);
+  --color-tint-success: var(--hp-tint-success);
+  --color-tint-warning: var(--hp-tint-warning);
+  --color-tint-danger: var(--hp-tint-danger);
+  --color-tint-gold: var(--hp-tint-gold);
+  --color-tint-ink: var(--hp-tint-ink);
+
+  --color-text: var(--hp-text);
+  --color-text-muted: var(--hp-text-muted);
+  --color-primary-text: var(--hp-primary-text);
+  --color-success-text: var(--hp-success-text);
+  --color-warning-text: var(--hp-warning-text);
+  --color-danger-text: var(--hp-danger-text);
+  --color-gold-text: var(--hp-gold-text);
+  --color-ink-text: var(--hp-ink-text);
+
+  --color-primary-fill: var(--hp-primary-fill);
+  --color-on-primary: var(--hp-on-primary);
+  --color-primary-wash: var(--hp-primary-wash);
+
+  --color-hero-band: var(--hp-hero-band);
+  --color-on-hero: var(--hp-on-hero);
+  --color-on-hero-muted: var(--hp-on-hero-muted);
+  --color-on-sand: var(--hp-on-sand);
+  --color-on-sand-accent: var(--hp-on-sand-accent);
+
+  --color-nav: var(--hp-nav);
+  --color-nav-raised: var(--hp-nav-raised);
+  --color-nav-border: var(--hp-nav-border);
+  --color-nav-text: var(--hp-nav-text);
+  --color-nav-muted: var(--hp-nav-muted);
+  --color-nav-active: var(--hp-nav-active);
+
+  --color-chart-1: var(--hp-chart-1);
+  --color-chart-2: var(--hp-chart-2);
+  --color-chart-3: var(--hp-chart-3);
+  --color-chart-4: var(--hp-chart-4);
+  --color-chart-5: var(--hp-chart-5);
+  --color-chart-6: var(--hp-chart-6);
+  --color-chart-grid: var(--hp-chart-grid);
+
+  --radius-hp: var(--hp-radius);
+
+  /* Plus Jakarta Sans, self-hosted by next/font (app/layout.tsx) so no
+     request leaves the origin. The stack behind it is what renders if the
+     face fails to load. */
+  --font-sans:
+    var(--font-jakarta), ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+  /* Tabular figures matter for money: columns of amounts must align. */
+  --font-mono:
+    ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+/* ===========================================================================
+   Base
+   =========================================================================== */
+
+* {
+  border-color: var(--hp-border);
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background-color: var(--hp-background);
+  color: var(--hp-text);
+  font-family: var(--font-sans);
+  /* No horizontal overflow at 320px — Phase 00 §10. */
+  overflow-x: hidden;
+}
+
+/* Visible focus everywhere, never removed. Phase 00 §27. */
+:focus-visible {
+  outline: 2px solid var(--hp-focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Respect reduced-motion rather than assuming animation is welcome. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ===========================================================================
+   Typography scale — Phase 00 §8
+   =========================================================================== */
+
+.hp-display {
+  font-size: clamp(2rem, 5vw, 2.75rem);
+  line-height: 1.1;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.hp-h1 {
+  font-size: clamp(1.5rem, 3.5vw, 2rem);
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+.hp-h2 {
+  font-size: 1.25rem;
+  line-height: 1.3;
+  font-weight: 650;
+}
+.hp-h3 {
+  font-size: 1.0625rem;
+  line-height: 1.4;
+  font-weight: 600;
+}
+.hp-body {
+  font-size: 0.9375rem;
+  line-height: 1.6;
+}
+.hp-small {
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+.hp-label {
+  font-size: 0.75rem;
+  line-height: 1.4;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Financial amounts: tabular figures so digits align in columns, and
+   never hyphenated or wrapped mid-number. */
+.hp-amount {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+  white-space: nowrap;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.hp-amount-lg {
+  font-size: clamp(1.5rem, 4vw, 2rem);
+  line-height: 1.15;
+}
+
+/* Comfortable tap targets on touch devices — Phase 00 §10. */
+@media (pointer: coarse) {
+  a,
+  button,
+  [role='button'],
+  input,
+  select {
+    min-height: 44px;
+  }
+}
