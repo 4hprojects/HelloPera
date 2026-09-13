@@ -175,18 +175,94 @@ the system cannot stand behind.
 §34 also caps what Phase 09 may sell — free 30 days, premium 90. Extending the
 horizon means editing §34 first and the entitlement second.
 
-## 12. Still unverified
+## 12. What running it actually found
 
-**The SQL has not been executed.** No local Postgres server was available while
-building this (client only, and Docker was not permitted), so
-`20260914000100_phase07_generation_orchestrator.sql` is verified by review and
-by the parity test over its logic — not by running it. `npm run db:migrate`
-against a branch or local stack is the next step, and §71's deployment checks
-stay open until then.
+The SQL was written before any database was available to run it. It was later
+executed against a real Postgres 18 (a portable server in a scratch directory,
+with `auth`, `storage` and the Supabase roles stubbed in), and that run changed
+three things.
 
-Specifically unconfirmed: whether `pg_cron` is available on this project's
-plan. §2 calls it the plan's highest-risk assumption and it remains one.
+### Verified
 
-**Cross-user isolation** for Phase 06 has a test
-(`services/analytics.integration.test.ts`) that has not been run, because it
-creates real auth users in the live project.
+- **All 13 migrations apply cleanly to a fresh database**, in order.
+- **The pg_cron guard works.** Without the extension the migration emits its
+  warning and still applies — so a plan without `pg_cron` is not blocked.
+- **The anchor rule survives the SQL port.** A bill anchored to the 31st
+  generated 31 Jan → 28 Feb → **31 Mar** → 30 Apr → 31 May. That is the whole
+  reason the module exists, now confirmed in the database rather than only in
+  TypeScript.
+- **Generation is idempotent.** Three consecutive runs left the occurrence set
+  byte-identical (`created: 0` after the first).
+- **Concurrency holds.** Two simultaneous sessions: one worked, the other
+  returned `{"skipped": true, "reason": "locked"}`.
+- **`job_runs` records every run** with status and duration, and a skipped run
+  correctly writes no row.
+- **RLS isolates users** in both directions, and `job_runs` denies the browser
+  role outright.
+
+### Found: generation invented eight overdue bills
+
+Seeding the cursor at `start_date` meant a rule whose start date was in the
+past generated its entire history on first run. A monthly bill "started
+January", created in September, produced **eight back-dated `open` bills** —
+every one of them counted as overdue on the dashboard.
+
+A user entering "Internet, monthly on the 31st, started January" is saying when
+the real subscription began. They are not asking for eight unpaid bills to be
+created behind them. `initialCursor` now starts at the first occurrence on or
+after **today**, with the start date still the anchor so month-end clamping is
+untouched. Catch-up is unaffected: the generator honours whatever the cursor
+holds, so a scheduler that has not run for three days still fills them in.
+
+This was invisible to unit tests because each one asserted its own dates; only
+running the whole job against a seeded database made the shape obvious.
+
+### Found: every SECURITY DEFINER function was callable by any browser
+
+The serious one, and it long predates Phase 07 — see
+`20260914000200_revoke_function_execute_from_public.sql`.
+
+Since Phase 02 the protective idiom has been:
+
+```sql
+revoke all on function public.create_account from anon, authenticated;
+```
+
+which does nothing. Postgres grants EXECUTE to **PUBLIC** by default, and those
+roles never held a grant of their own to revoke. Sixteen functions were
+reachable from any browser through PostgREST's `/rpc/`, and none checks
+`auth.uid()` — deliberately, because the write-path rule says only server
+actions may call them, so they take the owning `user_id` as a parameter and
+trust it.
+
+Signed in as an ordinary user, both of these succeeded:
+
+```sql
+select public.create_account('<other user>','PWNED','cash','asset','PHP',999999,null);
+select public.advance_rule_cursor('<other user rule>','2030-01-01');
+```
+
+The first created a ₱999,999 account owned by someone else. The second stopped
+another user's rule for four years.
+
+**RLS was never what failed.** These functions run as their owner, so RLS does
+not apply to them at all; EXECUTE was the only barrier, and it had never
+actually been withdrawn. A reviewer reading the migrations would see a revoke
+statement on every function and reasonably conclude they were closed.
+
+The fix revokes from `public`, grants EXECUTE back to `service_role` for the
+seven RPCs the app calls, and sets `alter default privileges` so the next
+function is not born exposed — without that last part it would be fixed once
+rather than fixed.
+
+## 13. Still unverified
+
+- **Whether `pg_cron` is available on this project's Supabase plan.** §2 calls
+  it the plan's highest-risk assumption and it remains one. The guard means a
+  plan without it still applies every migration, and the §19 lazy check keeps
+  generation correct — cron governs timeliness, not correctness.
+- **Nothing has been applied to the remote project.** The verification above
+  ran against a local throwaway database.
+- **`services/analytics.integration.test.ts` has not been run**, because it
+  creates real auth users in the live project. Its Phase 07 equivalent — RLS
+  isolation — was verified locally instead.
