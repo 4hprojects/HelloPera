@@ -55,6 +55,7 @@ export async function createAccountAction(
 
   revalidatePath('/accounts');
   revalidatePath('/dashboard');
+  revalidatePath('/analytics');
   redirect('/accounts');
 }
 
@@ -67,6 +68,7 @@ export async function archiveAccountAction(formData: FormData): Promise<void> {
   await archiveAccount(user.id, id, archived);
   revalidatePath('/accounts');
   revalidatePath('/dashboard');
+  revalidatePath('/analytics');
 }
 
 export async function createTransactionAction(
@@ -105,6 +107,7 @@ export async function createTransactionAction(
   revalidatePath('/transactions');
   revalidatePath('/accounts');
   revalidatePath('/dashboard');
+  revalidatePath('/analytics');
   redirect('/transactions?created=1');
 }
 
@@ -130,5 +133,6 @@ export async function voidTransactionAction(
   revalidatePath('/transactions');
   revalidatePath('/accounts');
   revalidatePath('/dashboard');
+  revalidatePath('/analytics');
   return { success: 'Transaction voided. It no longer affects your balances.' };
 }

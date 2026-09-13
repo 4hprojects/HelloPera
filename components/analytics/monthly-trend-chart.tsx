@@ -33,7 +33,13 @@ export function MonthlyTrendChart({
 }: {
   points: MonthlyTrendPoint[];
   currency: string;
-  months: TrendMonths;
+  /**
+   * How many months the chart actually covers. Drives the accessible caption,
+   * so it must be the real span of `points` — /analytics passes the length of
+   * its filtered range, not a fixed window. A caption that disagrees with the
+   * bars defeats the textual equivalent it exists to provide (§37).
+   */
+  months: number;
   title?: string;
   emptyLabel?: string;
   /**
@@ -97,7 +103,9 @@ export function MonthlyTrendChart({
           ]}
           formatTick={(minor) => compactMoney(minor, currency)}
           formatValue={(minor) => formatMoney(money(BigInt(Math.round(minor)), currency))}
-          caption={`Monthly income, net expenses and net cash flow in ${currency}, last ${months} months`}
+          caption={`Monthly income, net expenses and net cash flow in ${currency}, last ${months} ${
+            months === 1 ? 'month' : 'months'
+          }`}
         />
       )}
     </SectionCard>

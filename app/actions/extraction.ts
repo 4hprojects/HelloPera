@@ -162,6 +162,7 @@ export async function confirmExtractionAction(
   revalidatePath('/transactions');
   revalidatePath('/accounts');
   revalidatePath('/dashboard');
+  revalidatePath('/analytics');
   return { success: 'Saved, and the document is attached to it.' };
 }
 

@@ -98,7 +98,7 @@ export default async function AnalyticsPage({
         <MonthlyTrendChart
           points={data.trend}
           currency={data.currency}
-          months={6}
+          months={data.months.length}
           title="Trend"
           showWindows={false}
           emptyLabel={`No transactions in ${data.range.label.toLowerCase()}.`}

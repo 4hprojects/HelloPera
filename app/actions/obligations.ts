@@ -63,6 +63,7 @@ export async function createBillAction(
   }
   revalidatePath('/bills');
   revalidatePath('/dashboard');
+  revalidatePath('/analytics');
   redirect('/bills');
 }
 
@@ -91,6 +92,7 @@ export async function createReceivableAction(
   }
   revalidatePath('/receivables');
   revalidatePath('/dashboard');
+  revalidatePath('/analytics');
   redirect('/receivables');
 }
 
@@ -120,6 +122,7 @@ export async function createExpectedIncomeAction(
   }
   revalidatePath('/expected-income');
   revalidatePath('/dashboard');
+  revalidatePath('/analytics');
   redirect('/expected-income');
 }
 
@@ -199,6 +202,7 @@ export async function recordPaymentAction(
   revalidatePath('/transactions');
   revalidatePath('/accounts');
   revalidatePath('/dashboard');
+  revalidatePath('/analytics');
   return { success: 'Payment recorded.' };
 }
 
@@ -211,4 +215,5 @@ export async function cancelObligationAction(formData: FormData): Promise<void> 
   await cancelObligation(user.id, kind, id);
   revalidatePath(ROUTES[kind]);
   revalidatePath('/dashboard');
+  revalidatePath('/analytics');
 }
