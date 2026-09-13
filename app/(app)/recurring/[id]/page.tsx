@@ -11,7 +11,10 @@ import { requireUser } from '@/lib/auth/guards';
 import { todayInTimezone } from '@/lib/finance/obligation';
 import { formatMoney } from '@/lib/money';
 import { getRule } from '@/services/recurring-rule.service';
-import { listEventsForRule } from '@/services/expected-event.service';
+import {
+  findFulfilmentCandidates,
+  listEventsForRule,
+} from '@/services/expected-event.service';
 import type { RuleStatus } from '@/types/recurring';
 import type { RuleType } from '@/schemas/recurring.schema';
 
@@ -55,6 +58,24 @@ export default async function RecurringRulePage({
 
   const events = await listEventsForRule(id);
   const status = STATUS[rule.status];
+
+  // §40 — a shortlist per still-open occurrence, for manual linking. Capped at
+  // the nearest few so a long history does not fan out into dozens of queries.
+  const linkable = events.filter((e) => e.status === 'scheduled').slice(0, 6);
+  const candidates = Object.fromEntries(
+    await Promise.all(
+      linkable.map(
+        async (e) =>
+          [
+            e.id,
+            await findFulfilmentCandidates({
+              scheduledDate: e.scheduledDate,
+              amount: e.amount,
+            }),
+          ] as const,
+      ),
+    ),
+  );
 
   const generatesNatively =
     rule.ruleType === 'bill' || rule.ruleType === 'expected_income';
@@ -121,7 +142,7 @@ export default async function RecurringRulePage({
             , which then follow their normal lifecycle.
           </p>
         ) : null}
-        <OccurrenceList events={events} />
+        <OccurrenceList events={events} candidates={candidates} />
       </SectionCard>
     </div>
   );

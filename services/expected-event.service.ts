@@ -170,3 +170,70 @@ export async function setIncludeInForecast(id: string, include: boolean): Promis
 
   if (error) throw new Error(`Could not update this occurrence: ${error.code}`);
 }
+
+/**
+ * §40 — candidate transactions for manual fulfilment.
+ *
+ * "Possible hints: same amount, near scheduled date." Offered as a shortlist
+ * the user picks from, never applied automatically: §40 is explicit that
+ * nothing may auto-link without confirmation, and a wrong link silently
+ * removes a real obligation from the forecast — a failure nobody would think
+ * to look for.
+ *
+ * Ordered by closeness of amount first, then date, so the likeliest match
+ * leads. Confirmed transactions only, since a voided one moved no money.
+ */
+export async function findFulfilmentCandidates(
+  event: { scheduledDate: string; amount: { minor: bigint; currency: string } },
+  windowDays = 14,
+): Promise<Array<{ id: string; date: string; label: string; amount: string }>> {
+  const supabase = await createClient();
+
+  const shift = (days: number): string => {
+    const t = new Date(`${event.scheduledDate}T00:00:00Z`);
+    t.setUTCDate(t.getUTCDate() + days);
+    return t.toISOString().slice(0, 10);
+  };
+
+  const { data, error } = await supabase
+    .from('transactions')
+    .select(
+      'id, transaction_date, amount, currency_code, merchant_name, description, type',
+    )
+    .eq('status', 'confirmed')
+    .eq('currency_code', event.amount.currency)
+    .gte('transaction_date', shift(-windowDays))
+    .lte('transaction_date', shift(windowDays))
+    .order('transaction_date', { ascending: false })
+    .limit(50);
+
+  if (error) throw new Error(`Could not load matching transactions: ${error.code}`);
+
+  const target = event.amount.minor;
+
+  return (data ?? [])
+    .map((row) => {
+      const r = row as Row;
+      const minor = BigInt(Math.round(Number(r.amount) * 100));
+      const diff = minor > target ? minor - target : target - minor;
+      const dayGap = Math.abs(
+        (Date.parse(`${String(r.transaction_date)}T00:00:00Z`) -
+          Date.parse(`${event.scheduledDate}T00:00:00Z`)) /
+          86_400_000,
+      );
+      return {
+        id: String(r.id),
+        date: String(r.transaction_date),
+        label:
+          str(r.merchant_name) ??
+          str(r.description) ??
+          `${String(r.type)} on ${String(r.transaction_date)}`,
+        amount: String(r.amount),
+        diff,
+        dayGap,
+      };
+    })
+    .sort((a, b) => (a.diff === b.diff ? a.dayGap - b.dayGap : a.diff < b.diff ? -1 : 1))
+    .slice(0, 8)
+    .map(({ id, date, label, amount }) => ({ id, date, label, amount }));
+}

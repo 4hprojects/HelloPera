@@ -27,7 +27,16 @@ const STATUS: Record<
  * distinction §42 insists on keeping: skip one, pause the rule, end the rule
  * are three different intentions.
  */
-export function OccurrenceList({ events }: { events: ExpectedEvent[] }) {
+export type Candidate = { id: string; date: string; label: string; amount: string };
+
+export function OccurrenceList({
+  events,
+  candidates = {},
+}: {
+  events: ExpectedEvent[];
+  /** §40 — shortlisted transactions per event id, for manual linking. */
+  candidates?: Record<string, Candidate[]>;
+}) {
   const [state, action, pending] = useActionState(expectedEventAction, initial);
 
   if (!events.length) {
@@ -45,43 +54,101 @@ export function OccurrenceList({ events }: { events: ExpectedEvent[] }) {
           const status = STATUS[event.status];
           const canAct = event.status === 'scheduled';
 
+          const matches = candidates[event.id] ?? [];
+
           return (
-            <li key={event.id} className="flex items-center justify-between gap-3 py-3">
-              <div className="min-w-0">
-                <p className="hp-body font-medium text-text">{event.scheduledDate}</p>
-                <p className="mt-0.5 text-xs text-text-muted">
-                  {formatMoney(event.amount)}
-                  {!event.includeInForecast && canAct ? ' · not in forecast' : ''}
-                  {event.detachedFromRule ? ' · edited' : ''}
-                </p>
+            <li key={event.id} className="py-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="hp-body font-medium text-text">{event.scheduledDate}</p>
+                  <p className="mt-0.5 text-xs text-text-muted">
+                    {formatMoney(event.amount)}
+                    {!event.includeInForecast && canAct ? ' · not in forecast' : ''}
+                    {event.detachedFromRule ? ' · edited' : ''}
+                  </p>
+                </div>
+
+                <div className="flex shrink-0 items-center gap-2">
+                  <Badge tone={status.tone}>{status.label}</Badge>
+
+                  {canAct ? (
+                    <>
+                      <form action={action}>
+                        <input type="hidden" name="id" value={event.id} />
+                        <input
+                          type="hidden"
+                          name="action"
+                          value={event.includeInForecast ? 'exclude' : 'include'}
+                        />
+                        <Button
+                          type="submit"
+                          variant="ghost"
+                          size="sm"
+                          disabled={pending}
+                        >
+                          {event.includeInForecast ? 'Exclude' : 'Include'}
+                        </Button>
+                      </form>
+                      <form action={action}>
+                        <input type="hidden" name="id" value={event.id} />
+                        <input type="hidden" name="action" value="skip" />
+                        <Button
+                          type="submit"
+                          variant="ghost"
+                          size="sm"
+                          disabled={pending}
+                        >
+                          Skip
+                        </Button>
+                      </form>
+                      <form action={action}>
+                        <input type="hidden" name="id" value={event.id} />
+                        <input type="hidden" name="action" value="cancel" />
+                        <Button
+                          type="submit"
+                          variant="ghost"
+                          size="sm"
+                          disabled={pending}
+                        >
+                          Cancel
+                        </Button>
+                      </form>
+                    </>
+                  ) : null}
+                </div>
               </div>
 
-              <div className="flex shrink-0 items-center gap-2">
-                <Badge tone={status.tone}>{status.label}</Badge>
-
-                {canAct ? (
-                  <>
-                    <form action={action}>
-                      <input type="hidden" name="id" value={event.id} />
-                      <input
-                        type="hidden"
-                        name="action"
-                        value={event.includeInForecast ? 'exclude' : 'include'}
-                      />
-                      <Button type="submit" variant="ghost" size="sm" disabled={pending}>
-                        {event.includeInForecast ? 'Exclude' : 'Include'}
-                      </Button>
-                    </form>
-                    <form action={action}>
-                      <input type="hidden" name="id" value={event.id} />
-                      <input type="hidden" name="action" value="skip" />
-                      <Button type="submit" variant="ghost" size="sm" disabled={pending}>
-                        Skip
-                      </Button>
-                    </form>
-                  </>
-                ) : null}
-              </div>
+              {/*
+                §39, §40 — manual linking only. The shortlist is ordered by
+                closest amount then nearest date, but nothing is applied until
+                the user picks: a wrong link silently removes a real obligation
+                from the forecast.
+              */}
+              {canAct && matches.length ? (
+                <form action={action} className="mt-2 flex flex-wrap items-center gap-2">
+                  <input type="hidden" name="id" value={event.id} />
+                  <input type="hidden" name="action" value="fulfill" />
+                  <label htmlFor={`tx-${event.id}`} className="hp-small text-text-muted">
+                    Already recorded?
+                  </label>
+                  <select
+                    id={`tx-${event.id}`}
+                    name="transactionId"
+                    defaultValue=""
+                    className="rounded-[var(--radius-hp)] border border-border-strong bg-surface px-2 py-1.5 text-xs text-text"
+                  >
+                    <option value="">Choose the transaction…</option>
+                    {matches.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.date} · {c.label} · {c.amount}
+                      </option>
+                    ))}
+                  </select>
+                  <Button type="submit" variant="ghost" size="sm" disabled={pending}>
+                    Link
+                  </Button>
+                </form>
+              ) : null}
             </li>
           );
         })}
