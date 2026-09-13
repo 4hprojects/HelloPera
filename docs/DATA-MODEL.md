@@ -347,11 +347,11 @@ day (31st → Feb 28/29).
 
 ```text
 id, user_id, recurring_rule_id, event_type, name, amount, currency_code,
-scheduled_date, status, include_in_forecast, detached_from_rule,
-source_entity_type, source_entity_id, actual_transaction_id,
-created_at, updated_at
+scheduled_date, status, account_id, category_id, include_in_forecast,
+detached_from_rule, source_entity_type, source_entity_id,
+actual_transaction_id, created_at, updated_at
 
-unique (recurring_rule_id, scheduled_date)
+unique (recurring_rule_id, scheduled_date) where recurring_rule_id is not null
 ```
 
 `status`: `scheduled` \| `fulfilled` \| `skipped` \| `cancelled`
@@ -362,6 +362,16 @@ instead, keyed by `(recurring_rule_id, occurrence_date)`.
 
 `detached_from_rule` protects a user's manual edit from being overwritten by
 the next regeneration.
+
+`source_entity_type` is `bill` \| `expected_income` \| `transaction`, naming
+the table a materialised event lives in. A row is `fulfilled` if and only if
+`actual_transaction_id` is set — enforced as a cross-field check, so the two
+cannot disagree.
+
+There is no `overdue` status: like Phase 03's obligations, lateness is derived
+at read time. Storing it would need a daily job whose only purpose is
+refreshing a label, and between runs the label would be wrong exactly when it
+matters.
 
 ### `job_runs` — operational
 
@@ -378,6 +388,35 @@ Job types: `recurring_generation` (P07), `notification_generation`,
 
 Not user-owned and not browser-readable. Each job takes
 `pg_try_advisory_lock(hashtext(job_type))` so concurrent runs cannot overlap.
+
+### Generation functions — Phase 07
+
+```text
+occurrence_at(frequency, interval_count, start_date,
+              day_of_month, day_of_week, step) -> date
+generate_occurrence(rule_id, occurrence_date)  -> uuid | null
+advance_rule_cursor(rule_id, next)             -> void
+run_recurring_generation(horizon_days = 90,
+                         user_id = null)       -> jsonb
+```
+
+All `security definer`, `search_path = ''`, revoked from `anon` and
+`authenticated` — reachable only through a server action using the secret key.
+
+`occurrence_at` duplicates `lib/recurring/schedule.ts` because the scheduler
+runs inside Postgres (P07 §2). `lib/recurring/sql-parity.test.ts` holds the two
+implementations to the same answers.
+
+`run_recurring_generation` takes the advisory lock, does the work and releases
+it **within one call**, rather than across the separate `begin_job` /
+`finish_job` round trips — a session-level lock taken and released on two
+different pooled connections would leak. It resolves "today" per user from
+`profiles.timezone`, never from the scheduler's own UTC clock.
+
+Scheduled hourly via `pg_cron` (`recurring_generation`). The schedule is
+created inside an exception-guarded block: where `pg_cron` is unavailable the
+migration still applies, and the application's on-load safety check (P07 §19)
+keeps generation correct — cron affects timeliness, not correctness.
 
 ---
 

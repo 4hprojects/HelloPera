@@ -188,10 +188,7 @@ describe.skipIf(!enabled)('analytics cross-user isolation — §60, §61, §73',
 
   it('an anonymous client reads no transactions at all (§44)', async () => {
     const anon = createClient(URL!, ANON!, { auth: { persistSession: false } });
-    const { data, error } = await anon
-      .from('transactions')
-      .select('id')
-      .limit(5);
+    const { data, error } = await anon.from('transactions').select('id').limit(5);
 
     // Either a policy error or an empty set is acceptable; leaked rows are not.
     expect(data ?? []).toHaveLength(0);
