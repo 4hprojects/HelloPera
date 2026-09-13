@@ -17,6 +17,7 @@
     "test": "vitest run --exclude \"**/*.integration.test.ts\"",
     "test:watch": "vitest",
     "db:migrate": "node scripts/db.mjs migrate",
+    "db:bundle": "node scripts/build-migrations.mjs",
     "db:status": "node scripts/db.mjs status",
     "db:verify": "node scripts/db.mjs verify",
     "check:key": "node scripts/check-key.mjs",

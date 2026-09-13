@@ -23,8 +23,16 @@ select tablename, policyname, cmd, roles
 from pg_policies
 where schemaname = 'public'
 order by tablename, policyname;
--- EXPECT: exactly two rows, both cmd = SELECT, both roles = {authenticated}.
--- Any INSERT/UPDATE/DELETE policy for authenticated is a bug.
+-- EXPECT: every row cmd = SELECT and roles = {authenticated}.
+--
+-- The count grows with each phase, so it is not asserted here — an exact
+-- number would have to be edited on every migration, and a check nobody can
+-- keep current is a check nobody trusts. What must hold is the SHAPE: any
+-- INSERT/UPDATE/DELETE policy for `authenticated` is a bug, because every
+-- mutation goes through a server action (master plan §33).
+--
+-- Operational tables (job_runs) correctly appear here with NO policy at all:
+-- RLS is enabled and forced, and nothing is granted to the browser role.
 
 -- 3. auth.uid() is wrapped in a subselect (per-query, not per-row).
 select policyname, qual

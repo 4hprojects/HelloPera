@@ -2,7 +2,7 @@ import 'server-only';
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { log } from '@/lib/log';
-import type { AuditEvent } from '@/types/auth';
+import type { AnyAuditEvent, AuditEntityType } from '@/types/auth';
 
 /**
  * Append an audit row.
@@ -13,9 +13,17 @@ import type { AuditEvent } from '@/types/auth';
  * Never record passwords, tokens, or OAuth secrets (§42).
  */
 export async function recordAuditEvent(params: {
-  eventType: AuditEvent;
+  eventType: AnyAuditEvent;
   actorUserId?: string | null;
   targetUserId?: string | null;
+  /**
+   * Which domain this row belongs to. Defaults to `auth`, which is all this
+   * helper recorded until Phase 07 — every financial event carries its own
+   * type so the two can be told apart when read back (PHASE-07 §61).
+   */
+  entityType?: AuditEntityType;
+  /** The row the event is about, where there is one. */
+  entityId?: string | null;
   metadata?: Record<string, string | number | boolean | null>;
 }): Promise<void> {
   try {
@@ -23,7 +31,8 @@ export async function recordAuditEvent(params: {
     const { error } = await supabase.from('audit_logs').insert({
       actor_user_id: params.actorUserId ?? null,
       target_user_id: params.targetUserId ?? params.actorUserId ?? null,
-      entity_type: 'auth',
+      entity_type: params.entityType ?? 'auth',
+      entity_id: params.entityId ?? null,
       event_type: params.eventType,
       metadata: params.metadata ?? {},
     });

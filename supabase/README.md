@@ -26,12 +26,30 @@ that file, so a broken migration cannot leave the schema half-changed.
 
 ## Migrations
 
-| File                                            | Phase | Creates                                                                             |
-| ----------------------------------------------- | ----- | ----------------------------------------------------------------------------------- |
-| `20260913000100_phase01_profiles_and_audit.sql` | 01    | `profiles`, `audit_logs`, signup trigger, RLS                                       |
-| `20260913000200_phase02_financial_core.sql`     | 02    | `accounts`, `categories`, `transactions`, `tags`, balance function, seed categories |
+| File                                                 | Phase | Creates                                                                             |
+| ---------------------------------------------------- | ----- | ----------------------------------------------------------------------------------- |
+| `20260913000100_phase01_profiles_and_audit.sql`      | 01    | `profiles`, `audit_logs`, signup trigger, RLS                                       |
+| `20260913000200_phase02_financial_core.sql`          | 02    | `accounts`, `categories`, `transactions`, `tags`, balance function, seed categories |
+| `20260913000300_phase02_transaction_rpc.sql`         | 02    | Atomic transaction RPCs                                                             |
+| `20260913000400_lock_schema_migrations.sql`          | 02    | Locks down the migration ledger                                                     |
+| `20260913000500_reject_income_to_liability.sql`      | 02    | Guard against income landing on a liability                                         |
+| `20260913000600_phase03_obligations.sql`             | 03    | `bills`, `receivables`, `expected_income`, payment links                            |
+| `20260913000700_void_updates_obligations.sql`        | 03    | Voiding a transaction reopens what it paid                                          |
+| `20260913000800_phase04_documents.sql`               | 04    | `documents`, storage policies                                                       |
+| `20260913000900_phase05_ocr_extraction.sql`          | 05    | `extractions`, OCR job state                                                        |
+| `20260913001000_phase07_recurring_forecasting.sql`   | 07    | `recurring_rules`, `expected_events`, `job_runs`                                    |
+| `20260913001100_phase07_generation_rpc.sql`          | 07    | `generate_occurrence`, `advance_rule_cursor`, job bookkeeping                       |
+| `20260914000100_phase07_generation_orchestrator.sql` | 07    | `occurrence_at`, `run_recurring_generation`, `pg_cron` schedule                     |
+
+Phase 06 added no migrations — it is read-only analytics over what already
+exists, and its index review (`docs/PHASE-06-NOTES.md` §5) found the seven
+indexes it needed already present.
 
 All migrations are idempotent — re-running one is safe.
+
+`supabase/ALL-MIGRATIONS.sql` is a generated bundle of the above, for the
+Supabase SQL Editor where there is no runner. Regenerate it with
+`npm run db:bundle` after adding a migration — never edit it by hand.
 
 ## After the first migration
 

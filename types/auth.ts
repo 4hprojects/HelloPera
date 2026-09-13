@@ -31,3 +31,30 @@ export const AUDIT_EVENTS = [
   'role_changed',
 ] as const;
 export type AuditEvent = (typeof AUDIT_EVENTS)[number];
+
+/**
+ * Recurring and forecasting events — PHASE-07 §61.
+ *
+ * Kept as a separate list because they are a different kind of thing: these
+ * describe a user shaping their own financial model, not an account-security
+ * event. They share the table, and `entity_type` is what tells them apart.
+ */
+export const RECURRING_AUDIT_EVENTS = [
+  'recurring_rule_created',
+  'recurring_rule_updated',
+  'recurring_rule_paused',
+  'recurring_rule_resumed',
+  'recurring_rule_ended',
+  'expected_event_generated',
+  'expected_event_fulfilled',
+  'expected_event_skipped',
+  'expected_event_cancelled',
+] as const;
+export type RecurringAuditEvent = (typeof RECURRING_AUDIT_EVENTS)[number];
+
+/** Everything `recordAuditEvent` will accept. */
+export type AnyAuditEvent = AuditEvent | RecurringAuditEvent;
+
+/** Which domain a row belongs to — the `entity_type` column. */
+export const AUDIT_ENTITY_TYPES = ['auth', 'recurring_rule', 'expected_event'] as const;
+export type AuditEntityType = (typeof AUDIT_ENTITY_TYPES)[number];

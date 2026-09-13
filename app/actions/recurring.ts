@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { requireUser } from '@/lib/auth/guards';
 import { log } from '@/lib/log';
+import { recordAuditEvent } from '@/lib/auth/audit';
 import type { ActionState } from '@/app/actions/auth';
 import {
   createRecurringRuleSchema,
@@ -41,6 +42,21 @@ function fieldErrorsFrom(error: {
     if (!out[key]) out[key] = issue.message;
   }
   return out;
+}
+
+/** §61 — one shape for the expected-event rows. */
+async function audit(
+  eventType:
+    'expected_event_fulfilled' | 'expected_event_skipped' | 'expected_event_cancelled',
+  actorUserId: string,
+  entityId: string,
+): Promise<void> {
+  await recordAuditEvent({
+    eventType,
+    actorUserId,
+    entityType: 'expected_event',
+    entityId,
+  });
 }
 
 /** Every surface a recurring change can move. */
@@ -83,6 +99,13 @@ export async function createRecurringRuleAction(
   let id: string;
   try {
     id = await createRule(user.id, parsed.data);
+    await recordAuditEvent({
+      eventType: 'recurring_rule_created',
+      actorUserId: user.id,
+      entityType: 'recurring_rule',
+      entityId: id,
+      metadata: { rule_type: parsed.data.ruleType, frequency: parsed.data.frequency },
+    });
     // Generate this rule's occurrences immediately rather than waiting up to
     // an hour for cron: a rule that appears to do nothing after being created
     // reads as broken.
@@ -112,6 +135,13 @@ export async function updateRecurringRuleAction(
 
   try {
     await updateRule(parsed.data);
+    await recordAuditEvent({
+      eventType: 'recurring_rule_updated',
+      actorUserId: user.id,
+      entityType: 'recurring_rule',
+      entityId: parsed.data.id,
+      metadata: { applied_to_future: parsed.data.applyToFuture },
+    });
     await generateOccurrences(user.id);
   } catch (error) {
     log.error('recurring: update failed', {
@@ -139,6 +169,17 @@ export async function transitionRuleAction(
 
   try {
     await transitionRule(parsed.data.id, parsed.data.action, parsed.data.endDate);
+    await recordAuditEvent({
+      eventType:
+        parsed.data.action === 'pause'
+          ? 'recurring_rule_paused'
+          : parsed.data.action === 'resume'
+            ? 'recurring_rule_resumed'
+            : 'recurring_rule_ended',
+      actorUserId: user.id,
+      entityType: 'recurring_rule',
+      entityId: parsed.data.id,
+    });
     // §22 — resuming continues from the next valid occurrence. Generating here
     // makes that immediate instead of waiting for the next scheduled run.
     if (parsed.data.action === 'resume') {
@@ -167,7 +208,7 @@ export async function expectedEventAction(
   _p: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  await requireUser();
+  const { user } = await requireUser();
   const parsed = expectedEventActionSchema.safeParse({
     id: formData.get('id'),
     action: formData.get('action'),
@@ -184,12 +225,15 @@ export async function expectedEventAction(
           return { error: 'Choose the transaction that matched this occurrence.' };
         }
         await fulfillExpectedEvent(id, transactionId);
+        await audit('expected_event_fulfilled', user.id, id);
         break;
       case 'skip':
         await setEventStatus(id, 'skipped');
+        await audit('expected_event_skipped', user.id, id);
         break;
       case 'cancel':
         await setEventStatus(id, 'cancelled');
+        await audit('expected_event_cancelled', user.id, id);
         break;
       case 'include':
         await setIncludeInForecast(id, true);

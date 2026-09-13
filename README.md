@@ -6,10 +6,19 @@ A mobile-first personal finance tracking and financial document intelligence PWA
 Capture → Understand → Confirm → Track → Analyze → Forecast
 ```
 
-**Current phase: Phase 00 — Project Foundation.**
-There is no authentication and no financial persistence yet. `/dashboard` and
-`/admin` are unprotected placeholder shells, and the figures they show are
-static mock data.
+**Current phase: Phase 07 — Recurring Transactions and Forecasting.**
+
+Phases 00–06 are built, which is **Gate 1: the manual tracker** — a complete
+personal finance application. You can register, manage accounts, record income,
+expenses, transfers, refunds and adjustments, track bills and receivables with
+partial payments, record expected income, upload and OCR documents, and read a
+dashboard with spending breakdowns and cash flow.
+
+Phase 07 adds recurring rules and a deterministic 30/60/90-day forecast.
+
+Phase docs live in `docs/`, one per phase, each with its own acceptance
+criteria. `docs/DATA-MODEL.md` is the consolidated schema reference and is kept
+current in the same commit as any migration.
 
 ---
 
@@ -24,16 +33,22 @@ cp .env.example .env.local     # then fill in your Supabase values
 npm run dev
 ```
 
-Open http://localhost:3000.
+Open http://localhost:3030.
 
 ### Environment
 
-| Variable                        | Required | Notes                                             |
-| ------------------------------- | -------- | ------------------------------------------------- |
-| `NEXT_PUBLIC_SUPABASE_URL`      | yes      | `https://<ref>.supabase.co` — **no `db.` prefix** |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | yes      | anon/publishable key, never `service_role`        |
-| `NEXT_PUBLIC_APP_NAME`          | no       | defaults to `HelloPera`                           |
-| `NEXT_PUBLIC_APP_URL`           | no       | defaults to `http://localhost:3000`               |
+| Variable                        | Required       | Notes                                                      |
+| ------------------------------- | -------------- | ---------------------------------------------------------- |
+| `NEXT_PUBLIC_SUPABASE_URL`      | yes            | `https://<ref>.supabase.co` — **no `db.` prefix**          |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | yes            | anon/publishable key, never `service_role`                 |
+| `SUPABASE_SECRET_KEY`           | yes            | `sb_secret_…`, server-only. Every mutation goes through it |
+| `DATABASE_URL`                  | for migrations | **Pooler** host, not `db.<ref>` — see below                |
+| `NEXT_PUBLIC_APP_NAME`          | no             | defaults to `HelloPera`                                    |
+| `NEXT_PUBLIC_APP_URL`           | no             | defaults to `http://localhost:3030`                        |
+
+`SUPABASE_SECRET_KEY` is required from Phase 01 onward: user tables grant the
+browser `SELECT` only, so every write goes through a server action that checks
+ownership in code first. Verify the key with `npm run check:key`.
 
 Configuration is validated at startup by `lib/env`. It checks shape, not just
 presence — a present-but-wrong value fails far from its cause. Two guards exist
