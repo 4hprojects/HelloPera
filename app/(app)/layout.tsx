@@ -4,8 +4,7 @@ import { TopBar } from '@/components/layout/top-bar';
 import { LogoutButton } from '@/components/auth/logout-button';
 import { requireUser } from '@/lib/auth/guards';
 import { appNav, mobileNav } from '@/lib/constants/navigation';
-import { todayInTimezone } from '@/lib/finance/obligation';
-import { listObligations } from '@/services/obligation.service';
+import { unreadCount } from '@/services/notification.service';
 
 /**
  * Authenticated shell.
@@ -17,10 +16,9 @@ import { listObligations } from '@/services/obligation.service';
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const { profile } = await requireUser();
 
-  // The bell counts what is actually late or landing, not every open bill.
-  // If the count cannot be read, the bar renders without a badge rather than
-  // taking the whole shell down with it.
-  const dueCount = await countDue(profile.timezone).catch(() => 0);
+  // §20 — the bell counts unread notifications. If the count cannot be read,
+  // the bar renders without a badge rather than taking the whole shell down.
+  const unread = await unreadCount().catch(() => 0);
 
   return (
     <div className="flex min-h-dvh">
@@ -41,7 +39,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar
           user={{ name: profile.full_name, email: profile.email ?? '' }}
-          dueCount={dueCount}
+          unreadCount={unread}
         />
         <main id="main" className="flex-1 px-4 pb-24 pt-5 sm:px-6 lg:pb-10">
           {children}
@@ -51,13 +49,4 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <MobileNav items={mobileNav} />
     </div>
   );
-}
-
-async function countDue(timezone: string): Promise<number> {
-  const today = todayInTimezone(timezone);
-  const bills = await listObligations('bill', today, { onlyOpen: true });
-  return bills.filter(
-    (b) =>
-      b.display === 'overdue' || b.display === 'due_today' || b.display === 'due_soon',
-  ).length;
 }

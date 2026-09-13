@@ -36,6 +36,7 @@ export const appNav: NavItem[] = [
   { label: 'Recurring', href: '/recurring', icon: 'calendar' },
   { label: 'Forecast', href: '/forecast', icon: 'analytics' },
   { label: 'Analytics', href: '/analytics', icon: 'analytics' },
+  { label: 'Notifications', href: '/notifications', icon: 'calendar' },
   { label: 'Settings', href: '/settings', icon: 'settings' },
 ];
 

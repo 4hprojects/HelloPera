@@ -17,10 +17,19 @@ import { ThemeToggle } from '@/components/ui/theme-toggle';
  */
 export function TopBar({
   user,
-  dueCount = 0,
+  unreadCount = 0,
 }: {
   user: { name: string | null; email: string };
-  dueCount?: number;
+  /**
+   * Unread notifications — PHASE-08 §20.
+   *
+   * Was a count of bills due or overdue. That number could not be cleared:
+   * it stayed lit until the user paid something, so the badge stopped meaning
+   * "there is something new here" and became permanent furniture. Unread
+   * notifications are dismissible, which is what makes a badge worth looking
+   * at.
+   */
+  unreadCount?: number;
 }) {
   const displayName = user.name ?? user.email;
 
@@ -66,19 +75,19 @@ export function TopBar({
         </div>
 
         <Link
-          href="/bills"
+          href="/notifications"
           className="relative inline-flex h-10 w-10 items-center justify-center rounded-full border border-border bg-surface text-text-muted hover:text-text"
         >
           <BellIcon size={19} />
           <span className="sr-only">
-            {dueCount > 0 ? `Bills: ${dueCount} due or overdue` : 'Bills'}
+            {unreadCount > 0 ? `Notifications: ${unreadCount} unread` : 'Notifications'}
           </span>
-          {dueCount > 0 ? (
+          {unreadCount > 0 ? (
             <span
               aria-hidden="true"
               className="absolute -right-0.5 -top-0.5 inline-flex min-w-[1.125rem] items-center justify-center rounded-full bg-danger-text px-1 text-[0.625rem] font-bold text-white"
             >
-              {dueCount > 9 ? '9+' : dueCount}
+              {unreadCount > 9 ? '9+' : unreadCount}
             </span>
           ) : null}
         </Link>
