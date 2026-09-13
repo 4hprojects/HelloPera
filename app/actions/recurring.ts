@@ -3,6 +3,7 @@
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { requireUser } from '@/lib/auth/guards';
+import { todayInTimezone } from '@/lib/finance/obligation';
 import { log } from '@/lib/log';
 import { recordAuditEvent } from '@/lib/auth/audit';
 import type { ActionState } from '@/app/actions/auth';
@@ -92,13 +93,16 @@ export async function createRecurringRuleAction(
   _p: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const { user } = await requireUser();
+  const { user, profile } = await requireUser();
   const parsed = createRecurringRuleSchema.safeParse(formValues(formData));
   if (!parsed.success) return { fieldErrors: fieldErrorsFrom(parsed.error) };
 
+  // §47 — every date boundary is the user's local one, never the server's.
+  const today = todayInTimezone(profile.timezone);
+
   let id: string;
   try {
-    id = await createRule(user.id, parsed.data);
+    id = await createRule(user.id, parsed.data, today);
     await recordAuditEvent({
       eventType: 'recurring_rule_created',
       actorUserId: user.id,
@@ -125,7 +129,7 @@ export async function updateRecurringRuleAction(
   _p: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const { user } = await requireUser();
+  const { user, profile } = await requireUser();
   const parsed = updateRecurringRuleSchema.safeParse({
     ...formValues(formData),
     id: formData.get('id'),
@@ -134,7 +138,7 @@ export async function updateRecurringRuleAction(
   if (!parsed.success) return { fieldErrors: fieldErrorsFrom(parsed.error) };
 
   try {
-    await updateRule(parsed.data);
+    await updateRule(parsed.data, todayInTimezone(profile.timezone));
     await recordAuditEvent({
       eventType: 'recurring_rule_updated',
       actorUserId: user.id,
@@ -159,7 +163,7 @@ export async function transitionRuleAction(
   _p: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const { user } = await requireUser();
+  const { user, profile } = await requireUser();
   const parsed = ruleTransitionSchema.safeParse({
     id: formData.get('id'),
     action: formData.get('action'),
@@ -168,7 +172,12 @@ export async function transitionRuleAction(
   if (!parsed.success) return { fieldErrors: fieldErrorsFrom(parsed.error) };
 
   try {
-    await transitionRule(parsed.data.id, parsed.data.action, parsed.data.endDate);
+    await transitionRule(
+      parsed.data.id,
+      parsed.data.action,
+      todayInTimezone(profile.timezone),
+      parsed.data.endDate,
+    );
     await recordAuditEvent({
       eventType:
         parsed.data.action === 'pause'

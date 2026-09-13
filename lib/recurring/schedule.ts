@@ -177,6 +177,28 @@ export function occurrencesBetween(
  */
 const MAX_STEPS = 4000;
 
+/**
+ * Where generation should begin for a newly created or edited rule.
+ *
+ * §12 forbids occurrences before `startDate`, and the start date remains the
+ * anchor, so a rule on the 31st still clamps February and returns to 31 March.
+ * What this adds is that the cursor never starts in the past.
+ *
+ * A user entering "Internet, monthly on the 31st, started January" is saying
+ * when the real subscription began — not asking for eight unpaid bills to be
+ * created behind them. Anchoring the cursor at the start date did exactly
+ * that: measured against a real database, a January rule created in September
+ * produced eight back-dated `open` bills, every one counted as overdue.
+ *
+ * Catch-up is unaffected. The generator honours whatever the cursor holds, so
+ * a scheduler that has not run for three days still fills those three days in.
+ * This only governs where a rule *starts*.
+ */
+export function initialCursor(rule: RecurrenceRule, today: string): string | null {
+  const from = rule.startDate > today ? rule.startDate : today;
+  return firstOccurrenceOnOrAfter(rule, from);
+}
+
 /** A human description, for the rule list and the forecast's assumptions (§45). */
 export function describeRule(rule: RecurrenceRule): string {
   const n = rule.intervalCount;

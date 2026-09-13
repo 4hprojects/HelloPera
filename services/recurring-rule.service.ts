@@ -3,7 +3,7 @@ import 'server-only';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { fromDatabase, parseDecimal, toDecimalString } from '@/lib/money';
-import { describeRule, firstOccurrenceOnOrAfter } from '@/lib/recurring/schedule';
+import { describeRule, initialCursor as firstCursor } from '@/lib/recurring/schedule';
 import type { Frequency } from '@/lib/recurring/schedule';
 import type {
   CreateRecurringRuleInput,
@@ -146,16 +146,23 @@ function optional(value: string | null | undefined): string | null {
   return trimmed === '' ? null : trimmed;
 }
 
-/** §12 — the cursor starts at the first occurrence on or after the start date. */
-function initialCursor(input: {
-  frequency: Frequency;
-  intervalCount: number;
-  startDate: string;
-  endDate?: string | null;
-  dayOfMonth?: number | null;
-  dayOfWeek?: number | null;
-}): string | null {
-  return firstOccurrenceOnOrAfter(
+/**
+ * Adapter over `initialCursor` in lib/recurring/schedule.ts, where the rule and
+ * its reasoning live so they can be unit-tested — anything under `services/`
+ * imports `server-only` and cannot be reached from a test.
+ */
+function initialCursor(
+  input: {
+    frequency: Frequency;
+    intervalCount: number;
+    startDate: string;
+    endDate?: string | null;
+    dayOfMonth?: number | null;
+    dayOfWeek?: number | null;
+  },
+  today: string,
+): string | null {
+  return firstCursor(
     {
       frequency: input.frequency,
       intervalCount: input.intervalCount,
@@ -164,17 +171,18 @@ function initialCursor(input: {
       dayOfMonth: input.dayOfMonth ?? null,
       dayOfWeek: input.dayOfWeek ?? null,
     },
-    input.startDate,
+    today,
   );
 }
 
 export async function createRule(
   userId: string,
   input: CreateRecurringRuleInput,
+  today: string,
 ): Promise<string> {
   const admin = createAdminClient();
 
-  const cursor = initialCursor(input);
+  const cursor = initialCursor(input, today);
 
   const { data, error } = await admin
     .from('recurring_rules')
@@ -214,11 +222,14 @@ export async function createRule(
  * but only when the user asked for that: silently rewriting dated obligations
  * a user has already planned around is worse than leaving them stale.
  */
-export async function updateRule(input: UpdateRecurringRuleInput): Promise<void> {
+export async function updateRule(
+  input: UpdateRecurringRuleInput,
+  today: string,
+): Promise<void> {
   await assertOwned(input.id);
   const admin = createAdminClient();
 
-  const cursor = initialCursor(input);
+  const cursor = initialCursor(input, today);
 
   const { error } = await admin
     .from('recurring_rules')
@@ -246,7 +257,7 @@ export async function updateRule(input: UpdateRecurringRuleInput): Promise<void>
   if (error) throw new Error(`Could not update this rule: ${error.code}`);
 
   if (input.applyToFuture) {
-    await rebuildFutureOccurrences(input.id);
+    await rebuildFutureOccurrences(input.id, today);
   }
 }
 
@@ -258,10 +269,12 @@ export async function updateRule(input: UpdateRecurringRuleInput): Promise<void>
  * have acted on it), and anything `detached_from_rule` — a row the user edited
  * by hand, which regeneration must not silently overwrite.
  */
-export async function rebuildFutureOccurrences(ruleId: string): Promise<void> {
+export async function rebuildFutureOccurrences(
+  ruleId: string,
+  today: string,
+): Promise<void> {
   await assertOwned(ruleId);
   const admin = createAdminClient();
-  const today = new Date().toISOString().slice(0, 10);
 
   const { error } = await admin
     .from('expected_events')
@@ -278,6 +291,7 @@ export async function rebuildFutureOccurrences(ruleId: string): Promise<void> {
 export async function transitionRule(
   id: string,
   action: 'pause' | 'resume' | 'end',
+  today: string,
   endDate?: string | null,
 ): Promise<void> {
   await assertOwned(id);
@@ -293,7 +307,7 @@ export async function transitionRule(
         ? { is_paused: false }
         : {
             is_active: false,
-            end_date: optional(endDate) ?? new Date().toISOString().slice(0, 10),
+            end_date: optional(endDate) ?? today,
           };
 
   const { error } = await admin

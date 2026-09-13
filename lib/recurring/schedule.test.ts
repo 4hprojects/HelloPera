@@ -3,6 +3,7 @@ import {
   daysInMonth,
   describeRule,
   firstOccurrenceOnOrAfter,
+  initialCursor,
   isoDayOfWeek,
   nextOccurrence,
   occurrenceAt,
@@ -284,5 +285,56 @@ describe('describeRule', () => {
     expect(describeRule(rule({ frequency: 'biweekly' }))).toBe('Every 2 weeks');
     expect(describeRule(rule({ frequency: 'quarterly' }))).toBe('Quarterly');
     expect(describeRule(rule({ frequency: 'yearly' }))).toBe('Yearly');
+  });
+});
+
+describe('initialCursor — where a new rule starts generating', () => {
+  const monthly31 = {
+    frequency: 'monthly' as const,
+    intervalCount: 1,
+    startDate: '2026-01-31',
+    dayOfMonth: 31,
+  };
+
+  it('does not backfill a rule whose start date is in the past', () => {
+    // The regression this exists for: seeding the cursor at the start date
+    // made a January rule created in September generate eight back-dated
+    // bills, each of them counted as overdue. Verified against a real
+    // database before the fix.
+    expect(initialCursor(monthly31, '2026-09-14')).toBe('2026-09-30');
+  });
+
+  it('still honours a start date in the future', () => {
+    expect(initialCursor(monthly31, '2025-06-01')).toBe('2026-01-31');
+  });
+
+  it('keeps the start date as the anchor, so month-end still clamps', () => {
+    // Sep clamps to 30, Oct keeps 31 — the anchor rule survives the change.
+    const first = initialCursor(monthly31, '2026-09-14');
+    expect(first).toBe('2026-09-30');
+    expect(nextOccurrence(monthly31, first!)).toBe('2026-10-31');
+  });
+
+  it('returns today itself when an occurrence falls on it', () => {
+    expect(initialCursor(monthly31, '2026-09-30')).toBe('2026-09-30');
+  });
+
+  it('returns null when the rule has already ended', () => {
+    expect(
+      initialCursor({ ...monthly31, endDate: '2026-06-30' }, '2026-09-14'),
+    ).toBeNull();
+  });
+
+  it('works for weekly rules', () => {
+    const weekly = {
+      frequency: 'weekly' as const,
+      intervalCount: 1,
+      startDate: '2026-01-05',
+    };
+    const cursor = initialCursor(weekly, '2026-09-14');
+    expect(cursor).not.toBeNull();
+    expect(cursor! >= '2026-09-14').toBe(true);
+    // Still on the rule's own weekday, not shifted to "today".
+    expect(isoDayOfWeek(cursor!)).toBe(isoDayOfWeek('2026-01-05'));
   });
 });
