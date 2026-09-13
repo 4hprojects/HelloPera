@@ -50,3 +50,16 @@ export const LIQUID_TYPES: readonly AccountType[] = [
   'maya',
   'paypal',
 ];
+
+/**
+ * Does this account hold spendable cash?
+ *
+ * §32 — the forecast projects a *cash* position, so it draws only on liquid
+ * asset accounts. An investment account is an asset but not money the user can
+ * spend on Tuesday, and §33 is explicit that a liability's balance is never
+ * treated as cash: a credit card with ₱40,000 of headroom is not ₱40,000 of
+ * savings, and a forecast that said so would be inviting the user to spend it.
+ */
+export function isLiquid(type: AccountType, nature: AccountNature): boolean {
+  return nature === 'asset' && LIQUID_TYPES.includes(type);
+}
