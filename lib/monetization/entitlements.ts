@@ -93,11 +93,52 @@ function asNullableNumber(value: unknown, fallback: number | null): number | nul
 }
 
 /**
+ * PHASE-13 §19 — a per-user override of one entitlement, for a window of time.
+ *
+ * The same `{entitlement_key, value_json}` shape as a plan row, deliberately:
+ * `entitlement_overrides` was designed to feed this resolver rather than a
+ * second one, so promotional Premium is a row here instead of a fake
+ * subscription. `DATA-MODEL.md` gives the reason — these tables exist to avoid
+ * falsifying primary records.
+ */
+export type OverrideRow = EntitlementRow & {
+  starts_at: string;
+  ends_at: string | null;
+};
+
+/**
+ * Which overrides are in effect at `now`.
+ *
+ * Exported so the filter is testable without a database, and so there is one
+ * definition of "in effect" rather than a date comparison written inline at
+ * each call site.
+ */
+export function activeOverrides(
+  rows: readonly OverrideRow[],
+  now: Date = new Date(),
+): EntitlementRow[] {
+  return rows.filter((row) => {
+    const starts = Date.parse(row.starts_at);
+    // An unparseable window is not a licence to grant something. Skipped.
+    if (Number.isNaN(starts) || starts > now.getTime()) return false;
+    if (row.ends_at === null) return true;
+    const ends = Date.parse(row.ends_at);
+    return !Number.isNaN(ends) && ends > now.getTime();
+  });
+}
+
+/**
  * Turn rows into a resolved set.
  *
  * Anything absent or of the wrong type falls back to Free's value for that
  * key — per key, not all-or-nothing. One corrupt row must not silently
  * downgrade a paying customer's entire plan, nor upgrade a free one.
+ *
+ * Order matters and is the whole mechanism for §19: later rows win, so a
+ * caller appends `activeOverrides(...)` after the plan's rows and an override
+ * takes precedence for exactly the keys it names, leaving the rest of the plan
+ * untouched. An override of a key nobody recognises falls back like any other
+ * bad value rather than voiding the plan.
  */
 export function resolveEntitlements(rows: readonly EntitlementRow[]): Entitlements {
   const map = new Map<string, unknown>();

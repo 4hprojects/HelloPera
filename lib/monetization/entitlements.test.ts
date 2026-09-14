@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   ENTITLEMENT_KEYS,
   FREE_FALLBACK,
+  activeOverrides,
   allowedHorizons,
   grantsPaidPlan,
   resolveEntitlements,
+  type OverrideRow,
 } from '@/lib/monetization/entitlements';
 
 const rows = (o: Record<string, unknown>) =>
@@ -132,5 +134,102 @@ describe('allowedHorizons — §24, criterion 7', () => {
           .length,
       ).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('entitlement overrides — PHASE-13 §19', () => {
+  const NOW = new Date('2026-09-14T12:00:00Z');
+  const at = (days: number) => new Date(NOW.getTime() + days * 86_400_000).toISOString();
+
+  const override = (over: Partial<OverrideRow> = {}): OverrideRow => ({
+    entitlement_key: 'advanced_analytics',
+    value_json: true,
+    starts_at: at(-1),
+    ends_at: at(30),
+    ...over,
+  });
+
+  it('takes precedence over the plan for the key it names', () => {
+    // The mechanism behind "promotional Premium is an override row, not a fake
+    // subscription": a later row wins.
+    const plan = [{ entitlement_key: 'advanced_analytics', value_json: false }];
+    const resolved = resolveEntitlements([
+      ...plan,
+      ...activeOverrides([override()], NOW),
+    ]);
+    expect(resolved.advancedAnalytics).toBe(true);
+  });
+
+  it('leaves every other key on the plan alone', () => {
+    const plan = [
+      { entitlement_key: 'advanced_analytics', value_json: false },
+      { entitlement_key: 'ocr_monthly_limit', value_json: 25 },
+    ];
+    const resolved = resolveEntitlements([
+      ...plan,
+      ...activeOverrides([override()], NOW),
+    ]);
+    expect(resolved.ocrMonthlyLimit).toBe(25);
+  });
+
+  it('ignores one that has not started', () => {
+    expect(activeOverrides([override({ starts_at: at(1) })], NOW)).toHaveLength(0);
+  });
+
+  it('ignores one that has expired', () => {
+    // The case that matters most: a promotion nobody remembered to end must
+    // stop on its own, or it never ends at all.
+    expect(activeOverrides([override({ ends_at: at(-1) })], NOW)).toHaveLength(0);
+  });
+
+  it('honours an open-ended override', () => {
+    expect(activeOverrides([override({ ends_at: null })], NOW)).toHaveLength(1);
+  });
+
+  it('refuses an unparseable window rather than granting on it', () => {
+    // A bad date must not read as "no limit". Both directions are skipped.
+    expect(activeOverrides([override({ starts_at: 'not-a-date' })], NOW)).toHaveLength(0);
+    expect(activeOverrides([override({ ends_at: 'not-a-date' })], NOW)).toHaveLength(0);
+  });
+
+  it('falls back per key when an override value is the wrong type', () => {
+    // Same rule as a corrupt plan row: one bad value must not void the plan.
+    const plan = [
+      { entitlement_key: 'advanced_analytics', value_json: false },
+      { entitlement_key: 'ocr_monthly_limit', value_json: 25 },
+    ];
+    const resolved = resolveEntitlements([
+      ...plan,
+      ...activeOverrides([override({ value_json: 'yes please' })], NOW),
+    ]);
+    expect(resolved.advancedAnalytics).toBe(FREE_FALLBACK.advancedAnalytics);
+    expect(resolved.ocrMonthlyLimit).toBe(25);
+  });
+
+  it('can restrict as well as grant', () => {
+    // Overrides are not only promotions — abuse mitigation is the other
+    // direction, and it must work the same way.
+    const plan = [{ entitlement_key: 'ocr_monthly_limit', value_json: 500 }];
+    const resolved = resolveEntitlements([
+      ...plan,
+      ...activeOverrides(
+        [override({ entitlement_key: 'ocr_monthly_limit', value_json: 0 })],
+        NOW,
+      ),
+    ]);
+    expect(resolved.ocrMonthlyLimit).toBe(0);
+  });
+
+  it('applies the last override when two name the same key', () => {
+    const resolved = resolveEntitlements(
+      activeOverrides(
+        [
+          override({ entitlement_key: 'ocr_monthly_limit', value_json: 10 }),
+          override({ entitlement_key: 'ocr_monthly_limit', value_json: 50 }),
+        ],
+        NOW,
+      ),
+    );
+    expect(resolved.ocrMonthlyLimit).toBe(50);
   });
 });

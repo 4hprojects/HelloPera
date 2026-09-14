@@ -85,8 +85,33 @@ export const AI_AUDIT_EVENTS = [
 ] as const;
 export type AiAuditEvent = (typeof AI_AUDIT_EVENTS)[number];
 
+/**
+ * Admin operations — PHASE-13 §53, §54.
+ *
+ * §54 requires a reason on every one of these, and `lib/auth/admin.ts` is what
+ * enforces it: the same call that authorises an action writes its audit row, so
+ * the only way to skip the record is to skip the authorization.
+ *
+ * `role_changed` already exists in AUDIT_EVENTS from Phase 01 and is not
+ * repeated here — one event name, whichever layer writes it.
+ */
+export const ADMIN_AUDIT_EVENTS = [
+  'user_suspended',
+  'user_reactivated',
+  'user_disabled',
+  'support_note_added',
+  'feature_flag_changed',
+  'usage_adjusted',
+  'entitlement_override_granted',
+  'entitlement_override_revoked',
+  'ocr_retry_triggered',
+  'job_replay_triggered',
+] as const;
+export type AdminAuditEvent = (typeof ADMIN_AUDIT_EVENTS)[number] | 'role_changed';
+
 /** Everything `recordAuditEvent` will accept. */
-export type AnyAuditEvent = AuditEvent | RecurringAuditEvent | AiAuditEvent;
+export type AnyAuditEvent =
+  AuditEvent | RecurringAuditEvent | AiAuditEvent | AdminAuditEvent;
 
 /** Which domain a row belongs to — the `entity_type` column. */
 export const AUDIT_ENTITY_TYPES = [
@@ -94,5 +119,6 @@ export const AUDIT_ENTITY_TYPES = [
   'recurring_rule',
   'expected_event',
   'ai',
+  'admin',
 ] as const;
 export type AuditEntityType = (typeof AUDIT_ENTITY_TYPES)[number];

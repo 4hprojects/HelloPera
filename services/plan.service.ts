@@ -4,10 +4,13 @@ import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { log } from '@/lib/log';
 import {
+  activeOverrides,
   FREE_FALLBACK,
   grantsPaidPlan,
   resolveEntitlements,
   type Entitlements,
+  type EntitlementRow,
+  type OverrideRow,
   type PlanCode,
   type SubscriptionStatus,
 } from '@/lib/monetization/entitlements';
@@ -92,6 +95,36 @@ export async function isFlagEnabled(key: string): Promise<boolean> {
  * disabled mode genuinely safe to develop against — a stray subscription row
  * cannot turn on features that are not ready to be sold.
  */
+/**
+ * PHASE-13 §19 — this user's overrides that are in effect right now.
+ *
+ * Fails to an empty list rather than throwing. An unreadable override table
+ * must leave someone on their plan, not strip them of it — §53's rule that a
+ * failure grants Free and never nothing applies here too, one level down.
+ */
+async function activeOverrideRows(userId: string): Promise<EntitlementRow[]> {
+  try {
+    const admin = createAdminClient();
+    const { data, error } = await admin
+      .from('entitlement_overrides')
+      .select('entitlement_key, value_json, starts_at, ends_at')
+      .eq('user_id', userId);
+
+    if (error) {
+      // Before the Phase 13 migration runs, the table does not exist.
+      log.warn('plan: overrides unavailable', { code: error.code });
+      return [];
+    }
+
+    return activeOverrides((data ?? []) as OverrideRow[]);
+  } catch (error) {
+    log.error('plan: override read threw', {
+      m: error instanceof Error ? error.message : 'unknown',
+    });
+    return [];
+  }
+}
+
 export async function getEffectivePlan(_userId: string): Promise<EffectivePlan> {
   // `_userId` is deliberately unused. The session client carries the user's
   // JWT and RLS scopes both reads, so there is no `user_id` predicate to write
@@ -128,9 +161,19 @@ export async function getEffectivePlan(_userId: string): Promise<EffectivePlan> 
       .select('entitlement_key, value_json')
       .eq('plan_id', plan.id);
 
-    const entitlements = resolveEntitlements(
-      (entRows ?? []) as Array<{ entitlement_key: string; value_json: unknown }>,
-    );
+    // PHASE-13 §19 — per-user overrides, appended after the plan's rows so they
+    // win for the keys they name and leave the rest of the plan alone.
+    //
+    // Read with the admin client: `entitlement_overrides` is an operational
+    // table with no browser access at all, so the session client cannot see it.
+    // That is the point — a user must not be able to read, let alone write, the
+    // record of a grant made about them.
+    const overrides = await activeOverrideRows(_userId);
+
+    const entitlements = resolveEntitlements([
+      ...((entRows ?? []) as EntitlementRow[]),
+      ...overrides,
+    ]);
 
     const subscription: Subscription | null = sub
       ? {
