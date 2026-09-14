@@ -1,4 +1,5 @@
 import { greetingFor, rotate } from '@/lib/analytics/series';
+import { Terraces } from '@/components/brand/terraces';
 
 /**
  * The greeting banner — rice terraces at first light, the showcase's hero.
@@ -39,62 +40,6 @@ export function HeroBanner({
         </figure>
       </div>
     </section>
-  );
-}
-
-/** Layered mountain bands. Decorative; carries no information. */
-function Terraces() {
-  return (
-    <svg
-      viewBox="0 0 800 220"
-      preserveAspectRatio="xMidYMid slice"
-      aria-hidden="true"
-      focusable="false"
-      className="absolute inset-0 h-full w-full"
-    >
-      <defs>
-        <linearGradient id="hp-sky" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="var(--hp-tint-primary)" />
-          <stop offset="100%" stopColor="var(--hp-primary-wash)" />
-        </linearGradient>
-      </defs>
-      <rect width="800" height="220" fill="url(#hp-sky)" />
-      <circle cx="612" cy="74" r="30" fill="var(--hp-gold)" opacity="0.30" />
-
-      {/* Four ridges, each darker and lower than the one behind it — the
-          only depth cue a flat illustration gets. */}
-      <path
-        d="M0 118 L118 74 L210 112 L318 58 L436 116 L544 72 L658 118 L800 80 L800 220 L0 220 Z"
-        fill="var(--hp-hero-band)"
-        opacity="0.18"
-      />
-      <path
-        d="M0 150 L110 108 L226 148 L352 100 L470 152 L600 110 L720 152 L800 126 L800 220 L0 220 Z"
-        fill="var(--hp-hero-band)"
-        opacity="0.30"
-      />
-      <path
-        d="M0 182 L140 152 L300 186 L460 150 L620 190 L800 158 L800 220 L0 220 Z"
-        fill="var(--hp-hero-band)"
-        opacity="0.44"
-      />
-      {/* Terraced foreground: stepped contours, the motif the showcase uses. */}
-      <path
-        d="M0 208 L200 196 L420 210 L640 194 L800 204 L800 220 L0 220 Z"
-        fill="var(--hp-hero-band)"
-        opacity="0.60"
-      />
-      {[196, 204, 212].map((y) => (
-        <path
-          key={y}
-          d={`M0 ${y + 8} C 180 ${y - 4}, 420 ${y + 12}, 800 ${y - 2}`}
-          fill="none"
-          stroke="var(--hp-on-hero)"
-          strokeWidth="1"
-          opacity="0.35"
-        />
-      ))}
-    </svg>
   );
 }
 

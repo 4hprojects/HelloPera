@@ -70,10 +70,23 @@ export default function PublicLayout({ children }: { children: React.ReactNode }
             ))}
           </nav>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             <ThemeToggle />
-            <Link href="/login" className={buttonClass('primary', 'sm')}>
+            {/*
+              The header previously offered only "Sign in" — no way in for
+              someone who does not have an account yet, on a page whose job is
+              to get them one. Sign in stays as the quieter ghost button
+              because returning users are looking for it, while new visitors
+              need to be offered something.
+            */}
+            <Link
+              href="/login"
+              className={buttonClass('ghost', 'sm', 'hidden sm:inline-flex')}
+            >
               Sign in
+            </Link>
+            <Link href="/register" className={buttonClass('primary', 'sm')}>
+              Get started
             </Link>
           </div>
         </div>
