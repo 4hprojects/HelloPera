@@ -45,6 +45,16 @@ const features = [
     phase: '07',
     body: 'Model regular income and bills, and project your balance forward.',
   },
+  {
+    title: 'Reminders',
+    phase: '08',
+    body: 'Know before a bill is due, when a receivable is late, and if your balance is projected to fall short.',
+  },
+  {
+    title: 'Your data, yours',
+    phase: '10',
+    body: 'Export everything as CSV or JSON at any time, and delete your account and its files for good.',
+  },
 ];
 
 export default function FeaturesPage() {

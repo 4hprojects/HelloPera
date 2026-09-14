@@ -28,8 +28,28 @@ export const metadata: Metadata = {
 };
 
 export default function HomePage() {
+  /**
+   * §34 — structured data only where it is valid.
+   *
+   * Organization is the one type a homepage can assert honestly: a name, a URL
+   * and a description that are all true. No aggregateRating, no founder, no
+   * address — inventing those to fill a schema is what turns structured data
+   * into a manual action rather than a rich result.
+   */
+  const jsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'Organization',
+    name: BRAND.name,
+    url: appUrl(),
+    description: BRAND.description,
+  };
+
   return (
     <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
       <section className="mx-auto max-w-5xl px-4 py-14 sm:py-20">
         <p className="hp-label text-primary-text">Personal finance, Philippines-first</p>
         <h1 className="hp-display mt-3 max-w-2xl text-text">{BRAND.tagline}</h1>
