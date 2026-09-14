@@ -1,3 +1,5 @@
+import type { Metadata } from 'next';
+import { appUrl } from '@/lib/env';
 import Link from 'next/link';
 import { Card, CardTitle } from '@/components/ui/card';
 import { BRAND } from '@/lib/constants/brand';
@@ -17,6 +19,13 @@ const pillars = [
     body: 'See what is due, what is owed to you, and where your balance is heading.',
   },
 ];
+
+export const metadata: Metadata = {
+  // §30 — the home page needs an explicit canonical too: without one,
+  // a link carrying a tracking parameter becomes a second indexable
+  // copy of the same page.
+  alternates: { canonical: `${appUrl()}/` },
+};
 
 export default function HomePage() {
   return (

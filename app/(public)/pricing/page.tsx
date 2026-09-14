@@ -1,8 +1,10 @@
 import type { Metadata } from 'next';
+import { appUrl } from '@/lib/env';
 import Link from 'next/link';
 import { buttonClass } from '@/components/ui/button';
 
 export const metadata: Metadata = {
+  alternates: { canonical: `${appUrl()}/pricing` },
   title: 'Pricing',
   description: 'HelloPera is free to use. Premium is coming soon.',
 };

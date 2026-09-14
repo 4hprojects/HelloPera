@@ -1,9 +1,13 @@
 import type { Metadata } from 'next';
+import { appUrl } from '@/lib/env';
 import { Card, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { PageHeader } from '@/components/ui/page-header';
 
-export const metadata: Metadata = { title: 'Features' };
+export const metadata: Metadata = {
+  alternates: { canonical: `${appUrl()}/features` },
+  title: 'Features',
+};
 
 /**
  * Phase 10 §14: do not promise functionality that does not exist. Each item

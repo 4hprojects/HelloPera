@@ -31,8 +31,25 @@ export const metadata: Metadata = {
     title: `${BRAND.name} — ${BRAND.tagline}`,
     description: BRAND.description,
   },
-  // Phase 00 is not public. Phase 10 owns indexing, and until then nothing
-  // here should be discoverable.
+  // §35 — the image files exist by convention (app/twitter-image.png), but
+  // nothing declared the card type, so they rendered as a small thumbnail.
+  twitter: {
+    card: 'summary_large_image',
+    title: `${BRAND.name} — ${BRAND.tagline}`,
+    description: BRAND.description,
+  },
+  /**
+   * PHASE-10 §33 — indexing is OPT-IN, route group by route group.
+   *
+   * The default stays `noindex` so a new route is private until somebody
+   * decides otherwise. That is the safe direction: a page accidentally left
+   * out of the sitemap is invisible, while a page accidentally indexed is a
+   * user's financial screen in Google's cache.
+   *
+   * `app/(public)/layout.tsx` overrides this to `index: true`. Every
+   * authenticated and admin route inherits the refusal here and needs no
+   * per-page opt-out — which is what stops one forgotten page from leaking.
+   */
   robots: { index: false, follow: false },
 };
 

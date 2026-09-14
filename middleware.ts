@@ -47,9 +47,16 @@ export async function middleware(request: NextRequest) {
 export const config = {
   matcher: [
     /*
-     * Everything except static assets and image files. Running on _next/static
-     * would add an auth round trip to every chunk request for no benefit.
+     * Everything except static assets and crawler files. Running on
+     * _next/static would add an auth round trip to every chunk request for no
+     * benefit.
+     *
+     * PHASE-10 §63 — robots.txt, sitemap.xml and ads.txt are excluded for the
+     * same reason plus one more: they are fetched by crawlers that have no
+     * session to refresh, so every request would spend a Supabase round trip
+     * resolving a user who does not exist. On a site that wants to be crawled,
+     * that is the traffic you least want to make expensive.
      */
-    '/((?!_next/static|_next/image|favicon.ico|icons/|manifest.webmanifest|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|icons/|manifest.webmanifest|robots.txt|sitemap.xml|ads.txt|sw.js|opengraph-image|twitter-image|apple-icon|.*\\.(?:svg|png|jpg|jpeg|gif|webp|txt|xml)$).*)',
   ],
 };
