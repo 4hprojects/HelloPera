@@ -436,17 +436,54 @@ notification_preferences   id, user_id, one boolean per notification type,
                            quiet_hours_end, timezone
 
 push_subscriptions         id, user_id, endpoint, p256dh, auth, user_agent,
-                           is_active, last_success_at, last_failure_at
+                           is_active, failure_count,
+                           last_success_at, last_failure_at
+
+                           unique (endpoint)
 ```
 
 `dedupe_key` shapes are specified in `PHASE-08` §17. Date-anchored reminders
 key on the date; overdue reminders key on the **escalation step**, so they
 neither fire hourly nor only once.
 
-`push_subscriptions` holds delivery credentials — service-write-only, never
-client-writable.
+`push_subscriptions` holds delivery credentials — service-write-only, and not
+client-**readable** either, not even a user's own rows: `p256dh` and `auth` are
+the device's encryption keys, and with the VAPID private key they are enough to
+push to that device. The device list on `/settings/notifications` is assembled
+server-side from the harmless columns. The unique `endpoint` is the device
+identity, so a browser re-subscribing updates rather than duplicating.
+
+`failure_count` implements §60: a 404 or 410 from the push service disables the
+subscription immediately (it is permanently gone), while transient failures
+count to three.
 
 Unread is `read_at IS NULL`.
+
+`notifications.title`/`message` are **not** the in-app copy. In-app rows render
+from `metadata` at read time via `lib/notifications/copy.ts`, so a wording fix
+reaches reminders already queued; these two columns record what was actually
+**sent over push**, which is a different question.
+
+### Generation functions — Phase 08
+
+```text
+ensure_notification_preferences(user_id)     -> void
+run_notification_generation(user_id = null)  -> jsonb
+run_notification_cleanup()                   -> jsonb
+```
+
+All `security definer`, `search_path = ''`, revoked from `public`. They read
+financial tables and write only `notifications` — a notification never changes
+financial state (§4).
+
+Scheduled via `pg_cron`: generation hourly at :05, cleanup daily at 03:30, both
+inside the same exception guard Phase 07 uses. Push **delivery** cannot live in
+Postgres — it needs the VAPID keys and an HTTPS request per subscription — so
+it runs behind `POST /api/scheduler`, authenticated with `SCHEDULER_SECRET`.
+
+The due-soon windows, escalation ladder and dedupe-key shapes exist in both SQL
+and `lib/notifications/rules.ts`; `lib/notifications/sql-parity.test.ts` holds
+them to the same values.
 
 ---
 
