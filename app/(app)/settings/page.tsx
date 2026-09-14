@@ -1,5 +1,7 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
+import { buttonClass } from '@/components/ui/button';
 import { Card, CardTitle } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { ThemeToggle } from '@/components/ui/theme-toggle';
@@ -65,16 +67,31 @@ export default async function SettingsPage() {
         </dl>
       </Card>
 
+      <Card className="mb-4">
+        <CardTitle>Your data</CardTitle>
+        <p className="hp-body mt-1 text-text-muted">
+          Download everything HelloPera holds for you, as CSV or JSON.
+        </p>
+        <Link
+          href="/settings/data"
+          className={`${buttonClass('secondary', 'sm')} mt-3 inline-flex`}
+        >
+          Export my data
+        </Link>
+      </Card>
+
       <Card>
         <CardTitle>Delete account</CardTitle>
         <p className="hp-body mt-1 text-text-muted">
-          Account deletion is not available yet. It must remove your financial records,
-          documents and storage objects together, and those do not exist until later
-          phases — a partial deletion would be worse than none.
+          Permanently remove your account, your financial records and your uploaded files.
+          This cannot be undone.
         </p>
-        <p className="hp-small mt-2 text-text-muted">
-          It will be working before HelloPera is publicly available.
-        </p>
+        <Link
+          href="/settings/delete"
+          className={`${buttonClass('ghost', 'sm')} mt-3 inline-flex`}
+        >
+          Delete my account
+        </Link>
       </Card>
     </div>
   );

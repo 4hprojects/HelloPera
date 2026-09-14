@@ -8,6 +8,11 @@ import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getCurrentUser } from '@/lib/auth/session';
 import { recordAuditEvent } from '@/lib/auth/audit';
+import {
+  RateLimitError,
+  enforceRateLimit,
+  enforceRateLimitWithIp,
+} from '@/services/rate-limit.service';
 import { log } from '@/lib/log';
 import {
   forgotPasswordSchema,
@@ -83,6 +88,16 @@ export async function registerWithEmail(
   });
   if (!parsed.success) return { fieldErrors: fieldErrorsFrom(parsed.error) };
 
+  // Master plan §54a gate item. Applied AFTER validation, so a malformed form
+  // does not consume someone's budget, and before the provider call, so abuse
+  // never reaches it.
+  try {
+    await enforceRateLimitWithIp('register', parsed.data.email);
+  } catch (error) {
+    if (error instanceof RateLimitError) return { error: error.userMessage };
+    throw error;
+  }
+
   const supabase = await createClient();
   const origin = await originUrl();
 
@@ -124,6 +139,16 @@ export async function loginWithEmail(
     password: formData.get('password'),
   });
   if (!parsed.success) return { fieldErrors: fieldErrorsFrom(parsed.error) };
+
+  // The tightest limit, keyed by both email and IP: the first stops one
+  // account being ground down, the second stops one source spraying many
+  // accounts — which the per-email limit alone would never see.
+  try {
+    await enforceRateLimitWithIp('login', parsed.data.email);
+  } catch (error) {
+    if (error instanceof RateLimitError) return { error: error.userMessage };
+    throw error;
+  }
 
   const supabase = await createClient();
   const { data, error } = await supabase.auth.signInWithPassword({
@@ -210,6 +235,16 @@ export async function requestPasswordReset(
   const parsed = forgotPasswordSchema.safeParse({ email: formData.get('email') });
   if (!parsed.success) return { fieldErrors: fieldErrorsFrom(parsed.error) };
 
+  // Scarcer than the others: each attempt emails someone who may not have
+  // asked for it, so this limit protects the inbox owner as much as the
+  // server.
+  try {
+    await enforceRateLimitWithIp('password_reset_request', parsed.data.email);
+  } catch (error) {
+    if (error instanceof RateLimitError) return { error: error.userMessage };
+    throw error;
+  }
+
   const supabase = await createClient();
   const origin = await originUrl();
 
@@ -247,6 +282,14 @@ export async function resetPassword(
   const { data: userData } = await supabase.auth.getUser();
   if (!userData.user) {
     return { error: 'That reset link is invalid or has expired. Request a new one.' };
+  }
+
+  // Keyed on the user the reset link resolved to — the form carries no email.
+  try {
+    await enforceRateLimit('password_reset_confirm', userData.user.id);
+  } catch (error) {
+    if (error instanceof RateLimitError) return { error: error.userMessage };
+    throw error;
   }
 
   const { error } = await supabase.auth.updateUser({ password: parsed.data.password });

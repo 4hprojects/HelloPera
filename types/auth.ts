@@ -29,6 +29,15 @@ export const AUDIT_EVENTS = [
   'account_suspended',
   'account_reactivated',
   'role_changed',
+  /**
+   * PHASE-14 §72 — the minimal record a deletion leaves behind.
+   *
+   * Written before the cascade runs, because `audit_logs.actor_user_id` is
+   * `on delete set null`: afterwards there is no user to attribute it to, and
+   * the row would survive saying only that *someone* deleted *something*.
+   */
+  'account_deletion_requested',
+  'rate_limit_exceeded',
 ] as const;
 export type AuditEvent = (typeof AUDIT_EVENTS)[number];
 
