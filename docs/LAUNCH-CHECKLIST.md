@@ -14,8 +14,8 @@ Last updated: 14 September 2026 (end of Phase 10 implementation).
 
 | Area | State |
 |---|---|
-| Code | Phases 00–13 built, 673 tests passing |
-| Remote database | **11 of 21 applied** — 10 pending, including a live security fix |
+| Code | Phases 00–14 built, 676 tests passing |
+| Remote database | **11 of 24 applied** — 13 pending, including a live security fix |
 | Scheduled jobs | Unknown — `pg_cron` availability unconfirmed |
 | Push notifications | Unconfigured — no VAPID keys |
 | Email | Unconfigured — Supabase default is ~2/hour, dev only |
@@ -322,11 +322,59 @@ Two things worth knowing about the admin area before you rely on it:
 
 ---
 
-## 14. Not yet verified by anyone
+## 14. Decide the retention periods
+
+Phase 14 built the cleanup job and left it **off**. §73 of the phase document
+says retention must match what the privacy page promises, and inventing periods
+that contradict a published promise is worse than deleting nothing.
+
+Nothing is being deleted on a schedule today. The job runs nightly, checks the
+`retention_enabled` flag, finds it off, and stops.
+
+Decide each of these against `/privacy`, then set the flag in
+`/admin/feature-flags`:
+
+| What it removes | Default if you do nothing else | Worth knowing |
+|---|---|---|
+| Notifications past their expiry | 30 days after expiry | The least sensitive — they are derived from bills and balances that still exist |
+| `ocr_results.raw_text` | 365 days | Only the verbatim transcription. The extracted fields and the document itself survive |
+| Dead push subscriptions | 10+ failures, already inactive | A device that stopped answering, not user data |
+
+- [ ] Read `/privacy` and confirm what it currently promises about each.
+- [ ] Adjust the periods if the defaults do not match, by changing the
+      arguments in the `retention_cleanup` cron schedule.
+- [ ] Turn on `retention_enabled`.
+- [ ] Check `/admin/system` the next morning — the job's `job_runs` row says
+      exactly how many rows it touched.
+
+**Documents are deliberately not in this list.** `document_retention_days` is an
+entitlement people are sold on, so expiring their receipts is a product decision
+rather than an operational one. It stays unimplemented until you make it.
+
+---
+
+## 15. Turn CSP on
+
+`Content-Security-Policy-Report-Only` ships now, so violations appear in every
+visitor's console from the first deploy. Enforcement is one word — changing the
+header key in `next.config.mjs` — and it should happen after §7 (domain) and §9
+(AdSense), not before.
+
+- [ ] Deploy, then open the site and the browser console. Note any violation.
+- [ ] Add the AdSense origins from `docs/CSP-NOTES.md` when ads go live.
+- [ ] After about a week with no unexpected reports, change the key to
+      `Content-Security-Policy`.
+
+Going straight to enforcement is how a CSP silently breaks a page in a browser
+you do not use. The report-only week is the whole point.
+
+---
+
+## 16. Not yet verified by anyone
 
 Stated plainly so it is not mistaken for done:
 
-- **No signed-in page from Phases 07–13 has been rendered in a browser**, the admin area included. They
+- **No signed-in page from Phases 07–14 has been rendered in a browser**, the admin area included. They
   compile, build and are type-checked, but the tables they read do not exist
   remotely yet. Expect small UI problems on first run.
 - **The signed-out pages have now been rendered**, in a headless Chrome at 320,
@@ -341,8 +389,8 @@ Stated plainly so it is not mistaken for done:
 - **No question has ever been asked of the assistant**, because no API key is
   configured. Its pure layers are tested; the provider call itself is verified
   only against a stub.
-- **The SQL for Phases 07–13 was executed** against a local throwaway Postgres —
-  all 21 migrations apply from scratch, deletion clears every table including
+- **The SQL for Phases 07–14 was executed** against a local throwaway Postgres —
+  all 24 migrations apply from scratch, deletion clears every table including
   the billing ones, rate limiting holds under concurrency, replayed webhook
   events are rejected, and generation is idempotent — but never against your
   project.
@@ -362,4 +410,6 @@ Stated plainly so it is not mistaken for done:
 9. §9 AdSense, last
 10. §12 assistant — one key, and it unblocks OCR too
 11. §13 make yourself an admin — one SQL statement, right after §2
-12. §11 payments — independent of the rest, and the slowest to start
+12. §14 retention periods — once you have read the privacy page
+13. §15 CSP enforcement — after the domain and AdSense
+14. §11 payments — independent of the rest, and the slowest to start

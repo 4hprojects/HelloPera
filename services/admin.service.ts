@@ -780,3 +780,88 @@ export async function adjustUsage(params: {
   });
   if (error) throw new Error(`Could not record the adjustment: ${error.code}`);
 }
+
+// -----------------------------------------------------------------------------
+// §64, §65, §66 — financial integrity
+// -----------------------------------------------------------------------------
+
+export type IntegrityFinding = {
+  checkName: string;
+  userId: string | null;
+  entityType: string;
+  entityId: string;
+  detail: string;
+  expected: string | null;
+  actual: string | null;
+};
+
+/**
+ * Every integrity mismatch, across all users.
+ *
+ * Read-only by construction: `check_financial_integrity` is declared `stable`
+ * and writes nothing. That matters more than it sounds — the function this
+ * replaced repaired as it read, so running the report changed the thing being
+ * reported on.
+ *
+ * `detail` is an entity name (a provider, a party, an account) rather than a
+ * figure. It is the minimum needed to act on a finding, and it is the one place
+ * in this file where admin sees a user-entered string — a bill called
+ * "Meralco" is not private financial content in the sense §4 protects, and
+ * without it a finding is an unactionable uuid.
+ */
+export async function listIntegrityFindings(
+  userId?: string,
+): Promise<IntegrityFinding[]> {
+  const admin = createAdminClient();
+  return safely<IntegrityFinding[]>('integrity findings', [], async () => {
+    const { data, error } = await admin.rpc('check_financial_integrity', {
+      p_user_id: userId ?? null,
+    });
+    if (error) throw new Error(error.code);
+
+    return ((data ?? []) as Row[]).map((r) => ({
+      checkName: String(r.check_name),
+      userId: str(r.user_id),
+      entityType: String(r.entity_type),
+      entityId: String(r.entity_id),
+      detail: String(r.detail ?? ''),
+      // numeric arrives as a string; left as one, because parseFloat on money
+      // is how rounding errors enter a report about rounding errors.
+      expected: r.expected === null ? null : String(r.expected),
+      actual: r.actual === null ? null : String(r.actual),
+    }));
+  });
+}
+
+/**
+ * §66 — the controlled repair.
+ *
+ * Narrow (one account) and deterministic (recalculated from confirmed
+ * transactions). It does not audit itself: `adminAction()` wraps the call and
+ * writes the record, so a future caller cannot reach the repair without also
+ * supplying a reason.
+ */
+export async function repairAccountBalance(
+  accountId: string,
+): Promise<{ previous: string; corrected: string }> {
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc('repair_account_balance', {
+    p_account_id: accountId,
+  });
+  if (error) throw new Error(`Could not repair the balance: ${error.code}`);
+
+  const row = (Array.isArray(data) ? data[0] : data) as Row | undefined;
+  return {
+    previous: String(row?.previous ?? '0'),
+    corrected: String(row?.corrected ?? '0'),
+  };
+}
+
+/** §65 — run the report now rather than waiting for the nightly schedule. */
+export async function runIntegrityCheck(): Promise<{ mismatches: number }> {
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc('run_financial_integrity_check');
+  if (error) throw new Error(`Could not run the check: ${error.code}`);
+  const result = (data ?? {}) as Record<string, unknown>;
+  return { mismatches: Number(result.mismatches ?? 0) };
+}

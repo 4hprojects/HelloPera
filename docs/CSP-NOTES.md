@@ -1,11 +1,21 @@
 # Content Security Policy — status and the header to ship
 
-CSP has been deferred three times: Phase 00 §26 deferred it to Phase 01, which
-did not add it, and Phase 10 inherits it. This note records why it is still
-deferred, and what to ship when it lands, so the next person does not have to
-rediscover the origins.
+**Status: report-only has shipped (PHASE-14 §43).** `next.config.mjs` now sends
+`Content-Security-Policy-Report-Only` on every response, alongside a new
+`Strict-Transport-Security`. Violations appear in every visitor's console from
+the first deploy, which is the data needed to turn enforcement on.
 
-## Why it is not on yet
+**What remains is one word.** Changing the header key from
+`Content-Security-Policy-Report-Only` to `Content-Security-Policy` enforces it.
+Do that after the two blockers below are gone and after a week of reading
+reports — not before.
+
+One deviation from the header written in this note: the Supabase origin is
+derived from `NEXT_PUBLIC_SUPABASE_URL` at build time rather than hardcoded as
+`<ref>.supabase.co`. A placeholder committed into a header is a CSP that blocks
+the database on the first deploy to any other project.
+
+## Why enforcement is not on yet
 
 A CSP that is wrong is worse than absent: it breaks the page silently in
 browsers the developer is not using, and the failure looks like an unrelated

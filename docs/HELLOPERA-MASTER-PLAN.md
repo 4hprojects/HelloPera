@@ -1378,7 +1378,9 @@ running the generator; `PHASE-08` the escalation-step rule; `PHASE-09` the
 opposite failure directions of the usage meters; `PHASE-11` why webhook
 idempotency belongs to the database rather than the application; `PHASE-12` why
 a Zod union, and not prompt wording, is what resists prompt injection; `PHASE-13`
-why admin privacy is asserted by a test rather than promised in a comment.
+why admin privacy is asserted by a test rather than promised in a comment; and
+`PHASE-14` why a checker that repairs as it reads cannot report, and why
+maintenance mode is the one switch that is not a feature flag.
 
 ---
 

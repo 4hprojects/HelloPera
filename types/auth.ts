@@ -106,6 +106,9 @@ export const ADMIN_AUDIT_EVENTS = [
   'entitlement_override_revoked',
   'ocr_retry_triggered',
   'job_replay_triggered',
+  /** PHASE-14 §66 — a repair is a write to a balance, and is audited as one. */
+  'balance_repaired',
+  'integrity_check_run',
 ] as const;
 export type AdminAuditEvent = (typeof ADMIN_AUDIT_EVENTS)[number] | 'role_changed';
 

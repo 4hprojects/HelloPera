@@ -11,6 +11,8 @@ import {
   grantOverride,
   revokeOverride,
   setFlag,
+  repairAccountBalance,
+  runIntegrityCheck,
   setUserRole,
   setUserStatus,
 } from '@/services/admin.service';
@@ -300,6 +302,64 @@ export async function adjustUsageAction(
     revalidatePath(`/admin/users/${userId}`);
     revalidatePath('/admin/usage');
     return { success: 'Adjustment recorded.' };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
+/**
+ * §66 — repair one account's cached balance.
+ *
+ * Narrow, deterministic, reasoned and audited, which are §66's four
+ * requirements. It goes through `adminAction()` like every other admin
+ * mutation, so the audit cannot be skipped — and the previous and corrected
+ * values land in the record, because "the balance was wrong and I fixed it" is
+ * not a useful thing to read six months later.
+ */
+export async function repairBalanceAction(
+  _previous: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  try {
+    const accountId = String(formData.get('accountId') ?? '');
+    const userId = String(formData.get('userId') ?? '') || null;
+
+    requireConfirmation(formData);
+
+    const result = await adminAction({
+      event: 'balance_repaired',
+      reason: formData.get('reason'),
+      targetUserId: userId,
+      entityId: accountId,
+      run: async () => repairAccountBalance(accountId),
+    });
+
+    revalidatePath('/admin/integrity');
+    return { success: `Corrected ${result.previous} to ${result.corrected}.` };
+  } catch (error) {
+    return fail(error);
+  }
+}
+
+/** §65 — run the nightly report now. */
+export async function runIntegrityCheckAction(
+  _previous: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  try {
+    const result = await adminAction({
+      event: 'integrity_check_run',
+      reason: formData.get('reason'),
+      run: async () => runIntegrityCheck(),
+    });
+
+    revalidatePath('/admin/integrity');
+    return {
+      success:
+        result.mismatches === 0
+          ? 'No mismatches found.'
+          : `${result.mismatches} mismatch${result.mismatches === 1 ? '' : 'es'} found.`,
+    };
   } catch (error) {
     return fail(error);
   }

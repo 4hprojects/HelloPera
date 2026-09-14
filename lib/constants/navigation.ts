@@ -75,6 +75,7 @@ export const adminNav: NavItem[] = [
   { label: 'AI', href: '/admin/ai' },
   { label: 'Notifications', href: '/admin/notifications' },
   { label: 'Content', href: '/admin/content' },
+  { label: 'Integrity', href: '/admin/integrity' },
   { label: 'System', href: '/admin/system' },
   { label: 'Audit', href: '/admin/audit' },
 ];
