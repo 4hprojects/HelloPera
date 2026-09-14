@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { getCurrentUser } from '@/lib/auth/session';
 import { redirect } from 'next/navigation';
 import { buttonClass } from '@/components/ui/button';
+import { AuthColumn } from '@/components/auth/auth-column';
 
 export const metadata: Metadata = { title: 'Verify your email' };
 
@@ -19,7 +20,7 @@ export default async function VerifyEmailPage({
   const email = params.email ?? user?.email ?? null;
 
   return (
-    <>
+    <AuthColumn>
       <h1 className="hp-h1 mb-1 text-text">Check your inbox</h1>
       <p className="hp-body mb-4 text-text-muted">
         {email ? (
@@ -39,6 +40,6 @@ export default async function VerifyEmailPage({
       <Link href="/login" className={buttonClass('ghost', 'md', 'w-full')}>
         Back to sign in
       </Link>
-    </>
+    </AuthColumn>
   );
 }
