@@ -68,9 +68,31 @@ export const RECURRING_AUDIT_EVENTS = [
 ] as const;
 export type RecurringAuditEvent = (typeof RECURRING_AUDIT_EVENTS)[number];
 
+/**
+ * Assistant events — PHASE-12 §94.
+ *
+ * §94: "Do not store full prompt in financial audit log." So there is no event
+ * here that carries a question, and the metadata written alongside these names
+ * the intent or the reason a question was refused — never the text. The
+ * conversation itself is the user's own record, in `ai_messages`, scoped to
+ * them; the audit log is an operational trail and does not need a second copy.
+ */
+export const AI_AUDIT_EVENTS = [
+  'ai_query_executed',
+  'ai_limit_reached',
+  'ai_conversation_created',
+  'ai_conversation_archived',
+] as const;
+export type AiAuditEvent = (typeof AI_AUDIT_EVENTS)[number];
+
 /** Everything `recordAuditEvent` will accept. */
-export type AnyAuditEvent = AuditEvent | RecurringAuditEvent;
+export type AnyAuditEvent = AuditEvent | RecurringAuditEvent | AiAuditEvent;
 
 /** Which domain a row belongs to — the `entity_type` column. */
-export const AUDIT_ENTITY_TYPES = ['auth', 'recurring_rule', 'expected_event'] as const;
+export const AUDIT_ENTITY_TYPES = [
+  'auth',
+  'recurring_rule',
+  'expected_event',
+  'ai',
+] as const;
 export type AuditEntityType = (typeof AUDIT_ENTITY_TYPES)[number];

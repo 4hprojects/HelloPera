@@ -17,6 +17,13 @@ export const RATE_LIMITED_ACTIONS = [
   'password_reset_request',
   'password_reset_confirm',
   'contact',
+  /**
+   * PHASE-12 §43. Not a plan quota — §39's line holds: `ai_queries` in
+   * `usage_records` is what someone is entitled to, and this is what stops
+   * prompt flooding from one session. Conflating them would let a paid plan
+   * buy a higher flood ceiling.
+   */
+  'ai_question',
 ] as const;
 export type RateLimitedAction = (typeof RATE_LIMITED_ACTIONS)[number];
 
@@ -45,6 +52,13 @@ export const POLICIES: Record<RateLimitedAction, RateLimitPolicy> = {
   password_reset_request: { limit: 4, windowSeconds: 60 * 60 },
   password_reset_confirm: { limit: 8, windowSeconds: 15 * 60 },
   contact: { limit: 5, windowSeconds: 60 * 60 },
+  /**
+   * Looser than the auth actions, because this is a signed-in person using a
+   * feature rather than an attacker guessing. Ten a minute is far more than
+   * anyone types and far less than a script sends — and the monthly quota,
+   * not this, is what bounds the real cost.
+   */
+  ai_question: { limit: 10, windowSeconds: 60 },
 };
 
 export type RateLimitResult = {
