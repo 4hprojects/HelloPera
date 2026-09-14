@@ -1347,12 +1347,17 @@ actions. Read it before building any screen.
 Brand identity is separate, and lives in:
 
 ```text
-image/HelloPeraIcon.png
-image/HelloPeraLogo.png
+image/Icon-only-master.png
+image/Primary-horizontal-logo-with-tagline.png
 ```
 
 Every favicon, PWA icon and social image is generated from those two files by
 `npm run icons` and committed. Never hand-edit an output.
+
+`image/` holds several other cuts — stacked, monochrome, pre-rendered tiles —
+which are reference rather than build inputs. `docs/DESIGN-SYSTEM.md` §2 lists
+each and says which the build uses, and why the pre-rendered app and maskable
+tiles are deliberately not among them.
 
 ```text
 docs/DESIGN-SYSTEM.md

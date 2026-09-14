@@ -2,19 +2,23 @@ import Image from 'next/image';
 import { cn } from '@/lib/utils/cn';
 
 /**
- * HelloPera lockup — the real mark from image/HelloPeraIcon.png, beside a
+ * HelloPera lockup — the real mark from image/Icon-only-master.png, beside a
  * live-text wordmark.
  *
  * The mark is raster because that is the form the brand art exists in;
  * `public/icons/icon-192.png` is the smallest generated cut, so a 28px logo
- * does not pull a 913 KB source through the optimiser. Regenerate with
- * `node scripts/build-icons.mjs`.
+ * does not pull a 900 KB source through the optimiser. Regenerate with
+ * `npm run icons`.
  *
- * The wordmark stays as text rather than shipping the lockup raster: it keeps
- * its own colour tokens on the dark rail, it scales without a second asset,
- * and it is selectable and searchable. Its colours follow the UI palette
- * (jade), not the logo art (grass green) — the showcase makes the same
- * substitution, and docs/DESIGN-SYSTEM.md §3.4 records why.
+ * The brand set also ships a finished lockup (Primary-horizontal-logo.png).
+ * It is deliberately not used here: a flat raster cannot re-colour for the
+ * Deep Ink rail or for dark mode, it would need several cuts to stay crisp,
+ * and the wordmark would stop being selectable text.
+ *
+ * The wordmark stays as text: it keeps its own colour tokens on the dark rail,
+ * scales without a second asset, and is selectable and searchable. Its colours
+ * follow the UI palette, not the logo art — docs/DESIGN-SYSTEM.md §3.4 records
+ * why, and the substitution still holds for the new mark.
  *
  * `tone="onDark"` is for the navigation rail, where the ground is Deep Ink
  * and the light-theme text token would vanish into it.
@@ -56,8 +60,8 @@ export function AppLogo({
 }
 
 /**
- * The wallet mark on its own. Decorative wherever the wordmark sits beside it,
- * which is everywhere it currently appears.
+ * The coin-purse mark on its own. Decorative wherever the wordmark sits beside
+ * it, which is everywhere it currently appears.
  */
 export function BrandMark({
   size = 30,

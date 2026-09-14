@@ -5,8 +5,15 @@
  *   node scripts/build-icons.mjs
  *
  * Sources (the only hand-authored art in the repo):
- *   image/HelloPeraIcon.png   1254² app mark  — rounded tile, transparent corners
- *   image/HelloPeraLogo.png   1254² lockup    — mark + wordmark + "Plan | Track | Grow"
+ *   image/Icon-only-master.png                  1318x1193 mark, transparent
+ *   image/Primary-horizontal-logo-with-tagline  2172x724 lockup, transparent
+ *
+ * The brand set also ships App-icon.png, Maskable-PWA-icon.png and
+ * Favicon.png as pre-rendered 1254² tiles. Two of them are NOT used here, and
+ * the reason matters: App-icon and Maskable-PWA-icon are drawn as a rounded
+ * tile on a WHITE field. A maskable icon is cropped by the launcher to a
+ * circle or squircle, so those white corners would appear as white arcs
+ * around the mark. They are fine as reference art and wrong as sources.
  *
  * Outputs are committed, not built on demand: a favicon that only exists after
  * a postinstall step is a favicon that is missing in someone's checkout.
@@ -18,11 +25,26 @@ import path from 'node:path';
 import sharp from 'sharp';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
-const ICON = path.join(ROOT, 'image/HelloPeraIcon.png');
-const LOGO = path.join(ROOT, 'image/HelloPeraLogo.png');
+const ICON = path.join(ROOT, 'image/Icon-only-master.png');
+const LOGO = path.join(ROOT, 'image/Primary-horizontal-logo-with-tagline.png');
 
-/** Mean of the tile's own outer ring — see fullBleedIcon. */
-const TILE_GROUND = '#10704c';
+/**
+ * The ground behind the mark on opaque icons — see fullBleedIcon.
+ *
+ * Deep Ink, the same `--hp-nav` the app's navigation rail uses. Chosen by
+ * measurement rather than taste, against the purse body #027c6b:
+ *
+ *   #047f6e  mean of the mark's own green   1.04:1   invisible
+ *   #02594e  the brand sheet's favicon teal 1.61:1   weak at 16px
+ *   #132238  Deep Ink                       3.12:1   clears 3:1
+ *
+ * A jade mark on a jade ground has almost no edge — at favicon size the purse
+ * dissolves into its tile and only the coin survives. DESIGN-SYSTEM §4.3 asks
+ * for a measured ratio on every surface, and 3:1 is what WCAG 1.4.11 wants of
+ * a graphical object. Deep Ink is also an approved ground in the brand sheet's
+ * own "Dark / Ink" favicon row, so this is the designer's option, not a new one.
+ */
+const TILE_GROUND = '#132238';
 /** Page background — the ground the lockup was drawn to sit on. */
 const MIST = '#f4f8f7';
 
@@ -42,15 +64,14 @@ async function transparentIcon(size, out) {
  * launcher prefers — so the icon has to arrive opaque and edge to edge, with
  * the mark inside the centre 80% safe zone.
  *
- * The tile cannot simply be zoomed until its own corners leave the canvas:
- * its corner radius is 23% of its width, so the zoom needed to clear the curve
- * would crop the growth arrow and the sparkles. It sits on a flat ground
- * instead, `TILE_GROUND`, which is the mean of the tile's own outer ring — the
- * one colour that cannot read as a seam in any particular direction. A blurred
- * copy of the artwork was tried here first and is worse: the coin smears into
- * a yellow bloom that looks like a rendering fault.
+ * The mark itself is a transparent coin purse with no tile of its own, so it
+ * is composited onto a flat `TILE_GROUND`. A blurred copy of the artwork was
+ * tried as a ground on the previous mark and is worse: the coin smears into a
+ * yellow bloom that looks like a rendering fault.
  *
- * `inset` is the fraction of the canvas the tile occupies.
+ * `inset` is the fraction of the canvas the mark occupies. It must stay inside
+ * the centre 80% for maskable, because everything outside that can be cropped
+ * away by the launcher.
  */
 async function fullBleedIcon(size, inset, out) {
   const tile = Math.round(size * inset);
@@ -111,9 +132,19 @@ async function ico(sizes, out) {
 async function social(out) {
   const W = 1200;
   const H = 630;
+  // Bounded on BOTH axes, not just height. The previous lockup was square, so
+  // a height of 500 gave a width of 500 and fitted comfortably. This one is
+  // roughly 3:1 — scaling it to 500 tall makes it ~1500 wide, which overflows
+  // the 1200px card and makes sharp refuse the composite outright.
+  //
+  // `inside` scales down to fit the box and never enlarges, so the lockup
+  // keeps its aspect ratio with a clear margin on every side.
   const art = await sharp(LOGO)
     .trim({ threshold: 1 })
-    .resize(null, 500, { fit: 'contain' })
+    .resize(Math.round(W * 0.72), Math.round(H * 0.52), {
+      fit: 'inside',
+      withoutEnlargement: true,
+    })
     .toBuffer();
   await sharp({
     create: { width: W, height: H, channels: 4, background: MIST },
@@ -129,9 +160,9 @@ await mkdir(icons, { recursive: true });
 await Promise.all([
   transparentIcon(192, path.join(icons, 'icon-192.png')),
   transparentIcon(512, path.join(icons, 'icon-512.png')),
-  // Maskable: the mark must survive a circular crop, so the tile sits at 80%.
+  // Maskable: the mark must survive a circular crop, so it sits at 80%.
   fullBleedIcon(512, 0.8, path.join(icons, 'icon-maskable-512.png')),
-  // iOS applies only a modest corner radius, so the tile can run wider.
+  // iOS applies only a modest corner radius, so the mark can run wider.
   fullBleedIcon(180, 0.94, path.join(ROOT, 'app/apple-icon.png')),
   ico([16, 32, 48], path.join(ROOT, 'app/favicon.ico')),
   social(path.join(ROOT, 'app/opengraph-image.png')),
@@ -143,4 +174,4 @@ await sharp(path.join(ROOT, 'app/opengraph-image.png')).toFile(
   path.join(ROOT, 'app/twitter-image.png'),
 );
 
-console.log('icons + social images written from image/HelloPera{Icon,Logo}.png');
+console.log('icons + social images written from image/Icon-only-master.png');
