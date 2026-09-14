@@ -5,6 +5,7 @@ import { LogoutButton } from '@/components/auth/logout-button';
 import { requireUser } from '@/lib/auth/guards';
 import { appNav, mobileNav } from '@/lib/constants/navigation';
 import { unreadCount } from '@/services/notification.service';
+import { getEffectivePlan } from '@/services/plan.service';
 
 /**
  * Authenticated shell.
@@ -14,11 +15,17 @@ import { unreadCount } from '@/services/notification.service';
  * page that simply forgets.
  */
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  const { profile } = await requireUser();
+  const { user, profile } = await requireUser();
 
   // §20 — the bell counts unread notifications. If the count cannot be read,
   // the bar renders without a badge rather than taking the whole shell down.
   const unread = await unreadCount().catch(() => 0);
+
+  // PHASE-09 — the plan line was hardcoded 'Free plan'. It now resolves, and
+  // falls back to Free if resolution fails, which is the same answer §53 asks
+  // for everywhere else.
+  const effective = await getEffectivePlan(user.id).catch(() => null);
+  const planLabel = effective ? `${effective.plan.name} plan` : 'Free plan';
 
   return (
     <div className="flex min-h-dvh">
@@ -27,9 +34,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         user={{
           name: profile.full_name,
           email: profile.email ?? '',
-          // Phase 09 owns real tiers; until then every account is on Free.
-          plan: 'Free plan',
-          href: '/settings',
+          plan: planLabel,
+          href: '/settings/plan',
         }}
         footer={
           <LogoutButton className="h-10 w-full rounded-[var(--radius-hp)] text-sm font-medium text-nav-muted hover:bg-nav-raised hover:text-nav-text" />

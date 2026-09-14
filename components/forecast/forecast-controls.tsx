@@ -36,28 +36,53 @@ export function ForecastControls({
   currency,
   currencies,
   includeReceivables,
+  permittedHorizons,
+  showUpgrade = false,
 }: {
   horizon: Horizon;
   currency: string;
   currencies: string[];
   includeReceivables: boolean;
+  /** PHASE-09 §24 — what this plan may select. The server enforces it too. */
+  permittedHorizons?: readonly number[];
+  /** Hidden while billing is disabled (§52), so no CTA leads nowhere. */
+  showUpgrade?: boolean;
 }) {
   const state = { horizon, currency, includeReceivables };
+  const permitted = permittedHorizons ?? HORIZONS;
 
   return (
     <div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-3">
       <nav aria-label="Forecast horizon" className="flex items-center gap-1">
         <span className="mr-1 text-xs font-medium text-text-muted">Next</span>
-        {HORIZONS.map((h) => (
-          <Link
-            key={h}
-            href={href(state, { horizon: h })}
-            aria-current={h === horizon ? 'true' : undefined}
-            className={pill(h === horizon)}
-          >
-            {h} days
-          </Link>
-        ))}
+        {HORIZONS.map((h) =>
+          permitted.includes(h) ? (
+            <Link
+              key={h}
+              href={href(state, { horizon: h })}
+              aria-current={h === horizon ? 'true' : undefined}
+              className={pill(h === horizon)}
+            >
+              {h} days
+            </Link>
+          ) : (
+            // §21 — labelled, not hidden. A user cannot decide an upgrade is
+            // worth it if they never learn the longer view exists. Rendered as
+            // a disabled control rather than a link, so it cannot be followed.
+            <span
+              key={h}
+              aria-disabled="true"
+              title={
+                showUpgrade
+                  ? 'Longer forecasts are part of Premium'
+                  : 'Longer forecasts are not available yet'
+              }
+              className="cursor-not-allowed rounded-full px-3 py-1.5 text-xs font-medium text-text-muted opacity-60"
+            >
+              {h} days{showUpgrade ? ' · Premium' : ''}
+            </span>
+          ),
+        )}
       </nav>
 
       {/* §46 — only shown when there is a genuine choice to make. */}

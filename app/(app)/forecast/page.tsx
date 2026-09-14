@@ -11,6 +11,8 @@ import { todayInTimezone } from '@/lib/finance/obligation';
 import { compactMoney } from '@/lib/analytics/format';
 import { formatMoney, isNegative, money } from '@/lib/money';
 import { getForecast } from '@/services/forecast.service';
+import { getEffectivePlan } from '@/services/plan.service';
+import { allowedHorizons } from '@/lib/monetization/entitlements';
 import { HORIZONS, type Horizon } from '@/types/forecast';
 
 export const metadata: Metadata = { title: 'Forecast' };
@@ -41,10 +43,19 @@ export default async function ForecastPage({
   const first = (v: string | string[] | undefined): string | undefined =>
     Array.isArray(v) ? v[0] : v;
 
-  const horizon = parseHorizon(first(params.horizon));
+  const requestedHorizon = parseHorizon(first(params.horizon));
   const includeReceivables = first(params.receivables) === '1';
   const requested = first(params.currency)?.toUpperCase();
   const today = todayInTimezone(profile.timezone);
+
+  // PHASE-09 §20, §24 — enforced on the SERVER, not by hiding buttons. A
+  // hand-typed ?horizon=90 must not produce a 90-day projection for a plan
+  // entitled to 30; §20 is explicit that disabled UI is not enforcement.
+  const { entitlements, billingEnabled } = await getEffectivePlan(user.id);
+  const permitted = allowedHorizons(entitlements, HORIZONS);
+  const horizon = (
+    permitted.includes(requestedHorizon) ? requestedHorizon : (permitted.at(-1) ?? 30)
+  ) as Horizon;
 
   const data = await getForecast(user.id, today, {
     horizon,
@@ -75,6 +86,8 @@ export default async function ForecastPage({
         currency={currency}
         currencies={currencies}
         includeReceivables={includeReceivables}
+        permittedHorizons={permitted}
+        showUpgrade={billingEnabled}
       />
 
       <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-3">

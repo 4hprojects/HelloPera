@@ -5,6 +5,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { BUCKET } from '@/services/storage.service';
 import { ClaudeExtractionProvider } from '@/lib/ocr/claude-provider';
 import { ProviderError, type ExtractionProvider } from '@/lib/ocr/provider';
+import { assertWithinLimit, recordUsage } from '@/services/usage.service';
 import { findCandidates, type ExistingRecord } from '@/lib/ocr/duplicate';
 import { log } from '@/lib/log';
 
@@ -90,6 +91,15 @@ export async function runExtraction(params: {
   if (!doc || doc.user_id !== params.userId)
     throw new OcrError('That document is unavailable.');
 
+  // PHASE-09 §17 — the quota gate sits BEFORE the provider is called, so a
+  // rejected request costs nothing and counts nothing. It also sits before the
+  // ocr_jobs insert, so a refused request leaves no job row implying an
+  // attempt that never happened.
+  //
+  // Throws UsageLimitError, which the caller turns into §33's copy: the number
+  // used, the reset date, and a way to continue manually.
+  await assertWithinLimit(params.userId, 'ocr_jobs', params.timezone);
+
   // Retry after the source has been deleted would run against a degraded
   // image and quietly produce worse results (§43). Refuse instead.
   if (!doc.original_path || doc.retention_status === 'original_deleted') {
@@ -126,6 +136,17 @@ export async function runExtraction(params: {
     if (downloadError || !file) throw new OcrError('We could not open that document.');
 
     const bytes = new Uint8Array(await file.arrayBuffer());
+
+    // §17 — counted here, once the provider call is committed to. Placed
+    // AFTER the download so a storage failure (HelloPera's fault) does not
+    // count, and BEFORE extract() so a provider error still does: it cost
+    // money either way, and the user gets a clear failure rather than a
+    // silent charge.
+    //
+    // This is deliberately not the same number as ocr_jobs.attempt_count,
+    // which tracks what was sent to the provider. The gap between them is the
+    // measure of HelloPera's own reliability.
+    await recordUsage(params.userId, 'ocr_jobs', params.timezone);
 
     const result = await activeProvider.extract({
       bytes,

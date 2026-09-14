@@ -6,6 +6,7 @@ import { log } from '@/lib/log';
 import type { ActionState } from '@/app/actions/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { OcrError, runExtraction } from '@/services/ocr.service';
+import { UsageLimitError } from '@/services/usage.service';
 import { createTransaction, TransactionError } from '@/services/transaction.service';
 import {
   createBill,
@@ -30,6 +31,17 @@ export async function runExtractionAction(
       timezone: profile.timezone,
     });
   } catch (error) {
+    // PHASE-09 §33 — say the number, say when it resets, and never imply the
+    // user is stuck: manual entry is always available, which §33 is explicit
+    // about ("Do not block manual transaction entry").
+    if (error instanceof UsageLimitError) {
+      return {
+        error:
+          `You've used your ${error.limit} document scans for this month. ` +
+          `Your limit resets on ${formatResetDate(error.resetsOn)}. ` +
+          `You can still add this transaction manually.`,
+      };
+    }
     if (error instanceof OcrError) return { error: error.message };
     log.error('extraction action failed', { document_id: documentId });
     return { error: 'We could not read that document.' };
@@ -180,4 +192,13 @@ export async function discardExtractionAction(formData: FormData): Promise<void>
 
   revalidatePath(`/documents/${documentId}/review`);
   revalidatePath('/documents');
+}
+
+/** "2026-10-01" -> "October 1", for the §33 limit message. */
+function formatResetDate(iso: string): string {
+  const [y = '1970', m = '01', d = '01'] = iso.split('-');
+  return new Date(Date.UTC(Number(y), Number(m) - 1, Number(d))).toLocaleDateString(
+    'en-US',
+    { month: 'long', day: 'numeric', timeZone: 'UTC' },
+  );
 }
