@@ -1,5 +1,4 @@
 import { LeafMark } from '@/components/brand/motifs';
-import { AppLogo } from '@/components/brand/app-logo';
 import { BRAND } from '@/lib/constants/brand';
 
 /**
@@ -48,10 +47,13 @@ export function AuthPanel({ title, subtitle }: { title: string; subtitle: string
         className="pointer-events-none absolute -bottom-8 -left-6 rotate-180 opacity-[0.05]"
       />
 
+      {/*
+        No logo here. The site header above already carries the mark, and two
+        of them roughly a hundred pixels apart reads as a mistake rather than
+        as branding.
+      */}
       <div className="relative">
-        <AppLogo tone="onDark" />
-
-        <h1 className="hp-h1 mt-6 text-nav-text sm:mt-8">{title}</h1>
+        <h1 className="hp-h1 text-nav-text">{title}</h1>
         <p className="hp-body mt-2 text-nav-muted">{subtitle}</p>
 
         {/* Dropped below `lg` — the panel becomes a header, not a wall. */}

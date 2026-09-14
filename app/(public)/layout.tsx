@@ -1,10 +1,6 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
-import { AppLogo } from '@/components/brand/app-logo';
 import { SiteFooter } from '@/components/layout/site-footer';
-import { ThemeToggle } from '@/components/ui/theme-toggle';
-import { buttonClass } from '@/components/ui/button';
-import { headerRoutes } from '@/lib/seo/routes';
+import { SiteHeader } from '@/components/layout/site-header';
 import { ConsentBanner } from '@/components/consent/consent-banner';
 
 /**
@@ -35,62 +31,9 @@ export const metadata: Metadata = {
 };
 
 export default function PublicLayout({ children }: { children: React.ReactNode }) {
-  const nav = headerRoutes();
-
   return (
     <div className="flex min-h-dvh flex-col">
-      <header className="border-b border-border bg-surface">
-        <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-3">
-          <Link href="/" className="rounded">
-            <AppLogo />
-          </Link>
-
-          {/*
-            §11, §66 — the nav is now driven by the route registry rather than
-            a hand-kept list, which is why /pricing shipped unreachable: it
-            existed as a page and appeared in neither the header nor the
-            footer.
-
-            Visible at every width. Previously `hidden sm:flex`, which left
-            phone visitors with no navigation at all — the single largest
-            share of traffic for a mobile-first product.
-          */}
-          <nav
-            aria-label="Site"
-            className="flex flex-1 flex-wrap justify-center gap-x-4 gap-y-1 sm:gap-5"
-          >
-            {nav.map((item) => (
-              <Link
-                key={item.path}
-                href={item.path}
-                className="hp-small text-text-muted hover:text-text"
-              >
-                {item.label}
-              </Link>
-            ))}
-          </nav>
-
-          <div className="flex items-center gap-2 sm:gap-3">
-            <ThemeToggle />
-            {/*
-              The header previously offered only "Sign in" — no way in for
-              someone who does not have an account yet, on a page whose job is
-              to get them one. Sign in stays as the quieter ghost button
-              because returning users are looking for it, while new visitors
-              need to be offered something.
-            */}
-            <Link
-              href="/login"
-              className={buttonClass('ghost', 'sm', 'hidden sm:inline-flex')}
-            >
-              Sign in
-            </Link>
-            <Link href="/register" className={buttonClass('primary', 'sm')}>
-              Get started
-            </Link>
-          </div>
-        </div>
-      </header>
+      <SiteHeader />
 
       <main id="main" className="flex-1">
         {children}
