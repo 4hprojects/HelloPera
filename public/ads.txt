@@ -1,0 +1,11 @@
+# ads.txt — PHASE-10 §56
+#
+# Authorised Digital Sellers. This file declares which ad systems may sell
+# HelloPera's inventory; an empty or missing file lets anyone claim to.
+#
+# It is intentionally EMPTY of seller lines until an AdSense account exists.
+# Publishing a placeholder publisher id would either be wrong or would
+# authorise an account that is not ours — both worse than declaring nothing.
+#
+# When AdSense is approved, add:
+#   google.com, pub-XXXXXXXXXXXXXXXX, DIRECT, f08c47fec0942fa0

@@ -117,6 +117,18 @@ const schema = z.object({
   // A mailto: or https: URL identifying the sender, required by the Web Push
   // spec so a push service can contact whoever is sending.
   VAPID_SUBJECT: z.string().min(1).optional(),
+
+  // AdSense (PHASE-10 §55, §57). Optional: ads are an enhancement and the
+  // product must run without them. The publisher id is public by design —
+  // it appears in the ad script on every page — so NEXT_PUBLIC_ is correct
+  // here rather than a leak.
+  NEXT_PUBLIC_ADSENSE_CLIENT_ID: z
+    .string()
+    .regex(
+      /^ca-pub-\d{16}$/,
+      'An AdSense client id looks like ca-pub- followed by 16 digits',
+    )
+    .optional(),
 });
 
 export type Env = z.infer<typeof schema>;
@@ -135,6 +147,7 @@ function load(): Env {
     NEXT_PUBLIC_VAPID_PUBLIC_KEY: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
     VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY,
     VAPID_SUBJECT: process.env.VAPID_SUBJECT,
+    NEXT_PUBLIC_ADSENSE_CLIENT_ID: process.env.NEXT_PUBLIC_ADSENSE_CLIENT_ID,
   });
 
   if (!parsed.success) {
@@ -205,4 +218,15 @@ export function isPushConfigured(): boolean {
   return Boolean(
     env.NEXT_PUBLIC_VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY && env.VAPID_SUBJECT,
   );
+}
+
+/**
+ * Is AdSense configured? — PHASE-10 §55.
+ *
+ * Mirrors `isPushConfigured()`. Checked rather than assumed so a deployment
+ * without a publisher id renders no ad markup at all, instead of an empty
+ * unit and a console error on every page.
+ */
+export function isAdsConfigured(): boolean {
+  return Boolean(env.NEXT_PUBLIC_ADSENSE_CLIENT_ID);
 }

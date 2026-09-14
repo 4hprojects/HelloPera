@@ -5,6 +5,7 @@ import { SiteFooter } from '@/components/layout/site-footer';
 import { ThemeToggle } from '@/components/ui/theme-toggle';
 import { buttonClass } from '@/components/ui/button';
 import { headerRoutes } from '@/lib/seo/routes';
+import { ConsentBanner } from '@/components/consent/consent-banner';
 
 /**
  * PHASE-10 §33 — the public site is the ONLY part of HelloPera that is
@@ -83,6 +84,13 @@ export default function PublicLayout({ children }: { children: React.ReactNode }
       </main>
 
       <SiteFooter />
+
+      {/*
+        §49 — public site only. The authenticated app uses only the session
+        cookie, which is strictly necessary and offers no meaningful choice;
+        asking there would be a banner that can log you out.
+      */}
+      <ConsentBanner />
     </div>
   );
 }
