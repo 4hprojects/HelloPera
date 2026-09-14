@@ -54,45 +54,63 @@ export function SiteHeader() {
 
   return (
     <header className="border-b border-border bg-surface">
-      <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-3">
-        <Link href="/" className="rounded">
+      {/*
+        Two rows on a phone, one from `sm` up.
+
+        Measured, not guessed: at 320px the logo is ~140px and the theme
+        toggle ~165px, so logo + toggle + call-to-action needs ~395px in the
+        288px a 320px viewport leaves after the gutters. The old single row
+        overflowed at every phone width — the landing page scrolled sideways
+        by 237px — which is exactly the audience this product is built for.
+
+        So the container wraps, and explicit `order` puts the nav and the
+        toggle on their own line below the logo and the CTA. Row one is then
+        ~250px and row two ~235px, both inside 288. From `sm` the order
+        returns to logo / nav / toggle / CTA on one line.
+      */}
+      <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
+        <Link href="/" className="order-1 shrink-0 rounded">
           <AppLogo />
         </Link>
 
-        {/*
-          §11, §66 — driven by the route registry rather than a hand-kept list,
-          which is why /pricing once shipped unreachable: it existed as a page
-          and appeared in neither the header nor the footer.
+        <div className="order-3 flex w-full items-center justify-between gap-3 sm:order-2 sm:w-auto sm:flex-1 sm:justify-center">
+          {/*
+            §11, §66 — driven by the route registry rather than a hand-kept
+            list, which is why /pricing once shipped unreachable: it existed as
+            a page and appeared in neither the header nor the footer.
 
-          Visible at every width. It was `hidden sm:flex`, which left phone
-          visitors with no navigation at all — the largest share of traffic for
-          a mobile-first product.
-        */}
-        <nav
-          aria-label="Site"
-          className="flex flex-1 flex-wrap justify-center gap-x-4 gap-y-1 sm:gap-5"
-        >
-          {nav.map((item) => {
-            const current = pathname === item.path;
-            return (
-              <Link
-                key={item.path}
-                href={item.path}
-                aria-current={current ? 'page' : undefined}
-                className={
-                  current
-                    ? 'hp-small font-semibold text-text'
-                    : 'hp-small text-text-muted hover:text-text'
-                }
-              >
-                {item.label}
-              </Link>
-            );
-          })}
-        </nav>
+            Visible at every width. It was `hidden sm:flex`, which left phone
+            visitors with no navigation at all.
+          */}
+          <nav
+            aria-label="Site"
+            className="flex flex-wrap gap-x-4 gap-y-1 sm:justify-center sm:gap-5"
+          >
+            {nav.map((item) => {
+              const current = pathname === item.path;
+              return (
+                <Link
+                  key={item.path}
+                  href={item.path}
+                  aria-current={current ? 'page' : undefined}
+                  className={
+                    current
+                      ? 'hp-small font-semibold text-text'
+                      : 'hp-small text-text-muted hover:text-text'
+                  }
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
+          </nav>
 
-        <div className="flex items-center gap-2 sm:gap-3">
-          <ThemeToggle />
+          <div className="shrink-0">
+            <ThemeToggle />
+          </div>
+        </div>
+
+        <div className="order-2 flex shrink-0 items-center gap-2 sm:order-3 sm:gap-3">
           {showSignIn ? (
             <Link
               href="/login"
