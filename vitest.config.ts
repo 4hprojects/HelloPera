@@ -3,7 +3,23 @@ import { fileURLToPath } from 'node:url';
 
 export default defineConfig({
   resolve: {
-    alias: { '@': fileURLToPath(new URL('./', import.meta.url)) },
+    alias: {
+      '@': fileURLToPath(new URL('./', import.meta.url)),
+      /**
+       * `server-only` throws on import outside a Server Component, which makes
+       * any module carrying it untestable — including `lib/ai/claude-provider.ts`,
+       * the one piece of Phase 12 that would otherwise need a real key and a
+       * network to verify at all.
+       *
+       * The package ships `empty.js` for exactly this purpose: it is what the
+       * `react-server` condition already resolves to. Aliasing here weakens
+       * nothing in production, where Next still enforces the boundary at build
+       * time and a client import remains a build error.
+       */
+      'server-only': fileURLToPath(
+        new URL('./node_modules/server-only/empty.js', import.meta.url),
+      ),
+    },
   },
   test: {
     environment: 'node',
