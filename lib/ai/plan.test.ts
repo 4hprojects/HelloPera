@@ -11,6 +11,8 @@ import { rangeFor } from '@/lib/analytics/range';
 const TODAY = '2026-09-14';
 
 const context = (over: Partial<PlanContext> = {}): PlanContext => ({
+  userId: 'user-1',
+  timezone: 'Asia/Manila',
   today: TODAY,
   currencies: ['PHP'],
   defaultCurrency: 'PHP',

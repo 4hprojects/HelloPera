@@ -40,8 +40,18 @@ const PREMIUM_INTENTS: ReadonlySet<AiIntent> = new Set([
 
 export type NamedRow = { id: string; name: string };
 
-/** Everything the validator needs to know about the user, resolved once. */
+/**
+ * Everything the assistant needs to know about the user, resolved once.
+ *
+ * `userId` and `timezone` are not read by `validatePlan` — they are here
+ * because the executors need them and this is the one object that travels the
+ * whole way. §13: both come from the session. There is no code path that reads
+ * a user id out of a question, and the model has never seen one.
+ */
 export type PlanContext = {
+  userId: string;
+  /** IANA zone. The analytics service resolves its own "today" from this. */
+  timezone: string;
   /** YYYY-MM-DD in the user's timezone. */
   today: string;
   currencies: readonly string[];
