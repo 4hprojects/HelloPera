@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { requireUser } from '@/lib/auth/guards';
 import { log } from '@/lib/log';
+import { assertWritesEnabled, WritesDisabledError } from '@/lib/ops/kill-switches';
 import {
   createAccountSchema,
   createTransactionSchema,
@@ -34,6 +35,15 @@ export async function createAccountAction(
 ): Promise<ActionState> {
   const { user } = await requireUser();
 
+  // PHASE-14 §23 — the ledger freeze, enforced where the write happens rather
+  // than in the UI. A disabled button is a suggestion; this is a refusal.
+  try {
+    await assertWritesEnabled();
+  } catch (error) {
+    if (error instanceof WritesDisabledError) return { error: error.message };
+    throw error;
+  }
+
   const parsed = createAccountSchema.safeParse({
     name: formData.get('name'),
     type: formData.get('type'),
@@ -61,6 +71,13 @@ export async function createAccountAction(
 
 export async function archiveAccountAction(formData: FormData): Promise<void> {
   const { user } = await requireUser();
+
+  // PHASE-14 §23. This action returns void, so there is no error object to
+  // hand back — the throw propagates to the error boundary, which is the
+  // honest outcome. Silently doing nothing would leave the account looking
+  // archived until the page refreshed and it reappeared.
+  await assertWritesEnabled();
+
   const id = String(formData.get('id') ?? '');
   const archived = String(formData.get('archived') ?? '') === 'true';
   if (!id) return;
@@ -76,6 +93,15 @@ export async function createTransactionAction(
   formData: FormData,
 ): Promise<ActionState> {
   const { user } = await requireUser();
+
+  // PHASE-14 §23 — the ledger freeze, enforced where the write happens rather
+  // than in the UI. A disabled button is a suggestion; this is a refusal.
+  try {
+    await assertWritesEnabled();
+  } catch (error) {
+    if (error instanceof WritesDisabledError) return { error: error.message };
+    throw error;
+  }
 
   const raw = {
     type: formData.get('type'),
@@ -116,6 +142,15 @@ export async function voidTransactionAction(
   formData: FormData,
 ): Promise<ActionState> {
   const { user } = await requireUser();
+
+  // PHASE-14 §23 — the ledger freeze, enforced where the write happens rather
+  // than in the UI. A disabled button is a suggestion; this is a refusal.
+  try {
+    await assertWritesEnabled();
+  } catch (error) {
+    if (error instanceof WritesDisabledError) return { error: error.message };
+    throw error;
+  }
 
   const parsed = voidTransactionSchema.safeParse({
     id: formData.get('id'),

@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
+import { isMaintenanceMode } from '@/lib/ops/kill-switches';
 
 /**
  * Session refresh — Phase 01 §30.
@@ -14,6 +15,30 @@ import { createServerClient } from '@supabase/ssr';
  * guards decide access.
  */
 export async function middleware(request: NextRequest) {
+  /**
+   * PHASE-14 §22 — maintenance, checked before anything else happens.
+   *
+   * Deliberately the first statement in the request path: it reads an
+   * environment variable and returns, with no Supabase call, so the site stays
+   * up and honest even when the database is the thing that is broken. See
+   * `lib/ops/kill-switches.ts` for why this one is not a feature flag.
+   *
+   * `/api/health` is exempt, or the platform's own probe would read a
+   * maintenance page as a healthy response and never restart anything.
+   */
+  if (isMaintenanceMode() && !request.nextUrl.pathname.startsWith('/api/health')) {
+    return new NextResponse(MAINTENANCE_PAGE, {
+      status: 503,
+      headers: {
+        'content-type': 'text/html; charset=utf-8',
+        // Tell crawlers and caches this is temporary. A 503 cached as
+        // permanent is how a maintenance window costs search rankings.
+        'retry-after': '600',
+        'cache-control': 'no-store',
+      },
+    });
+  }
+
   let response = NextResponse.next({ request });
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -43,6 +68,45 @@ export async function middleware(request: NextRequest) {
 
   return response;
 }
+
+/**
+ * Inline, with no imports and no styling framework.
+ *
+ * Maintenance mode has to work when the application does not, so this page
+ * must not depend on a build artifact, a font, a stylesheet or a database. It
+ * is a string.
+ */
+const MAINTENANCE_PAGE = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>HelloPera is back shortly</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0; min-height: 100dvh; display: grid; place-items: center;
+    padding: 24px; background: #f4f8f7; color: #132238;
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 26rem; text-align: center; }
+  h1 { font-size: 1.5rem; margin: 0 0 8px; }
+  p { margin: 0 0 8px; color: #445; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #0e1a2b; color: #e8eef5; }
+    p { color: #a9b6c6; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>HelloPera is back shortly</h1>
+  <p>We are doing some maintenance. Nothing you have recorded is affected.</p>
+  <p>Please try again in a few minutes.</p>
+</main>
+</body>
+</html>`;
 
 export const config = {
   matcher: [

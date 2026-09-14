@@ -2,6 +2,11 @@ import { NextResponse } from 'next/server';
 import { getBillingProvider } from '@/lib/billing/provider';
 import { processWebhookEvent } from '@/services/billing-webhook.service';
 import { log } from '@/lib/log';
+import {
+  clientIp,
+  enforceRateLimit,
+  RateLimitError,
+} from '@/services/rate-limit.service';
 
 /**
  * Provider webhook endpoint — PHASE-11 §15 to §21, criterion 7.
@@ -40,6 +45,29 @@ export const runtime = 'nodejs';
 
 export async function POST(request: Request): Promise<NextResponse> {
   const provider = getBillingProvider();
+
+  /**
+   * PHASE-14 §38 — a ceiling on abuse, not a throttle on traffic.
+   *
+   * Signature verification is not free, and an attacker does not need to pass
+   * it to make us pay for it. The limit is per source and deliberately
+   * generous, because a provider recovering from an outage delivers a backlog
+   * all at once and a refused webhook is a subscription that silently stops
+   * matching reality.
+   *
+   * 429 rather than a silent drop, so a legitimate provider retries.
+   */
+  try {
+    await enforceRateLimit('billing_webhook', `ip:${await clientIp()}`);
+  } catch (error) {
+    if (error instanceof RateLimitError) {
+      return NextResponse.json(
+        { error: 'Too many requests.' },
+        { status: 429, headers: { 'retry-after': String(error.retryAfterSeconds) } },
+      );
+    }
+    throw error;
+  }
 
   const rawBody = await request.text();
 

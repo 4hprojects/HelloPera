@@ -24,6 +24,23 @@ export const RATE_LIMITED_ACTIONS = [
    * buy a higher flood ceiling.
    */
   'ai_question',
+  /**
+   * PHASE-14 §38. Three endpoints that were uncovered, for three reasons:
+   *
+   *   ocr_submit       spends real money with a provider on every call. The
+   *                    monthly quota bounds the bill; this bounds the burst,
+   *                    which is what a script produces before anyone notices.
+   *   billing_webhook  a public POST whose only protection is a signature. A
+   *                    flood of invalid signatures still costs a verification
+   *                    each, and an attacker does not need to pass the check to
+   *                    make it expensive.
+   *   scheduler        a public POST whose only protection is a secret. The
+   *                    limit is per-caller and generous, because a legitimate
+   *                    scheduler fires on a schedule and an attacker does not.
+   */
+  'ocr_submit',
+  'billing_webhook',
+  'scheduler',
 ] as const;
 export type RateLimitedAction = (typeof RATE_LIMITED_ACTIONS)[number];
 
@@ -59,6 +76,18 @@ export const POLICIES: Record<RateLimitedAction, RateLimitPolicy> = {
    * not this, is what bounds the real cost.
    */
   ai_question: { limit: 10, windowSeconds: 60 },
+  // Tighter than ai_question: an OCR call costs more and nobody uploads twenty
+  // documents a minute by hand.
+  ocr_submit: { limit: 6, windowSeconds: 60 },
+  /**
+   * Generous, and deliberately so. Providers retry aggressively after an
+   * outage, and a backlog of legitimate redeliveries arriving at once must not
+   * be refused — a dropped webhook is a subscription that silently stops
+   * matching reality. This is a ceiling on abuse, not a throttle on normal
+   * traffic.
+   */
+  billing_webhook: { limit: 120, windowSeconds: 60 },
+  scheduler: { limit: 30, windowSeconds: 60 },
 };
 
 export type RateLimitResult = {

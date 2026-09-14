@@ -12,12 +12,18 @@ import {
 /**
  * Parity between the TypeScript balance engine and the SQL one.
  *
- * `recalculate_account_balance()` in
- * supabase/migrations/20260913000200_phase02_financial_core.sql contains a
+ * `derive_account_balance()` in
+ * supabase/migrations/20260915000100_phase14_financial_integrity.sql contains a
  * second implementation of the §34 matrix, written separately. Two hand-written
  * copies of the same rules is exactly how a ledger drifts: the app shows one
  * balance, the recalculation repairs it to a different one, and neither is
  * obviously wrong.
+ *
+ * PHASE-14 moved the matrix out of `recalculate_account_balance()` so that a
+ * *check* could run it without writing (§65). `recalculate_account_balance`
+ * now calls `derive_account_balance` and stores the result, so there is still
+ * exactly one copy of the arithmetic in SQL — this test guards it wherever it
+ * lives.
  *
  * `sqlEffect` below is a faithful transcription of the SQL CASE expressions.
  * If the migration changes, change this too — the test then proves the two

@@ -6,6 +6,7 @@ import { BUCKET } from '@/services/storage.service';
 import { ClaudeExtractionProvider } from '@/lib/ocr/claude-provider';
 import { ProviderError, type ExtractionProvider } from '@/lib/ocr/provider';
 import { assertWithinLimit, recordUsage } from '@/services/usage.service';
+import { enforceRateLimit } from '@/services/rate-limit.service';
 import { findCandidates, type ExistingRecord } from '@/lib/ocr/duplicate';
 import { log } from '@/lib/log';
 
@@ -98,6 +99,11 @@ export async function runExtraction(params: {
   //
   // Throws UsageLimitError, which the caller turns into §33's copy: the number
   // used, the reset date, and a way to continue manually.
+  // PHASE-14 §38, §39 — the technical limit sits before the quota gate,
+  // because refusing a burst should not consume one of the user's scans. The
+  // two are different things: this bounds the rate, the quota bounds the bill.
+  await enforceRateLimit('ocr_submit', params.userId);
+
   await assertWithinLimit(params.userId, 'ocr_jobs', params.timezone);
 
   // Retry after the source has been deleted would run against a degraded

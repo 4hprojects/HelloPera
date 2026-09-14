@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { requireUser } from '@/lib/auth/guards';
 import { log } from '@/lib/log';
+import { assertWritesEnabled, WritesDisabledError } from '@/lib/ops/kill-switches';
 import type { ActionState } from '@/app/actions/auth';
 import {
   createBillSchema,
@@ -44,6 +45,14 @@ export async function createBillAction(
   formData: FormData,
 ): Promise<ActionState> {
   const { user } = await requireUser();
+
+  // PHASE-14 §23 — the ledger freeze, enforced at the write.
+  try {
+    await assertWritesEnabled();
+  } catch (error) {
+    if (error instanceof WritesDisabledError) return { error: error.message };
+    throw error;
+  }
   const parsed = createBillSchema.safeParse({
     providerName: formData.get('providerName'),
     description: formData.get('description') ?? '',
@@ -72,6 +81,14 @@ export async function createReceivableAction(
   formData: FormData,
 ): Promise<ActionState> {
   const { user } = await requireUser();
+
+  // PHASE-14 §23 — the ledger freeze, enforced at the write.
+  try {
+    await assertWritesEnabled();
+  } catch (error) {
+    if (error instanceof WritesDisabledError) return { error: error.message };
+    throw error;
+  }
   const parsed = createReceivableSchema.safeParse({
     partyName: formData.get('partyName'),
     description: formData.get('description') ?? '',
@@ -101,6 +118,14 @@ export async function createExpectedIncomeAction(
   formData: FormData,
 ): Promise<ActionState> {
   const { user } = await requireUser();
+
+  // PHASE-14 §23 — the ledger freeze, enforced at the write.
+  try {
+    await assertWritesEnabled();
+  } catch (error) {
+    if (error instanceof WritesDisabledError) return { error: error.message };
+    throw error;
+  }
   const parsed = createExpectedIncomeSchema.safeParse({
     sourceName: formData.get('sourceName'),
     description: formData.get('description') ?? '',
@@ -139,6 +164,14 @@ export async function recordPaymentAction(
   formData: FormData,
 ): Promise<ActionState> {
   const { user, profile } = await requireUser();
+
+  // PHASE-14 §23 — the ledger freeze, enforced at the write.
+  try {
+    await assertWritesEnabled();
+  } catch (error) {
+    if (error instanceof WritesDisabledError) return { error: error.message };
+    throw error;
+  }
 
   const parsed = recordPaymentSchema.safeParse({
     obligationType: formData.get('obligationType'),
@@ -208,6 +241,10 @@ export async function recordPaymentAction(
 
 export async function cancelObligationAction(formData: FormData): Promise<void> {
   const { user } = await requireUser();
+
+  // PHASE-14 §23. Void action: the throw reaches the error boundary rather
+  // than silently doing nothing.
+  await assertWritesEnabled();
   const kind = String(formData.get('kind') ?? '') as ObligationKind;
   const id = String(formData.get('id') ?? '');
   if (!id || !(kind in ROUTES)) return;

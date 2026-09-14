@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server';
 import { deliverPendingPushes } from '@/services/push-delivery.service';
 import { log } from '@/lib/log';
+import {
+  clientIp,
+  enforceRateLimit,
+  RateLimitError,
+} from '@/services/rate-limit.service';
 
 /**
  * Push delivery endpoint — PHASE-08 §37, §58; PHASE-07 §2.
@@ -42,6 +47,27 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!expected) {
     log.error('scheduler: SCHEDULER_SECRET is not set; refusing');
     return NextResponse.json({ error: 'Scheduler is not configured.' }, { status: 503 });
+  }
+
+  /**
+   * PHASE-14 §38 — a rate limit in front of the secret comparison.
+   *
+   * The comparison is already constant-time, so this is not about timing. It
+   * is that the endpoint is public and a caller can guess as fast as the
+   * network allows; a limit turns an unbounded online guessing attack into a
+   * bounded one. Keyed by source, and generous, because a real scheduler fires
+   * on a schedule.
+   */
+  try {
+    await enforceRateLimit('scheduler', `ip:${await clientIp()}`);
+  } catch (error) {
+    if (error instanceof RateLimitError) {
+      return NextResponse.json(
+        { error: 'Too many requests.' },
+        { status: 429, headers: { 'retry-after': String(error.retryAfterSeconds) } },
+      );
+    }
+    throw error;
   }
 
   const provided = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ?? '';

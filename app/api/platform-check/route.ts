@@ -14,7 +14,20 @@ import sharp from 'sharp';
  * If this returns ok:false in production, the Phase 04 image pipeline moves
  * to a WASM codec (@jsquash/webp) — see PLATFORM-HELLODEPLOY.md note A.
  *
- * Remove or fold into the real image service in Phase 04.
+ * PHASE-14: reviewed against §29-§32 and KEPT, despite the Phase 00 note above
+ * saying to remove it.
+ *
+ * It answers a different question from the health endpoints. `/api/health` is
+ * liveness and `/api/health/ready` is readiness — both about whether this
+ * instance can serve a request right now, and both deliberately independent of
+ * image processing. This is a one-off *deployment* verification: does the musl
+ * binary load in the container that was actually built. Uploading a real
+ * document would also exercise Sharp, but only once the database, storage and
+ * auth are all working, which is exactly when you least want a compound
+ * signal.
+ *
+ * `docs/PLATFORM-HELLODEPLOY.md` cites it for that purpose. It costs one route
+ * and answers a question nothing else does.
  */
 
 export const runtime = 'nodejs';
