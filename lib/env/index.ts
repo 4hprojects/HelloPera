@@ -108,6 +108,15 @@ const schema = z.object({
   // does not have to be duplicated under two keys.
   SUPABASE_SECRET_KEY: serviceRoleKey,
   SUPABASE_SERVICE_ROLE_KEY: serviceRoleKey,
+
+  // Web push (PHASE-08 §56, §57). All optional: push is an enhancement, and
+  // the rest of the app must start without it — an unconfigured deployment
+  // should lose push notifications, not fail to boot.
+  NEXT_PUBLIC_VAPID_PUBLIC_KEY: z.string().min(1).optional(),
+  VAPID_PRIVATE_KEY: z.string().min(1).optional(),
+  // A mailto: or https: URL identifying the sender, required by the Web Push
+  // spec so a push service can contact whoever is sending.
+  VAPID_SUBJECT: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof schema>;
@@ -123,6 +132,9 @@ function load(): Env {
     NEXT_PUBLIC_APP_URL_DEV: process.env.NEXT_PUBLIC_APP_URL_DEV,
     SUPABASE_SECRET_KEY: process.env.SUPABASE_SECRET_KEY,
     SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
+    NEXT_PUBLIC_VAPID_PUBLIC_KEY: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
+    VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY,
+    VAPID_SUBJECT: process.env.VAPID_SUBJECT,
   });
 
   if (!parsed.success) {
@@ -180,4 +192,17 @@ export function requireServiceRoleKey(): string {
     );
   }
   return key;
+}
+
+/**
+ * Is web push configured? — PHASE-08 §56.
+ *
+ * Checked rather than assumed, so a deployment without VAPID keys degrades to
+ * in-app notifications instead of throwing on the first send. The private key
+ * is never exposed: only this boolean and the public key reach a client.
+ */
+export function isPushConfigured(): boolean {
+  return Boolean(
+    env.NEXT_PUBLIC_VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY && env.VAPID_SUBJECT,
+  );
 }

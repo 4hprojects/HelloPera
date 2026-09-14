@@ -7,6 +7,8 @@ import { PreferencesForm } from '@/components/notifications/preferences-form';
 import { requireUser } from '@/lib/auth/guards';
 import { getPreferences } from '@/services/notification.service';
 import { listPushDevices } from '@/services/push.service';
+import { PushOptIn } from '@/components/notifications/push-opt-in';
+import { env, isPushConfigured } from '@/lib/env';
 
 export const metadata: Metadata = { title: 'Notification settings' };
 
@@ -47,6 +49,17 @@ export default async function NotificationSettingsPage() {
         <p className="hp-small mb-3 text-text-muted">
           Push notifications go to devices where you have allowed them.
         </p>
+
+        {/*
+          §55 — only the PUBLIC key crosses to the client, and only when push
+          is actually configured. Null tells the component to explain that
+          push is unavailable rather than offer a button that cannot work.
+        */}
+        <PushOptIn
+          vapidPublicKey={
+            isPushConfigured() ? (env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? null) : null
+          }
+        />
 
         {active.length === 0 ? (
           <p className="hp-body text-text-muted">
