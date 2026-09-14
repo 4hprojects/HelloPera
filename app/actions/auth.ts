@@ -22,6 +22,31 @@ import {
   updateProfileSchema,
 } from '@/schemas/auth.schema';
 
+/**
+ * An untouched optional field arrives as '' from a form. The column is
+ * nullable and every display fallback is `?? email`, which `??` only reaches
+ * for null — so an empty string would render as a blank name rather than
+ * falling back.
+ */
+function emptyToNull(value: string | undefined): string | null {
+  const trimmed = (value ?? '').trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+/** Undefined when neither part was given, so no metadata key is written. */
+function nameMetadata(
+  firstName: string | undefined,
+  lastName: string | undefined,
+): { given_name?: string; family_name?: string } | undefined {
+  const first = emptyToNull(firstName);
+  const last = emptyToNull(lastName);
+  if (!first && !last) return undefined;
+  return {
+    ...(first ? { given_name: first } : {}),
+    ...(last ? { family_name: last } : {}),
+  };
+}
+
 export type ActionState = {
   error?: string;
   fieldErrors?: Record<string, string>;
@@ -81,7 +106,8 @@ export async function registerWithEmail(
   formData: FormData,
 ): Promise<ActionState> {
   const parsed = registerSchema.safeParse({
-    fullName: formData.get('fullName') ?? '',
+    firstName: formData.get('firstName') ?? '',
+    lastName: formData.get('lastName') ?? '',
     email: formData.get('email'),
     password: formData.get('password'),
     confirmPassword: formData.get('confirmPassword'),
@@ -105,9 +131,13 @@ export async function registerWithEmail(
     email: parsed.data.email,
     password: parsed.data.password,
     options: {
-      // full_name only. The trigger hardcodes role and status; user metadata
+      // Name parts only. The trigger hardcodes role and status; user metadata
       // is client-controlled and must never influence authorization.
-      data: parsed.data.fullName ? { full_name: parsed.data.fullName } : undefined,
+      //
+      // Sent as given_name/family_name — the same keys Google uses — so
+      // handle_new_user() reads one shape whatever the provider, and never
+      // has to split a string for an account created through this form.
+      data: nameMetadata(parsed.data.firstName, parsed.data.lastName),
       emailRedirectTo: `${origin}/auth/callback?next=/dashboard`,
     },
   });
@@ -319,7 +349,8 @@ export async function updateProfile(
   if (!user) redirect('/login');
 
   const parsed = updateProfileSchema.safeParse({
-    fullName: formData.get('fullName'),
+    firstName: formData.get('firstName') ?? '',
+    lastName: formData.get('lastName') ?? '',
     timezone: formData.get('timezone'),
     defaultCurrency: formData.get('defaultCurrency'),
   });
@@ -329,7 +360,7 @@ export async function updateProfile(
 
   const { data: before } = await admin
     .from('profiles')
-    .select('full_name, timezone, default_currency')
+    .select('first_name, last_name, timezone, default_currency')
     .eq('id', user.id)
     .maybeSingle();
 
@@ -338,7 +369,10 @@ export async function updateProfile(
   const { error } = await admin
     .from('profiles')
     .update({
-      full_name: parsed.data.fullName,
+      // full_name is a generated column — writing it is an error. It follows
+      // from these two.
+      first_name: emptyToNull(parsed.data.firstName),
+      last_name: emptyToNull(parsed.data.lastName),
       timezone: parsed.data.timezone,
       default_currency: parsed.data.defaultCurrency,
     })
@@ -353,7 +387,9 @@ export async function updateProfile(
     eventType: 'profile_updated',
     actorUserId: user.id,
     metadata: {
-      changed_name: before?.full_name !== parsed.data.fullName,
+      changed_name:
+        before?.first_name !== emptyToNull(parsed.data.firstName) ||
+        before?.last_name !== emptyToNull(parsed.data.lastName),
       changed_timezone: before?.timezone !== parsed.data.timezone,
       changed_currency: before?.default_currency !== parsed.data.defaultCurrency,
     },

@@ -14,11 +14,13 @@ const TIMEZONES = ['Asia/Manila', 'Asia/Singapore', 'Asia/Tokyo', 'UTC'];
 const CURRENCIES = ['PHP', 'USD', 'EUR', 'JPY', 'SGD'];
 
 export function SettingsForm({
-  fullName,
+  firstName,
+  lastName,
   timezone,
   defaultCurrency,
 }: {
-  fullName: string;
+  firstName: string;
+  lastName: string;
   timezone: string;
   defaultCurrency: string;
 }) {
@@ -29,13 +31,22 @@ export function SettingsForm({
       {state.error ? <FormAlert tone="error">{state.error}</FormAlert> : null}
       {state.success ? <FormAlert tone="success">{state.success}</FormAlert> : null}
 
-      <FormField
-        id="fullName"
-        label="Full name"
-        defaultValue={fullName}
-        autoComplete="name"
-        error={state.fieldErrors?.fullName}
-      />
+      <div className="grid grid-cols-1 gap-x-3 sm:grid-cols-2">
+        <FormField
+          id="firstName"
+          label="First name"
+          defaultValue={firstName}
+          autoComplete="given-name"
+          error={state.fieldErrors?.firstName}
+        />
+        <FormField
+          id="lastName"
+          label="Last name"
+          defaultValue={lastName}
+          autoComplete="family-name"
+          error={state.fieldErrors?.lastName}
+        />
+      </div>
 
       <div className="mb-4">
         <Label htmlFor="timezone">Timezone</Label>

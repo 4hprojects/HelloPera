@@ -1,4 +1,5 @@
 /register - refine do it like hellorun.online /signup  [done]
+  - the fullname should be first and last name 2 text box  [done]
 
 landing page - improve landing page  [done]
 

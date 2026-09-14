@@ -64,7 +64,10 @@ export default async function DashboardPage({
   // project and the card is simply not shown.
   const projected = await getProjectedBalance(data.today, data.primary.currency);
 
-  const firstName = profile.full_name?.split(' ')[0] ?? null;
+  // Read directly now. This used to be `full_name.split(' ')[0]`, which
+  // greeted "Ma. Cristina Reyes" as "Ma." — the reason the name was split into
+  // parts at all.
+  const firstName = profile.first_name;
   const hour = Number(
     new Intl.DateTimeFormat('en-GB', {
       hour: '2-digit',

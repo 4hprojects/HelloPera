@@ -48,7 +48,9 @@ without one, RLS forces a sequential scan. See master plan §33.
 |---|---|---|
 | `id` | uuid PK | equals `auth.users.id` |
 | `email` | text | |
-| `full_name` | text | |
+| `first_name` | text | Nullable — the name is optional |
+| `last_name` | text | Nullable |
+| `full_name` | text | **Generated**, `nullif(trim(first ‖ ' ' ‖ last), '')`. Never written directly. `nullif` so a nameless profile is NULL rather than `''`, which every `?? email` display fallback depends on |
 | `avatar_url` | text | |
 | `role` | text | `user` \| `admin` |
 | `status` | text | `active` \| `suspended` \| `disabled` |

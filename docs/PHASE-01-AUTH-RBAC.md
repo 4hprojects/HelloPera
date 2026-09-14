@@ -240,7 +240,9 @@ profiles
 --------
 id uuid primary key
 email text
-full_name text
+first_name text
+last_name text
+full_name text  -- generated from the two above
 avatar_url text
 role text
 status text
@@ -351,7 +353,9 @@ The trigger should populate:
 ```text
 id
 email
-full_name
+first_name
+last_name
+full_name (generated)
 avatar_url
 role = user
 status = active
@@ -374,7 +378,7 @@ Confirm Password
 Optional:
 
 ```text
-Full Name
+First name and last name
 ```
 
 Flow:
@@ -726,7 +730,7 @@ No `INSERT` / `UPDATE` / `DELETE` policy for the authenticated browser role.
 Profile updates go through an `updateProfile` server action that:
 
 1. Resolves the current user server-side — never trusting a submitted `id`.
-2. Accepts only an explicit field allowlist: `full_name`, `avatar_url`,
+2. Accepts only an explicit field allowlist: `first_name`, `last_name`, `avatar_url`,
    `timezone`, `default_currency`, theme preference.
 3. Validates with Zod.
 4. Writes with the service role.
@@ -913,7 +917,8 @@ Admin role should not bypass disabled status unless explicitly designed.
 Phase 01 basic settings may support:
 
 ```text
-Full name
+First name
+Last name
 Avatar URL / Google avatar reference
 Theme preference if already supported
 ```
@@ -1186,7 +1191,8 @@ Validate:
 email
 password
 confirm password
-full name
+first name
+last name
 callback parameters
 profile updates
 ```
@@ -1220,7 +1226,8 @@ Include:
 
 Include:
 
-- Full name
+- First name
+- Last name
 - Email
 - Password
 - Confirm password

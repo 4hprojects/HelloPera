@@ -7,6 +7,13 @@ export type UserStatus = (typeof USER_STATUSES)[number];
 export type Profile = {
   id: string;
   email: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  /**
+   * Generated in Postgres from the two parts above — never written directly.
+   * Kept for display, where one string is what the sidebar, top bar and avatar
+   * actually want.
+   */
   full_name: string | null;
   avatar_url: string | null;
   role: UserRole;

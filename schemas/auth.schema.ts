@@ -25,15 +25,37 @@ export const passwordSchema = z
   .min(8, 'Password must be at least 8 characters')
   .max(72, 'Password must be 72 characters or fewer');
 
-export const fullNameSchema = z
-  .string()
-  .trim()
-  .min(1, 'Enter your name')
-  .max(80, 'Name must be 80 characters or fewer');
+/**
+ * Name parts.
+ *
+ * Both are OPTIONAL, everywhere. The name is used to say hello on the
+ * dashboard and to draw avatar initials — neither is worth a required field on
+ * the one screen where friction costs most, and a person who would rather not
+ * give it should not have to invent one.
+ *
+ * That also fixes a real bug. `updateProfileSchema` used to require the name
+ * while `registerSchema` did not, so anyone who signed up without one could
+ * never save their settings at all: the timezone form rejected its own blank
+ * name field before it got to the timezone.
+ *
+ * 40 each rather than 80, because the generated `full_name` joins them with a
+ * space and the display surfaces were measured against 80 total.
+ */
+const namePart = (label: string) =>
+  z
+    .string()
+    .trim()
+    .max(40, `${label} must be 40 characters or fewer`)
+    .optional()
+    .or(z.literal(''));
+
+export const firstNameSchema = namePart('First name');
+export const lastNameSchema = namePart('Last name');
 
 export const registerSchema = z
   .object({
-    fullName: fullNameSchema.optional().or(z.literal('')),
+    firstName: firstNameSchema,
+    lastName: lastNameSchema,
     email: emailSchema,
     password: passwordSchema,
     confirmPassword: z.string(),
@@ -67,7 +89,8 @@ export const resetPasswordSchema = z
  * path that accepts them from a request (§34).
  */
 export const updateProfileSchema = z.object({
-  fullName: fullNameSchema,
+  firstName: firstNameSchema,
+  lastName: lastNameSchema,
   timezone: z.string().min(1).max(64),
   defaultCurrency: z
     .string()

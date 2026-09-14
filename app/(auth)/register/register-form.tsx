@@ -34,13 +34,28 @@ export function RegisterForm({ cancelled = false }: { cancelled?: boolean }) {
       </div>
 
       <form action={action} noValidate>
-        <FormField
-          id="fullName"
-          label="Full name"
-          autoComplete="name"
-          hint="Optional — we use it to say hello."
-          error={state.fieldErrors?.fullName}
-        />
+        {/*
+          Two boxes, stacked at 320px and side by side above `sm`. Forcing two
+          text inputs into one row on a narrow phone leaves each about 120px
+          wide, which is not enough to read what you typed.
+        */}
+        <div className="grid grid-cols-1 gap-x-3 sm:grid-cols-2">
+          <FormField
+            id="firstName"
+            label="First name"
+            autoComplete="given-name"
+            error={state.fieldErrors?.firstName}
+          />
+          <FormField
+            id="lastName"
+            label="Last name"
+            autoComplete="family-name"
+            error={state.fieldErrors?.lastName}
+          />
+        </div>
+        <p className="hp-small mb-4 -mt-2 text-text-muted">
+          Optional — we only use it to say hello.
+        </p>
         <FormField
           id="email"
           label="Email"

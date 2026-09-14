@@ -23,7 +23,8 @@ export default async function SettingsPage() {
           Your email is managed by your sign-in method and cannot be changed here.
         </p>
         <SettingsForm
-          fullName={profile.full_name ?? ''}
+          firstName={profile.first_name ?? ''}
+          lastName={profile.last_name ?? ''}
           timezone={profile.timezone}
           defaultCurrency={profile.default_currency}
         />
