@@ -616,18 +616,30 @@ ai_messages        id, conversation_id, user_id, role, content, intent,
                    query_metadata jsonb, created_at
 
 ai_usage_logs      id, user_id, conversation_id, intent, provider, model,
-                   input_units, output_units, duration_ms, status, created_at
+                   call_type, input_units, output_units, duration_ms,
+                   status, error_code, created_at
 ```
 
 Store the question, the answer and safe intent metadata — not whole query
-result payloads, raw OCR text or account numbers.
+result payloads, raw OCR text or account numbers. `query_metadata` holds the
+intent and the resolved range: enough to explain why an answer said what it
+said, without a second copy of the user's finances in a jsonb column no
+retention policy covers.
 
-Messages are service-written. A client able to insert an assistant turn could
-forge the system's own words into history.
+All three: RLS enabled and forced, SELECT-own, writes only through server
+actions. For `ai_messages` that rule carries extra weight — a client able to
+insert an `assistant` row could forge the system's own words into history,
+indistinguishable afterwards from something HelloPera actually said.
+`ai_usage_logs` has no grant to `authenticated` at all: cost analysis is
+operational, and it names the provider and model in use.
 
 `ai_usage_logs` tracks provider calls for cost analysis; `usage_records` tracks
 the user's quota. One question is one quota unit even when it makes two
-provider calls.
+provider calls — `call_type` is what tells the two calls apart, and the gap
+between the counts is what cost-per-question is made of.
+
+`input_units` / `output_units` rather than tokens: a future provider may not
+bill in tokens, and the domain does not take on one provider's vocabulary.
 
 ---
 

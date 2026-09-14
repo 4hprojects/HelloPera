@@ -1376,7 +1376,8 @@ otherwise have to reverse-engineer: `PHASE-06` the PostgREST row cap and why the
 net-position sparkline was removed; `PHASE-07` the back-dated-bill bug found by
 running the generator; `PHASE-08` the escalation-step rule; `PHASE-09` the
 opposite failure directions of the usage meters; `PHASE-11` why webhook
-idempotency belongs to the database rather than the application.
+idempotency belongs to the database rather than the application; `PHASE-12` why
+a Zod union, and not prompt wording, is what resists prompt injection.
 
 ---
 

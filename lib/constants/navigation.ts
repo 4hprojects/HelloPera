@@ -36,6 +36,12 @@ export const appNav: NavItem[] = [
   { label: 'Recurring', href: '/recurring', icon: 'calendar' },
   { label: 'Forecast', href: '/forecast', icon: 'analytics' },
   { label: 'Analytics', href: '/analytics', icon: 'analytics' },
+  /**
+   * PHASE-12 §92 — the route exists, but the page 404s while `ai_enabled` is
+   * off. Left unmarked rather than `placeholder: true`, because the code is
+   * real: what gates it is a flag and an API key, not an unwritten page.
+   */
+  { label: 'Assistant', href: '/assistant', icon: 'analytics' },
   { label: 'Notifications', href: '/notifications', icon: 'calendar' },
   { label: 'Settings', href: '/settings', icon: 'settings' },
 ];
@@ -50,6 +56,12 @@ export const mobileNav: NavItem[] = [
   { label: 'Transactions', href: '/transactions', icon: 'transactions' },
   { label: 'Capture', href: '/documents', icon: 'capture' },
   { label: 'Analytics', href: '/analytics', icon: 'analytics' },
+  /**
+   * PHASE-12 §92 — the route exists, but the page 404s while `ai_enabled` is
+   * off. Left unmarked rather than `placeholder: true`, because the code is
+   * real: what gates it is a flag and an API key, not an unwritten page.
+   */
+  { label: 'Assistant', href: '/assistant', icon: 'analytics' },
   { label: 'More', href: '/settings', icon: 'more' },
 ];
 

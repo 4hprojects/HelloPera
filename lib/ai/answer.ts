@@ -167,6 +167,56 @@ function breakdown(result: AiAnswerResult): string[] {
   return lines;
 }
 
+/**
+ * A result with every figure already formatted — PHASE-12 §68.
+ *
+ * `Money` carries a `bigint`, which is the right representation for
+ * arithmetic and the wrong one to hand a client component: it does not
+ * survive the server/client boundary cleanly, and a component that
+ * re-implements `formatMoney` to cope is a second money formatter that will
+ * drift from the first.
+ *
+ * So the boundary is here. Server-side callers (the explanation prompt) keep
+ * working with `Money`; anything crossing to the browser crosses as strings
+ * produced by the one formatter that exists.
+ */
+export type DisplayFigure = { label: string; value: string };
+export type DisplayItem = {
+  label: string;
+  value: string;
+  date?: string | null;
+  hint?: string | null;
+};
+
+export type DisplayResult = {
+  intent: string;
+  rangeLabel: string;
+  currency: string;
+  figures: DisplayFigure[];
+  items: DisplayItem[];
+  truncated: boolean;
+  href: string | null;
+  hrefLabel: string | null;
+};
+
+export function toDisplay(result: AiAnswerResult): DisplayResult {
+  return {
+    intent: result.intent,
+    rangeLabel: result.range.label,
+    currency: result.currency,
+    figures: result.figures.map((f) => ({ label: f.label, value: fmt(f.amount) })),
+    items: result.items.map((i) => ({
+      label: i.label,
+      value: fmt(i.amount),
+      date: i.date ?? null,
+      hint: i.hint ?? null,
+    })),
+    truncated: result.truncated,
+    href: result.href,
+    hrefLabel: result.hrefLabel,
+  };
+}
+
 export type DeterministicAnswer = {
   /** The sentence. Every figure in it came from an executor. */
   text: string;

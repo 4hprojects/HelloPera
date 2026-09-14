@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { benefitsFromExplanation, renderAnswer } from '@/lib/ai/answer';
+import { benefitsFromExplanation, renderAnswer, toDisplay } from '@/lib/ai/answer';
 import { money } from '@/lib/money';
 import { AI_INTENTS, type AiIntent } from '@/schemas/ai.schema';
 import type { AiAnswerResult } from '@/types/ai';
@@ -235,5 +235,49 @@ describe('when a model is worth calling — §52', () => {
         result({ intent: 'spending_by_category', items: items(3) }),
       ),
     ).toBe(true);
+  });
+});
+
+describe('the display boundary — §68', () => {
+  it('formats every figure, so no bigint crosses to the browser', () => {
+    // Money holds a bigint. It is the right type for arithmetic and the wrong
+    // one to put in a client payload, so the conversion happens once, here,
+    // using the one formatter that exists rather than a copy in a component.
+    const display = toDisplay(
+      result({
+        figures: [{ label: 'Spending', amount: php(8240.5) }],
+        items: [{ label: 'Food', amount: php(4200), date: '2026-09-03', hint: 'paid' }],
+      }),
+    );
+
+    expect(display.figures).toEqual([{ label: 'Spending', value: '₱8,240.50' }]);
+    expect(display.items[0]).toEqual({
+      label: 'Food',
+      value: '₱4,200.00',
+      date: '2026-09-03',
+      hint: 'paid',
+    });
+    expect(JSON.stringify(display)).toBeTruthy();
+  });
+
+  it('survives JSON serialisation entirely', () => {
+    // The actual guarantee: JSON.stringify throws on a bigint. If one ever
+    // leaks back into this shape, this fails rather than the page does.
+    const display = toDisplay(result({ items: [{ label: 'x', amount: php(1) }] }));
+    expect(() => JSON.stringify(display)).not.toThrow();
+  });
+
+  it('normalises absent dates and hints to null rather than undefined', () => {
+    const display = toDisplay(result({ items: [{ label: 'x', amount: php(1) }] }));
+    expect(display.items[0]?.date).toBeNull();
+    expect(display.items[0]?.hint).toBeNull();
+  });
+
+  it('carries the drill-down link through', () => {
+    const display = toDisplay(
+      result({ href: '/analytics?x=1', hrefLabel: 'Open in analytics' }),
+    );
+    expect(display.href).toBe('/analytics?x=1');
+    expect(display.hrefLabel).toBe('Open in analytics');
   });
 });

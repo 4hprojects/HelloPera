@@ -14,14 +14,15 @@ Last updated: 14 September 2026 (end of Phase 10 implementation).
 
 | Area | State |
 |---|---|
-| Code | Phases 00–11 built (11 is provider-agnostic only), 578 tests passing |
-| Remote database | **Nothing applied yet** — 19 migrations pending |
+| Code | Phases 00–12 built, 655 tests passing |
+| Remote database | **11 of 20 applied** — 9 pending, including a live security fix |
 | Scheduled jobs | Unknown — `pg_cron` availability unconfirmed |
 | Push notifications | Unconfigured — no VAPID keys |
 | Email | Unconfigured — Supabase default is ~2/hour, dev only |
 | Domain | `hellopera.online` does not resolve |
 | Ads | Off by flag, no AdSense account |
 | Payments | No provider chosen — see §11 |
+| Assistant | Built, off by flag, needs an API key — see §12 |
 | Public launch | **Blocked** — see §1 |
 
 ---
@@ -67,6 +68,13 @@ Already done in code, but re-verify once the migrations are applied:
 - [ ] `npm run db:migrate` — apply. Each file runs in one transaction, so a
       failure leaves nothing half-applied.
 - [ ] `npm run db:verify` — confirm RLS is enforced.
+
+**This is now confirmed on your live project, not a theoretical risk.**
+Supabase's own linter reports 16 `SECURITY DEFINER` functions callable by the
+`anon` role — including `create_transaction`, `create_account`,
+`void_transaction` and `allocate_payment` — over `/rest/v1/rpc/…`, with no sign-in
+at all. Your tables are empty, so nothing is at risk yet; the endpoint is open
+regardless.
 
 **Apply this one first if you apply nothing else:**
 `20260914000200_revoke_function_execute_from_public.sql`. Until it runs, every
@@ -252,11 +260,40 @@ broken adapter blocks deletions for paying users.
 
 ---
 
-## 12. Not yet verified by anyone
+## 12. The assistant — what Phase 12 still needs from you
+
+Phase 12 built the whole assistant: the intent layer, the approved query
+catalog, the validation, the deterministic answers, and a working Claude
+adapter. It is off, and safe to leave off indefinitely — `/assistant` returns
+404 while `ai_enabled` is false, and with no key it refuses rather than guesses.
+
+- [ ] **Set `ANTHROPIC_API_KEY`.** This is the same key OCR needs, so setting it
+      switches on document reading as well as the assistant. Nothing else in the
+      product depends on it.
+- [ ] **Optionally pin the models.** `AI_INTENT_MODEL` and
+      `AI_EXPLANATION_MODEL` override the defaults in `lib/ai/model.ts` without
+      a code change, which is what makes swapping one for cost or latency a
+      deployment decision.
+- [ ] **Apply the migrations** (§2) — `ai_conversations`, `ai_messages` and
+      `ai_usage_logs` are in `20260914000900`.
+- [ ] **Then set `ai_enabled`.** Only after the key and the tables, or the page
+      appears in navigation and fails.
+- [ ] **Watch the first week's cost** in `ai_usage_logs`. One question is one
+      quota unit but may be two provider calls; the gap between that table and
+      `usage_records` is your real cost per question.
+
+Worth knowing: Free is 5 questions a month and Premium 100, both seeded in
+`20260914000500`. Those are placeholders from the phase document, not a priced
+decision — change them in `plan_entitlements` once you know what a question
+actually costs.
+
+---
+
+## 13. Not yet verified by anyone
 
 Stated plainly so it is not mistaken for done:
 
-- **No signed-in page from Phases 07–11 has been rendered in a browser.** They
+- **No signed-in page from Phases 07–12 has been rendered in a browser.** They
   compile, build and are type-checked, but the tables they read do not exist
   remotely yet. Expect small UI problems on first run.
 - **The signed-out pages have now been rendered**, in a headless Chrome at 320,
@@ -268,8 +305,11 @@ Stated plainly so it is not mistaken for done:
 - **The scheduler endpoint has never been called.**
 - **No payment has ever been taken**, and no provider adapter exists. The
   webhook endpoint refuses everything (§11).
-- **The SQL for Phases 07–11 was executed** against a local throwaway Postgres —
-  all 19 migrations apply from scratch, deletion clears every table including
+- **No question has ever been asked of the assistant**, because no API key is
+  configured. Its pure layers are tested; the provider call itself is verified
+  only against a stub.
+- **The SQL for Phases 07–12 was executed** against a local throwaway Postgres —
+  all 20 migrations apply from scratch, deletion clears every table including
   the billing ones, rate limiting holds under concurrency, replayed webhook
   events are rejected, and generation is idempotent — but never against your
   project.
@@ -287,4 +327,5 @@ Stated plainly so it is not mistaken for done:
 7. §8 Search Console
 8. §6 push
 9. §9 AdSense, last
-10. §11 payments — independent of the rest, and the slowest to start
+10. §12 assistant — one key, and it unblocks OCR too
+11. §11 payments — independent of the rest, and the slowest to start
