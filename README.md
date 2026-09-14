@@ -6,15 +6,20 @@ A mobile-first personal finance tracking and financial document intelligence PWA
 Capture → Understand → Confirm → Track → Analyze → Forecast
 ```
 
-**Current phase: Phase 07 — Recurring Transactions and Forecasting.**
+**Current phase: Phase 10 — Public Website, SEO and AdSense.**
 
-Phases 00–06 are built, which is **Gate 1: the manual tracker** — a complete
-personal finance application. You can register, manage accounts, record income,
-expenses, transfers, refunds and adjustments, track bills and receivables with
-partial payments, record expected income, upload and OCR documents, and read a
-dashboard with spending breakdowns and cash flow.
+Phases 00–10 are built. **Gate 1, the manual tracker**, is a complete personal
+finance application: accounts, transactions, bills, receivables, expected
+income, documents with OCR, a dashboard with analytics, recurring rules and a
+deterministic forecast, reminders, and a monetization foundation.
 
-Phase 07 adds recurring rules and a deterministic 30/60/90-day forecast.
+Phase 10 adds the public marketing site, guides, SEO foundations, and consent
+and advertising infrastructure that is built but switched off.
+
+> **Not yet launched.** The database migrations have not been applied to a
+> remote project, and the master plan's pre-public-launch gate has two
+> outstanding operational items. Start at **[docs/LAUNCH-CHECKLIST.md](docs/LAUNCH-CHECKLIST.md)**
+> — it lists what is left, what each item blocks, and what nobody has verified.
 
 Phase docs live in `docs/`, one per phase, each with its own acceptance
 criteria. `docs/DATA-MODEL.md` is the consolidated schema reference and is kept

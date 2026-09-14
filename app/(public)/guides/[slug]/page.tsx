@@ -4,6 +4,8 @@ import { notFound } from 'next/navigation';
 import { appUrl } from '@/lib/env';
 import { BRAND } from '@/lib/constants/brand';
 import { findPublishedGuide, publishedGuides } from '@/lib/content/registry';
+import { getAdContext } from '@/lib/ads/server';
+import { AdSlot } from '@/components/ads/ad-slot';
 
 type Params = { params: Promise<{ slug: string }> };
 
@@ -75,6 +77,11 @@ export default async function GuidePage({ params }: Params) {
     mainEntityOfPage: `${appUrl()}/guides/${guide.slug}`,
   };
 
+  // §9 — public content pages are the priority surface for ads, and the only
+  // one §8 permits. Renders nothing until AdSense is configured, the global
+  // flag is on and the visitor has consented.
+  const ads = await getAdContext();
+
   return (
     <article className="mx-auto max-w-2xl px-4 py-12 sm:px-6">
       <script
@@ -103,6 +110,19 @@ export default async function GuidePage({ params }: Params) {
       <div className="mt-8">
         <guide.Body />
       </div>
+
+      {/*
+        §59 — one slot, after the content. An ad above the article would make
+        the page look like it exists to carry advertising, which is both the
+        §61 pattern to avoid and a poor argument for anyone to read on.
+      */}
+      <AdSlot
+        pathname={`/guides/${guide.slug}`}
+        globalEnabled={ads.globalEnabled}
+        configured={ads.configured}
+        consent={ads.consent}
+        adsShown
+      />
 
       {/* §79 — stated once, at the end, where it informs rather than shouts. */}
       <p className="hp-small mt-10 border-t border-border pt-6 text-text-muted">
