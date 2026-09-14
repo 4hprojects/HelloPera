@@ -524,6 +524,37 @@ flag. An ad renders only when both permit it.
 
 The unique key on `subscription_events` is what makes webhook replay safe.
 
+`usage_records` was specified in the Phase 05 section but never created by that
+phase; the Phase 09 migration creates it, closing Phase 05's own criterion.
+
+### Functions — Phase 09
+
+```text
+increment_usage(user_id, feature_key, period_start, period_end, quantity = 1)
+  -> integer   the quantity AFTER incrementing
+```
+
+`security definer`, `search_path = ''`, revoked from `public`, granted to
+`service_role`. Insert-or-add in one statement, so §31's race — 29/30, two OCR
+jobs start, both read 29, both proceed — cannot occur. Returning the new total
+lets the caller compare against the limit without a second read that could see
+a third writer's value.
+
+### Write access, specifically
+
+`subscriptions` and `usage_records` carry a SELECT-own policy and **no write
+policy of any kind**. This is the phase where a client write would be most
+directly profitable: an INSERT into `subscriptions` is free Premium, and an
+UPDATE of `usage_records.quantity` is an unlimited quota.
+
+`plans` and `plan_entitlements` are SELECT-able by any authenticated user so
+the UI can render tiers; they are written by migration only (§45 keeps
+entitlement editing out of the UI, because one edit changes every user on a
+plan at once).
+
+`feature_flags` and `subscription_events` have no browser access at all — the
+first is read server-side, and the second holds raw provider payloads.
+
 ---
 
 ## Phase 10 — Content

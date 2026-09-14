@@ -56,12 +56,7 @@ export const mobileNav: NavItem[] = [
 export const adminNav: NavItem[] = [
   { label: 'Overview', href: '/admin' },
   { label: 'Users', href: '/admin/users', placeholder: true, phase: '13' },
-  {
-    label: 'Subscriptions',
-    href: '/admin/subscriptions',
-    placeholder: true,
-    phase: '13',
-  },
+  { label: 'Subscriptions', href: '/admin/subscriptions' },
   { label: 'OCR Jobs', href: '/admin/ocr-jobs', placeholder: true, phase: '13' },
   { label: 'System', href: '/admin/system', placeholder: true, phase: '13' },
 ];

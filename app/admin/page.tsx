@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { Card, CardLabel } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { requireAdmin } from '@/lib/auth/guards';
@@ -12,7 +13,7 @@ export const metadata: Metadata = { title: 'Admin' };
  * boundary holds from here through Phase 13 — no balances, no transactions,
  * no receipts here by default.
  */
-const PLACEHOLDERS = ['Users', 'Subscriptions', 'OCR Jobs', 'System'];
+const PLACEHOLDERS = ['Users', 'OCR Jobs', 'System'];
 
 export default async function AdminPage() {
   await requireAdmin();
@@ -32,7 +33,10 @@ export default async function AdminPage() {
         ))}
       </div>
       <p className="hp-small mt-4 text-text-muted">
-        User management, subscription operations and system health arrive in Phase 13.
+        <Link href="/admin/subscriptions" className="text-primary-text underline">
+          Monetization
+        </Link>{' '}
+        is live. User management, OCR operations and system health arrive in Phase 13.
       </p>
     </div>
   );
