@@ -43,9 +43,21 @@ export default async function PlanPage() {
         title="Plan and usage"
         description="What your plan includes, and what you have used this month."
         actions={
-          <Link href="/settings" className={buttonClass('ghost', 'sm')}>
-            Settings
-          </Link>
+          <>
+            {/*
+              §66 — a page nobody can reach is a page that does not exist. This
+              is the only route to /settings/billing, and it appears only when
+              billing is on, which is also when that page stops 404ing.
+            */}
+            {billingEnabled ? (
+              <Link href="/settings/billing" className={buttonClass('ghost', 'sm')}>
+                Billing
+              </Link>
+            ) : null}
+            <Link href="/settings" className={buttonClass('ghost', 'sm')}>
+              Settings
+            </Link>
+          </>
         }
       />
 

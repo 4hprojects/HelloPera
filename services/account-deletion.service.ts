@@ -3,6 +3,7 @@ import 'server-only';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { BUCKET } from '@/services/storage.service';
+import { getBillingProvider } from '@/lib/billing/provider';
 import { recordAuditEvent } from '@/lib/auth/audit';
 import { log } from '@/lib/log';
 
@@ -20,6 +21,15 @@ import { log } from '@/lib/log';
  * atomic step — verified against the live schema rather than the doc, because
  * Phases 07–09 added six tables after `DATA-MODEL.md`'s cascade list was
  * written.
+ *
+ * ## The provider is not a table (PHASE-14 §70)
+ *
+ * "Billing subscription should be cancelled/handled first." Deleting the auth
+ * user removes the `subscriptions` row, but the provider has never heard of
+ * that and keeps charging the card — the person who deleted their account then
+ * pays for a product they can no longer sign into. So the subscription is
+ * cancelled at the provider BEFORE anything local is touched, and a failure
+ * there stops the deletion rather than proceeding into that outcome.
  *
  * Two things do NOT cascade, both deliberately:
  *
@@ -39,6 +49,17 @@ import { log } from '@/lib/log';
  * the bucket that nothing references and nobody can find. Deleting storage
  * first means a failure leaves the account intact and the operation
  * retryable, which is the recoverable direction.
+ *
+ * ## Billing history is deleted, not retained (PHASE-14 §71, §72, §73)
+ *
+ * `billing_customers` and `billing_history` cascade from `auth.users` like
+ * every other user-owned table. §71 allows a retention exception for
+ * operational or legal records and §73 asks for an actual policy — but there
+ * is no policy yet, and §72 is explicit that full financial data must not be
+ * kept merely for convenience. Deleting is the choice that matches what the
+ * privacy page currently promises. If accounting later requires retained
+ * invoices, that becomes a deliberate migration plus a privacy-page change,
+ * not a silently surviving table.
  */
 
 export class AccountDeletionError extends Error {
@@ -97,6 +118,46 @@ async function listUserObjects(userId: string): Promise<string[]> {
 }
 
 /**
+ * PHASE-14 §70 — stop the money before removing the account.
+ *
+ * Silent when there is nothing to cancel: a Free user, or a deployment with no
+ * provider configured, must not be blocked from deleting their account by a
+ * billing system that was never switched on.
+ *
+ * A provider that IS live and refuses is a hard stop. The alternative is
+ * deleting the account and leaving a live subscription charging a card that
+ * nobody can now find the owner of, which is the failure worth refusing.
+ */
+async function cancelBillingAtProvider(userId: string): Promise<void> {
+  const provider = getBillingProvider();
+  if (!provider.isLive) return;
+
+  const admin = createAdminClient();
+  const { data } = await admin
+    .from('subscriptions')
+    .select('status, provider_subscription_id')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  const id = data?.provider_subscription_id;
+  if (!data || typeof id !== 'string' || !id) return;
+
+  // Already finished. Cancelling again would be an error at most providers.
+  if (data.status === 'expired' || data.status === 'inactive') return;
+
+  try {
+    await provider.cancelSubscription(id);
+  } catch (error) {
+    log.error('account deletion: provider cancellation failed', {
+      m: error instanceof Error ? error.message : 'unknown',
+    });
+    throw new AccountDeletionError(
+      'We could not cancel your subscription with our payment provider, so nothing was deleted. Please contact support.',
+    );
+  }
+}
+
+/**
  * Delete the account and everything it owns.
  *
  * Callers must have re-authenticated the user first (§70). This function does
@@ -117,7 +178,12 @@ export async function deleteAccount(userId: string, email: string): Promise<void
     metadata: { email },
   });
 
-  // 1. Storage first — see the header. A failure here leaves the account
+  // 1. The provider, before anything local (§70). Nothing has been destroyed
+  //    at this point, so a failure here is fully recoverable — which is why it
+  //    goes first rather than after the cascade that would hide the evidence.
+  await cancelBillingAtProvider(userId);
+
+  // 2. Storage — see the header. A failure here leaves the account
   //    intact and the operation retryable.
   const objects = await listUserObjects(userId);
   if (objects.length > 0) {
@@ -133,7 +199,7 @@ export async function deleteAccount(userId: string, email: string): Promise<void
     }
   }
 
-  // 2. The auth user. Every user-owned table cascades from here.
+  // 3. The auth user. Every user-owned table cascades from here.
   const { error } = await admin.auth.admin.deleteUser(userId);
   if (error) {
     throw new AccountDeletionError(

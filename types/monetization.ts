@@ -47,6 +47,25 @@ export type EffectivePlan = {
   billingEnabled: boolean;
 };
 
+/**
+ * PHASE-11 §34 — one line of payment history.
+ *
+ * Metadata only. §37, §38 and criterion 24 forbid card data, and the shape of
+ * this type is where that promise is kept: there is no field for it.
+ */
+export type BillingHistoryEntry = {
+  id: string;
+  provider: string;
+  /** Decimal string straight from numeric — never parsed to a float. */
+  amount: string;
+  currencyCode: string;
+  status: 'paid' | 'failed' | 'refunded' | 'pending';
+  periodStart: string | null;
+  periodEnd: string | null;
+  receiptUrl: string | null;
+  createdAt: string;
+};
+
 /** §34 — the usage dashboard's view model. */
 export type UsageSummary = {
   period: UsagePeriod;

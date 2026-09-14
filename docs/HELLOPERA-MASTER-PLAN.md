@@ -1370,9 +1370,13 @@ which fail WCAG 2.2 AA as text (Success 3.51:1, Gold 2.65:1 on white), so
 those hues have darker `-text` variants. Fills, chart marks, chips and
 illustrations keep the brand hexes exactly as drawn.
 
-Phase-specific implementation notes live beside the phase they belong to —
-currently `docs/PHASE-06-NOTES.md`, which records the PostgREST row cap, the
-aggregation trade-off, and why the net-position sparkline was removed.
+Phase-specific implementation notes live beside the phase they belong to, as
+`docs/PHASE-NN-NOTES.md`. They record what a reader of the phase document would
+otherwise have to reverse-engineer: `PHASE-06` the PostgREST row cap and why the
+net-position sparkline was removed; `PHASE-07` the back-dated-bill bug found by
+running the generator; `PHASE-08` the escalation-step rule; `PHASE-09` the
+opposite failure directions of the usage meters; `PHASE-11` why webhook
+idempotency belongs to the database rather than the application.
 
 ---
 

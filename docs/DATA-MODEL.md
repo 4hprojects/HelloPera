@@ -579,16 +579,31 @@ MDX files in the repository are a valid alternative and simpler to start with.
 ## Phase 11 — Billing
 
 ```text
-billing_customers   id, user_id, provider, provider_customer_id
+billing_customers   id, user_id, provider, provider_customer_id,
+                    created_at, updated_at
 
-billing_history     id, user_id, subscription_id, provider_invoice_id,
-                    provider_payment_id, amount, currency_code, status,
+billing_history     id, user_id, subscription_id, provider,
+                    provider_invoice_id, provider_payment_id,
+                    amount, currency_code, status,
                     billing_period_start, billing_period_end,
                     receipt_url, created_at
 ```
 
 Safe metadata only. HelloPera never stores card numbers, CVV or bank
-credentials — the provider's hosted checkout and portal handle those.
+credentials — the provider's hosted checkout and portal handle those. That is
+enforced by the absence of any column they could go in, and a schema query in
+the Phase 11 verification asserts none appears later.
+
+Both tables: RLS enabled and forced, SELECT-own-row, and **no write policy of
+any kind** (criterion 22). Only the webhook handler writes them, using the
+service-role key after a verified signature. `billing_customers` has no grant
+to `authenticated` at all — the mapping from a provider's customer id to a user
+is server-side plumbing that no browser needs.
+
+Two unique indexes carry the idempotency guarantees: `(provider,
+provider_customer_id)` is the lookup a webhook performs, and `(provider,
+provider_invoice_id)` — partial, since a payment may arrive without an invoice
+id — is what stops a replayed webhook writing a second charge.
 
 ---
 

@@ -14,13 +14,14 @@ Last updated: 14 September 2026 (end of Phase 10 implementation).
 
 | Area | State |
 |---|---|
-| Code | Phases 00–10 built, 521 tests passing |
-| Remote database | **Nothing applied yet** — 17 migrations pending |
+| Code | Phases 00–11 built (11 is provider-agnostic only), 578 tests passing |
+| Remote database | **Nothing applied yet** — 19 migrations pending |
 | Scheduled jobs | Unknown — `pg_cron` availability unconfirmed |
 | Push notifications | Unconfigured — no VAPID keys |
 | Email | Unconfigured — Supabase default is ~2/hour, dev only |
 | Domain | `hellopera.online` does not resolve |
 | Ads | Off by flag, no AdSense account |
+| Payments | No provider chosen — see §11 |
 | Public launch | **Blocked** — see §1 |
 
 ---
@@ -55,8 +56,8 @@ Already done in code, but re-verify once the migrations are applied:
 ## 2. Apply the database migrations
 
 **Blocks: everything from Phase 07 onward.** `/recurring`, `/forecast`,
-`/notifications`, `/settings/plan` and `/admin/subscriptions` will all error
-until their tables exist.
+`/notifications`, `/settings/plan`, `/settings/billing` and
+`/admin/subscriptions` will all error until their tables exist.
 
 - [ ] Set `DATABASE_URL` in `.env` to the **pooler** connection string
       (Dashboard → Settings → Database → Connection string). The direct
@@ -211,18 +212,66 @@ public page — the flag alone shows nothing.
 
 ---
 
-## 11. Not yet verified by anyone
+## 11. Payments — what Phase 11 still needs from you
+
+Phase 11 built everything that does not require a provider: the subscription
+state machine, webhook processing, the billing tables, and `/settings/billing`.
+It cannot go further alone, because §6 of the phase document deliberately leaves
+the provider unchosen and the rest needs an account only you can open.
+
+Nothing here is urgent. `billing_enabled` is off, `/settings/billing` returns
+404 while it is off, and the webhook endpoint refuses every request — so the
+application is safe to run indefinitely in this state.
+
+- [ ] **Choose a provider.** For the Philippines the realistic options are
+      PayMongo, Xendit, Dragonpay or Stripe. Decide on the payment methods your
+      users actually have (GCash and Maya matter more here than cards) before
+      comparing fees.
+- [ ] **Open the account and complete their verification.** This is usually the
+      longest step — business documents, bank account, and a review period.
+- [ ] **Write the adapter.** One file implementing `BillingProvider` from
+      `lib/billing/provider.ts`, plus `setBillingProvider()` at startup. Its job
+      is signature verification and translating the provider's vocabulary into
+      `BillingEvent` / `ProviderSubscription` / `NormalisedInvoice`. Nothing
+      else in the application needs to change.
+- [ ] **Set the webhook secret** as an environment variable, and point the
+      provider at `https://<your-domain>/api/billing/webhook`. This needs a
+      public HTTPS URL, so §7 comes first.
+- [ ] **Create the `premium` plan row** with a real price. §36 forbids showing
+      an invented number, which is why `/pricing` currently shows none.
+- [ ] **Test with the provider's sandbox before the flag goes on** — a
+      successful payment, a failed one, a cancellation, and a replayed webhook.
+      The replay should change nothing the second time.
+- [ ] **Only then** set `billing_enabled` and `premium_enabled`.
+
+One thing worth knowing before you start: account deletion now calls the
+provider to cancel the subscription before deleting anything, and refuses to
+proceed if that call fails. That is deliberate — the alternative is a deleted
+account with a live subscription still charging a card — but it does mean a
+broken adapter blocks deletions for paying users.
+
+---
+
+## 12. Not yet verified by anyone
 
 Stated plainly so it is not mistaken for done:
 
-- **No page from Phases 07–10 has been rendered in a browser.** They compile,
-  build and are type-checked, but the tables they read do not exist remotely
-  yet. Expect small UI problems on first run.
+- **No signed-in page from Phases 07–11 has been rendered in a browser.** They
+  compile, build and are type-checked, but the tables they read do not exist
+  remotely yet. Expect small UI problems on first run.
+- **The signed-out pages have now been rendered**, in a headless Chrome at 320,
+  360, 414 and 768px. That pass found the site header overflowing every phone
+  width — the landing page scrolled sideways by 237px at 320px — which is now
+  fixed and re-measured. It is a fair warning about the pages that have not had
+  the same treatment.
 - **Push has never been sent to a device.**
 - **The scheduler endpoint has never been called.**
-- **The SQL for Phases 07–10 was executed** against a local throwaway Postgres —
-  migrations apply cleanly, deletion clears every table, rate limiting holds
-  under concurrency, and generation is idempotent — but never against your
+- **No payment has ever been taken**, and no provider adapter exists. The
+  webhook endpoint refuses everything (§11).
+- **The SQL for Phases 07–11 was executed** against a local throwaway Postgres —
+  all 19 migrations apply from scratch, deletion clears every table including
+  the billing ones, rate limiting holds under concurrency, replayed webhook
+  events are rejected, and generation is idempotent — but never against your
   project.
 
 ---
@@ -238,3 +287,4 @@ Stated plainly so it is not mistaken for done:
 7. §8 Search Console
 8. §6 push
 9. §9 AdSense, last
+10. §11 payments — independent of the rest, and the slowest to start

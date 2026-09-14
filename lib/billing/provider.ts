@@ -36,16 +36,50 @@ export type ProviderSubscription = {
 };
 
 /**
+ * A payment, in HelloPera's terms — PHASE-11 §34, §37, §38.
+ *
+ * The adapter converts the provider's invoice into this before the domain
+ * sees it. Note what is absent: no card number, no last four, no expiry, no
+ * bank details. §38 and criterion 24 forbid storing them, and the way to keep
+ * that promise is to leave no field they could be written into.
+ */
+export type NormalisedInvoice = {
+  providerInvoiceId: string | null;
+  providerPaymentId: string | null;
+  /** Decimal string, not a float. Money never round-trips through a double. */
+  amount: string;
+  currencyCode: string;
+  status: 'paid' | 'failed' | 'refunded' | 'pending';
+  periodStart: string | null;
+  periodEnd: string | null;
+  receiptUrl: string | null;
+};
+
+/**
  * A webhook already verified and normalised by the adapter.
  *
  * The adapter owns signature verification: it is the only layer that knows
  * what the provider signs and how.
+ *
+ * `eventType` is expected to be one of `BillingEvent` (lib/billing/lifecycle).
+ * Mapping the provider's vocabulary onto it is the adapter's job — §40 — so
+ * that nothing downstream ever switches on a provider's string. An event this
+ * application does not model is recorded and ignored rather than guessed at.
+ *
+ * `subscription` and `invoice` are the two things a handler would otherwise
+ * have to dig out of `payload` itself, which would put provider-shaped parsing
+ * back into the domain. `payload` remains, unparsed, purely as the audit
+ * record of what actually arrived.
  */
 export type NormalisedWebhookEvent = {
   providerEventId: string;
   eventType: string;
   providerSubscriptionId: string | null;
   providerCustomerId: string | null;
+  /** Period and cancellation state as of this event, when the event carries it. */
+  subscription?: ProviderSubscription | null;
+  /** Present only on payment events. */
+  invoice?: NormalisedInvoice | null;
   payload: Record<string, unknown>;
 };
 
