@@ -659,6 +659,18 @@ All three exist to avoid falsifying primary records. Promotional Premium is an
 `entitlement_overrides` row, not a fake subscription; a usage credit is a
 `usage_adjustments` row, not an edit to history.
 
+None of them has a browser policy at all — RLS enabled and forced, everything
+revoked, no policy written. That is stricter than the SELECT-own shape every
+user-owned table uses, and it is the right one: none of these rows belongs to
+the user it is about. A support note is written by an admin, and letting its
+subject read it changes what admins are willing to write down.
+
+`entitlement_overrides` deliberately shares the `{entitlement_key, value_json}`
+shape of `plan_entitlements`, because `resolveEntitlements()` reduces rows of
+that shape into a map where a later row wins. An override in effect is appended
+after the plan's rows, so there is one resolver rather than two answers that
+could drift.
+
 Operational tables: no browser access; admin reads through server actions.
 
 ---
@@ -705,8 +717,15 @@ transaction_tags → tags → transactions
 documents (+ every storage object under <user_uuid>/)
 accounts → categories (user-created only)
 usage_records → subscriptions → billing_history → billing_customers
+admin_support_notes → entitlement_overrides → usage_adjustments
 profiles → auth.users
 ```
+
+The three Phase 13 tables cascade on `user_id`, so deleting an account removes
+the notes, overrides and adjustments written *about* that person. They also
+carry an admin's id (`admin_user_id`, `created_by`), and that reference is
+`on delete set null` instead: deleting a departed operator's account must not
+erase the support history of everyone they helped.
 
 Retention exceptions — billing records held for accounting or legal reasons,
 minimal audit records — are documented in `PHASE-14` §71–77 and must be

@@ -14,8 +14,8 @@ Last updated: 14 September 2026 (end of Phase 10 implementation).
 
 | Area | State |
 |---|---|
-| Code | Phases 00–12 built, 655 tests passing |
-| Remote database | **11 of 20 applied** — 9 pending, including a live security fix |
+| Code | Phases 00–13 built, 673 tests passing |
+| Remote database | **11 of 21 applied** — 10 pending, including a live security fix |
 | Scheduled jobs | Unknown — `pg_cron` availability unconfirmed |
 | Push notifications | Unconfigured — no VAPID keys |
 | Email | Unconfigured — Supabase default is ~2/hour, dev only |
@@ -23,6 +23,7 @@ Last updated: 14 September 2026 (end of Phase 10 implementation).
 | Ads | Off by flag, no AdSense account |
 | Payments | No provider chosen — see §11 |
 | Assistant | Built, off by flag, needs an API key — see §12 |
+| Admin | Built — but nobody is an admin yet, see §13 |
 | Public launch | **Blocked** — see §1 |
 
 ---
@@ -289,11 +290,43 @@ actually costs.
 
 ---
 
-## 13. Not yet verified by anyone
+## 13. Make yourself an admin
+
+Phase 13 built the admin area — users, feature flags, usage, OCR and AI health,
+jobs, the audit log — and **nobody can reach it**, because no account has
+`role = 'admin'`.
+
+There is deliberately no UI for this. §13 of the phase document says role
+changes must never be client-controlled, and a "make me an admin" screen is
+exactly that. The first one is a SQL statement you run once:
+
+```sql
+update public.profiles set role = 'admin' where email = 'you@example.com';
+```
+
+- [ ] Run it, after §2's migrations and after you have signed up.
+- [ ] Confirm `/admin` loads and `/admin/users` lists your account.
+
+After that, admins promote each other from `/admin/users/[id]` — with a reason,
+an audit row, and a refusal if you target your own account. That last rule is
+why you cannot demote yourself by accident and lock everyone out.
+
+Two things worth knowing about the admin area before you rely on it:
+
+- **It cannot show you a user's financial records.** Not a transaction, not a
+  document's contents, not an assistant question. That is enforced by what the
+  queries select and asserted by a test, so support conversations will be about
+  metadata — job ids, error codes, statuses — rather than balances.
+- **Every change needs a reason**, and destructive ones need you to type
+  CONFIRM. The reason lands in the audit log, which nothing can edit or delete.
+
+---
+
+## 14. Not yet verified by anyone
 
 Stated plainly so it is not mistaken for done:
 
-- **No signed-in page from Phases 07–12 has been rendered in a browser.** They
+- **No signed-in page from Phases 07–13 has been rendered in a browser**, the admin area included. They
   compile, build and are type-checked, but the tables they read do not exist
   remotely yet. Expect small UI problems on first run.
 - **The signed-out pages have now been rendered**, in a headless Chrome at 320,
@@ -308,8 +341,8 @@ Stated plainly so it is not mistaken for done:
 - **No question has ever been asked of the assistant**, because no API key is
   configured. Its pure layers are tested; the provider call itself is verified
   only against a stub.
-- **The SQL for Phases 07–12 was executed** against a local throwaway Postgres —
-  all 20 migrations apply from scratch, deletion clears every table including
+- **The SQL for Phases 07–13 was executed** against a local throwaway Postgres —
+  all 21 migrations apply from scratch, deletion clears every table including
   the billing ones, rate limiting holds under concurrency, replayed webhook
   events are rejected, and generation is idempotent — but never against your
   project.
@@ -328,4 +361,5 @@ Stated plainly so it is not mistaken for done:
 8. §6 push
 9. §9 AdSense, last
 10. §12 assistant — one key, and it unblocks OCR too
-11. §11 payments — independent of the rest, and the slowest to start
+11. §13 make yourself an admin — one SQL statement, right after §2
+12. §11 payments — independent of the rest, and the slowest to start
