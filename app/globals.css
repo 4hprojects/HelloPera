@@ -100,6 +100,12 @@
 
   --hp-focus: #107a66;
   --hp-radius: 0.75rem;
+
+  /* Focus rings for form controls. Not exposed in `@theme inline` on purpose:
+     they are consumed only by the .hp-control block below, and a
+     `bg-focus-ring` utility is not a thing anyone should reach for. */
+  --hp-focus-ring: rgba(19, 138, 114, 0.18); /* --hp-primary  #138a72 */
+  --hp-danger-ring: rgba(201, 79, 92, 0.18); /* --hp-danger   #c94f5c */
 }
 
 /* Explicit dark choice wins in both directions. */
@@ -163,6 +169,10 @@
   --hp-chart-grid: #24364e;
 
   --hp-focus: #63d2b8;
+
+  /* See the light block for why these are not in `@theme inline`. */
+  --hp-focus-ring: rgba(44, 184, 154, 0.28); /* --hp-primary  #2cb89a */
+  --hp-danger-ring: rgba(232, 105, 122, 0.28); /* --hp-danger   #e8697a */
 }
 
 /* System preference, only when no explicit choice has been made. */
@@ -226,6 +236,9 @@
     --hp-chart-grid: #24364e;
 
     --hp-focus: #63d2b8;
+
+    --hp-focus-ring: rgba(44, 184, 154, 0.28);
+    --hp-danger-ring: rgba(232, 105, 122, 0.28);
   }
 }
 
@@ -393,6 +406,325 @@ body {
 .hp-amount-lg {
   font-size: clamp(1.5rem, 4vw, 2rem);
   line-height: 1.15;
+}
+
+/* ===========================================================================
+   Form fields — the inset floating label
+   ---------------------------------------------------------------------------
+   Patterned on helloRun's signup form: the label rests over the control while
+   it is empty, then floats to the top edge of the field box on focus or once
+   there is a value. Markup order is CONTROL, then LABEL, then the message
+   slot — the float is a sibling selector on the control's own state, so the
+   label has to follow it. `for`/`id` carries the accessible name, which does
+   not care about order.
+
+   helloRun toggles `.focused`/`.filled` classes from JS. This does it in CSS
+   (`:focus-within`, `:not(:placeholder-shown)`, `:autofill`, `:has()`): no
+   state to sync, no re-render per keystroke, and it survives browser autofill
+   — which a keystroke listener does not.
+
+   ## READ THIS BEFORE EDITING A CALL SITE
+
+   globals.css is loaded AFTER `@import 'tailwindcss'` and is unlayered, so
+   every rule here beats every Tailwind utility regardless of specificity.
+   `<Input className="pr-16" />` does not shorten the padding; it does nothing.
+   Therefore:
+
+       Geometry (width, margin, grid placement) goes on the WRAPPER.
+       State (invalid, tone, size, adorned) goes on a data-* attribute.
+       Never pass a border or padding class to a control.
+
+   components/ui/field.tsx turns every state into a typed prop for exactly
+   this reason.
+   =========================================================================== */
+
+.hp-field {
+  position: relative;
+  width: 100%;
+}
+
+.hp-control {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 0.9375rem;
+  line-height: 1.25rem;
+  color: var(--hp-text);
+  background-color: var(--hp-surface);
+  border: 1px solid var(--hp-border-strong);
+  border-radius: var(--hp-radius);
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease;
+  /* Asymmetric on purpose: the top padding is the label's parking space. */
+  padding: 1.375rem 0.75rem 0.4375rem;
+  height: 3.25rem; /* 52px */
+}
+
+textarea.hp-control {
+  height: auto;
+  min-height: 6rem;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+select.hp-control {
+  appearance: none;
+  background-image: none;
+  padding-right: 2.25rem; /* the chevron's well */
+  cursor: pointer;
+}
+
+/* The chevron. Drawn as a clipped block rather than a background SVG, because
+   a data: URI cannot reference a CSS variable — a background image would need
+   one copy per theme, while this one just reads --hp-text-muted. */
+.hp-field:has(> select.hp-control)::after {
+  content: '';
+  position: absolute;
+  right: 0.875rem;
+  top: 1.625rem; /* half of 3.25rem */
+  width: 0.625rem;
+  height: 0.625rem;
+  transform: translateY(-50%);
+  pointer-events: none;
+  background-color: var(--hp-text-muted);
+  clip-path: polygon(0 20%, 50% 75%, 100% 20%, 100% 40%, 50% 95%, 0 40%);
+}
+
+/* --- compact, for filter chrome ------------------------------------------
+   Exactly 44px, so the `@media (pointer: coarse)` floor below is satisfied by
+   the declared height rather than silently stretching the box — which would
+   desync the label's `top`. */
+.hp-field[data-size='sm'] > .hp-control {
+  height: 2.75rem;
+  font-size: 0.875rem;
+  line-height: 1.0625rem;
+  padding: 1.1875rem 0.625rem 0.375rem;
+}
+.hp-field[data-size='sm'] > select.hp-control {
+  padding-right: 2rem;
+}
+.hp-field[data-size='sm']:has(> select.hp-control)::after {
+  top: 1.375rem;
+  right: 0.75rem;
+}
+
+/* --- the label ---------------------------------------------------------- */
+.hp-float {
+  position: absolute;
+  left: 0.8125rem;
+  top: 50%;
+  transform: translateY(-50%);
+  max-width: calc(100% - 2.75rem);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 0.9375rem;
+  line-height: 1.25rem;
+  font-weight: 400;
+  color: var(--hp-text-muted);
+  /* The label is decoration once it has floated; clicks belong to the field. */
+  pointer-events: none;
+  transition:
+    top 150ms ease,
+    font-size 150ms ease,
+    font-weight 150ms ease,
+    color 150ms ease;
+}
+.hp-field[data-size='sm'] > .hp-float {
+  font-size: 0.875rem;
+}
+/* A textarea's vertical centre is nowhere near where its text begins. */
+.hp-field:has(> textarea.hp-control) > .hp-float {
+  top: 1.375rem;
+}
+
+/* --- FLOAT TRIGGERS. One selector list, every control type. -------------
+   A select's label is ALWAYS floated. An empty text input renders nothing, so
+   a label can rest over it; an empty select still paints its own option text
+   ("No category", "All types"), and a resting label would sit on top of that.
+   Blanking those options instead would cost real copy, so the label moves.
+
+   Note also that a select can never match `:placeholder-shown`, which means
+   `:not(:placeholder-shown)` is always TRUE for one — hence the
+   `:is(input, textarea)` scoping below. Widen it and every input loses its
+   resting label. A select with a leading
+   `<option value="">` rests until something is chosen; a select with no empty
+   option never matches, so its label is permanently floated — which is
+   correct, since it always has a value. */
+.hp-field:focus-within > .hp-float,
+:is(input, textarea).hp-control:not(:placeholder-shown) ~ .hp-float,
+.hp-control:autofill ~ .hp-float,
+.hp-control:-webkit-autofill ~ .hp-float,
+select.hp-control ~ .hp-float,
+.hp-field[data-float='always'] > .hp-float {
+  top: 0.4375rem;
+  transform: none;
+  font-size: 0.6875rem;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.hp-field[data-size='sm']:focus-within > .hp-float,
+.hp-field[data-size='sm']
+  > :is(input, textarea).hp-control:not(:placeholder-shown)
+  ~ .hp-float,
+.hp-field[data-size='sm'] > .hp-control:autofill ~ .hp-float,
+.hp-field[data-size='sm'] > .hp-control:-webkit-autofill ~ .hp-float,
+.hp-field[data-size='sm'] > select.hp-control ~ .hp-float,
+.hp-field[data-size='sm'][data-float='always'] > .hp-float {
+  top: 0.3125rem;
+  font-size: 0.625rem;
+}
+
+/* Brand colour on the floated label only while focused. A page of jade micro
+   labels on every filled field is noise; the focused one is signal. */
+.hp-field:focus-within > .hp-float {
+  color: var(--hp-primary-text);
+}
+
+/* --- placeholders are format examples, not labels ------------------------
+   The label occupies the resting position, so a visible placeholder would sit
+   underneath it. Reveal it on focus, once the label has moved out of the way. */
+.hp-control::placeholder {
+  color: transparent;
+  transition: color 150ms ease;
+}
+.hp-control:focus::placeholder {
+  color: var(--hp-text-muted);
+}
+
+/* --- the filled border: idle → focused → filled -------------------------
+   Borrowed from helloRun's signup, where it is the single best idea on the
+   page: a completed field takes a jade border, which gives silent, continuous
+   progress down a long form without a step indicator.
+
+   Reinforcement, never information (DESIGN-SYSTEM §4.1) — nothing is conveyed
+   that the visible text in the field does not already say. In greyscale it
+   reads as a slightly darker edge, which is exactly as much as it should.
+
+   Measured: --hp-primary #138a72 on --hp-surface #ffffff is 4.03:1, and on
+   dark #142235 it is 3.34:1 — both clear the 3:1 that WCAG 1.4.11 asks of a
+   non-text boundary. The idle --hp-border-strong remains the default. */
+:is(input, textarea).hp-control:not(:placeholder-shown),
+.hp-control:autofill,
+.hp-control:-webkit-autofill,
+select.hp-control:not(:has(option[value='']:checked)),
+.hp-field[data-filled] > .hp-control {
+  border-color: var(--hp-primary);
+}
+
+/* --- focus --------------------------------------------------------------
+   Controls own their focus treatment. The global `:focus-visible` outline
+   above hard-codes `border-radius: 4px`, which would cut a square ring across
+   a 0.75rem corner, and its `outline-offset: 2px` would collide with a label
+   sitting on the top border. It keeps serving links and buttons untouched.
+
+   `:focus`, not `:focus-visible` — on a form control the ring should show for
+   a mouse click too, which is how you tell which select you just opened. */
+.hp-control:focus {
+  outline: none;
+  border-color: var(--hp-primary);
+  box-shadow: 0 0 0 3px var(--hp-focus-ring);
+}
+/* box-shadow is discarded in forced-colors mode, so put a real outline back. */
+@media (forced-colors: active) {
+  .hp-control:focus {
+    outline: 2px solid Highlight;
+    outline-offset: 1px;
+  }
+}
+
+/* --- error and tone. Data attributes, because a className would lose. ---- */
+.hp-field[data-invalid] > .hp-control {
+  border-color: var(--hp-danger);
+}
+/* Red in the resting position too: a required field that failed validation
+   should read as wrong before you touch it. */
+.hp-field[data-invalid] > .hp-float {
+  color: var(--hp-danger-text);
+}
+.hp-field[data-invalid] > .hp-control:focus {
+  box-shadow: 0 0 0 3px var(--hp-danger-ring);
+}
+.hp-field[data-tone='warning'] > .hp-control {
+  border-color: var(--hp-warning);
+}
+.hp-field[data-tone='warning'] > .hp-float {
+  color: var(--hp-warning-text);
+}
+
+/* Room for a trailing control inside the box — PasswordField's Show/Hide. */
+.hp-field[data-adorned] > .hp-control {
+  padding-right: 4rem;
+}
+
+.hp-control:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background-color: var(--hp-surface-muted);
+}
+
+/* --- the header's pill search -------------------------------------------
+   The documented exception. A 44px pill with a 10px floated label, in a header
+   beside a 40px bell and a 40px avatar, wrecks the bar's vertical rhythm — and
+   the label it would float ("Search transactions") is what the magnifier icon
+   already says. So: pill, 40px, sr-only label, placeholder always visible, no
+   float, no filled border. It still renders through the same component, so
+   there is one source of truth for field styling. */
+.hp-field[data-variant='search'] > .hp-control {
+  height: 2.5rem;
+  padding: 0 1rem 0 2.5rem;
+  border-radius: 9999px;
+  border-color: var(--hp-border);
+  font-size: 0.875rem;
+}
+.hp-field[data-variant='search'] > .hp-control::placeholder {
+  color: var(--hp-text-muted);
+}
+.hp-field[data-variant='search']
+  > :is(input, textarea).hp-control:not(:placeholder-shown) {
+  border-color: var(--hp-border);
+}
+.hp-field[data-variant='search'] > .hp-control:focus {
+  border-color: var(--hp-primary);
+}
+
+/* A leading icon inside the box. Never interactive — it is a signpost. */
+.hp-field-icon {
+  position: absolute;
+  left: 0.875rem;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  color: var(--hp-text-muted);
+  pointer-events: none;
+}
+
+/* WebKit's search clear button lands in the right padding; give it air. */
+.hp-control[type='search']::-webkit-search-cancel-button {
+  margin-inline-start: 0.25rem;
+}
+
+/* --- autofill -----------------------------------------------------------
+   Chrome repaints an autofilled field with its own yellow wash, which ignores
+   background-color. A 1000px inset shadow is the only way to cover it. */
+.hp-control:-webkit-autofill,
+.hp-control:-webkit-autofill:hover,
+.hp-control:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 1000px var(--hp-surface) inset;
+  -webkit-text-fill-color: var(--hp-text);
+  caret-color: var(--hp-text);
+}
+/* …which occupies the box-shadow the focus ring needed, so restore it as a
+   second shadow layered over the wash. */
+.hp-control:-webkit-autofill:focus {
+  -webkit-box-shadow:
+    0 0 0 1000px var(--hp-surface) inset,
+    0 0 0 3px var(--hp-focus-ring);
 }
 
 /* Comfortable tap targets on touch devices — Phase 00 §10. */

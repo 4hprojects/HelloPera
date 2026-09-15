@@ -6,13 +6,11 @@ import type { ActionState } from '@/app/actions/auth';
 import { FormAlert } from '@/components/auth/form-alert';
 import { FormField } from '@/components/auth/form-field';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
+import { SelectField } from '@/components/ui/field';
 import { FREQUENCIES } from '@/lib/recurring/schedule';
 import { RULE_TYPES, type RuleType } from '@/schemas/recurring.schema';
 
 const initial: ActionState = {};
-const selectClass =
-  'w-full rounded-[var(--radius-hp)] border border-border-strong bg-surface px-3 py-2.5 text-[0.9375rem] text-text';
 
 /**
  * §49 — "Dynamic fields depend on type."
@@ -67,23 +65,20 @@ export function NewRuleForm({
     <form action={action} noValidate>
       {state.error ? <FormAlert tone="error">{state.error}</FormAlert> : null}
 
-      <div className="mb-4">
-        <Label htmlFor="ruleType">What repeats?</Label>
-        <select
-          id="ruleType"
-          name="ruleType"
-          className={selectClass}
-          value={ruleType}
-          onChange={(e) => setRuleType(e.target.value as RuleType)}
-        >
-          {RULE_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {TYPE_LABEL[t]}
-            </option>
-          ))}
-        </select>
-        <p className="hp-small mt-1 text-text-muted">{TYPE_HINT[ruleType]}</p>
-      </div>
+      <SelectField
+        id="ruleType"
+        label="What repeats?"
+        value={ruleType}
+        onChange={(e) => setRuleType(e.target.value as RuleType)}
+        hint={TYPE_HINT[ruleType]}
+        wrapClassName="mb-4"
+      >
+        {RULE_TYPES.map((t) => (
+          <option key={t} value={t}>
+            {TYPE_LABEL[t]}
+          </option>
+        ))}
+      </SelectField>
 
       <FormField
         id="name"
@@ -120,22 +115,18 @@ export function NewRuleForm({
       />
 
       <div className="mb-4 grid grid-cols-2 gap-3">
-        <div>
-          <Label htmlFor="frequency">Repeats</Label>
-          <select
-            id="frequency"
-            name="frequency"
-            className={selectClass}
-            value={frequency}
-            onChange={(e) => setFrequency(e.target.value)}
-          >
-            {FREQUENCIES.map((f) => (
-              <option key={f} value={f}>
-                {f[0]!.toUpperCase() + f.slice(1)}
-              </option>
-            ))}
-          </select>
-        </div>
+        <SelectField
+          id="frequency"
+          label="Repeats"
+          value={frequency}
+          onChange={(e) => setFrequency(e.target.value)}
+        >
+          {FREQUENCIES.map((f) => (
+            <option key={f} value={f}>
+              {f[0]!.toUpperCase() + f.slice(1)}
+            </option>
+          ))}
+        </SelectField>
         <FormField
           id="intervalCount"
           label="Every"
@@ -153,38 +144,34 @@ export function NewRuleForm({
         a question with one correct answer.
       */}
       {isWeekly ? (
-        <div className="mb-4">
-          <Label htmlFor="dayOfWeek">On (optional)</Label>
-          <select id="dayOfWeek" name="dayOfWeek" className={selectClass} defaultValue="">
-            <option value="">Same weekday as the start date</option>
-            {WEEKDAYS.map((d) => (
-              <option key={d.value} value={d.value}>
-                {d.label}
-              </option>
-            ))}
-          </select>
-        </div>
+        <SelectField
+          id="dayOfWeek"
+          label="On (optional)"
+          defaultValue=""
+          wrapClassName="mb-4"
+        >
+          <option value="">Same weekday as the start date</option>
+          {WEEKDAYS.map((d) => (
+            <option key={d.value} value={d.value}>
+              {d.label}
+            </option>
+          ))}
+        </SelectField>
       ) : (
-        <div className="mb-4">
-          <Label htmlFor="dayOfMonth">Day of month (optional)</Label>
-          <select
-            id="dayOfMonth"
-            name="dayOfMonth"
-            className={selectClass}
-            defaultValue=""
-          >
-            <option value="">Same day as the start date</option>
-            {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
-              <option key={d} value={d}>
-                {d}
-              </option>
-            ))}
-          </select>
-          <p className="hp-small mt-1 text-text-muted">
-            A day past the end of a short month uses that month&rsquo;s last day, then
-            returns to the chosen day.
-          </p>
-        </div>
+        <SelectField
+          id="dayOfMonth"
+          label="Day of month (optional)"
+          defaultValue=""
+          hint="A day past the end of a short month uses that month’s last day, then returns to the chosen day."
+          wrapClassName="mb-4"
+        >
+          <option value="">Same day as the start date</option>
+          {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
+            <option key={d} value={d}>
+              {d}
+            </option>
+          ))}
+        </SelectField>
       )}
 
       <div className="mb-4 grid grid-cols-2 gap-3">
@@ -204,30 +191,34 @@ export function NewRuleForm({
       </div>
 
       {ruleType !== 'bill' && ruleType !== 'expected_income' ? (
-        <div className="mb-4">
-          <Label htmlFor="accountId">Account (optional)</Label>
-          <select id="accountId" name="accountId" className={selectClass} defaultValue="">
-            <option value="">No account</option>
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
-          </select>
-        </div>
-      ) : null}
-
-      <div className="mb-4">
-        <Label htmlFor="categoryId">Category (optional)</Label>
-        <select id="categoryId" name="categoryId" className={selectClass} defaultValue="">
-          <option value="">No category</option>
-          {categories.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
+        <SelectField
+          id="accountId"
+          label="Account (optional)"
+          defaultValue=""
+          wrapClassName="mb-4"
+        >
+          <option value="">No account</option>
+          {accounts.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
             </option>
           ))}
-        </select>
-      </div>
+        </SelectField>
+      ) : null}
+
+      <SelectField
+        id="categoryId"
+        label="Category (optional)"
+        defaultValue=""
+        wrapClassName="mb-4"
+      >
+        <option value="">No category</option>
+        {categories.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.name}
+          </option>
+        ))}
+      </SelectField>
 
       <FormField
         id="description"

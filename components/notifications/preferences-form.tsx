@@ -5,6 +5,7 @@ import { updateNotificationPreferencesAction } from '@/app/actions/notifications
 import type { ActionState } from '@/app/actions/auth';
 import { FormAlert } from '@/components/auth/form-alert';
 import { Button } from '@/components/ui/button';
+import { TextField } from '@/components/ui/field';
 import { Label } from '@/components/ui/label';
 import type { NotificationPreferences } from '@/types/notifications';
 
@@ -165,26 +166,20 @@ export function PreferencesForm({
           defaultChecked={preferences.quietHoursEnabled}
         />
         <div className="mt-2 grid grid-cols-2 gap-3">
-          <div>
-            <Label htmlFor="quietHoursStart">From</Label>
-            <input
-              id="quietHoursStart"
-              name="quietHoursStart"
-              type="time"
-              defaultValue={preferences.quietHoursStart}
-              className="w-full rounded-[var(--radius-hp)] border border-border-strong bg-surface px-3 py-2.5 text-[0.9375rem] text-text"
-            />
-          </div>
-          <div>
-            <Label htmlFor="quietHoursEnd">Until</Label>
-            <input
-              id="quietHoursEnd"
-              name="quietHoursEnd"
-              type="time"
-              defaultValue={preferences.quietHoursEnd}
-              className="w-full rounded-[var(--radius-hp)] border border-border-strong bg-surface px-3 py-2.5 text-[0.9375rem] text-text"
-            />
-          </div>
+          <TextField
+            id="quietHoursStart"
+            label="From"
+            type="time"
+            defaultValue={preferences.quietHoursStart}
+            showMessage={false}
+          />
+          <TextField
+            id="quietHoursEnd"
+            label="Until"
+            type="time"
+            defaultValue={preferences.quietHoursEnd}
+            showMessage={false}
+          />
         </div>
         <p className="hp-small mt-2 text-text-muted">
           Times are in {preferences.timezone}.

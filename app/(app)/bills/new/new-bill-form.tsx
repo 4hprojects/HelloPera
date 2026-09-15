@@ -6,11 +6,9 @@ import type { ActionState } from '@/app/actions/auth';
 import { FormAlert } from '@/components/auth/form-alert';
 import { FormField } from '@/components/auth/form-field';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
+import { SelectField } from '@/components/ui/field';
 
 const initial: ActionState = {};
-const selectClass =
-  'w-full rounded-[var(--radius-hp)] border border-border-strong bg-surface px-3 py-2.5 text-[0.9375rem] text-text';
 
 export function NewBillForm({
   defaultCurrency,
@@ -46,17 +44,14 @@ export function NewBillForm({
         error={state.fieldErrors?.dueDate}
       />
 
-      <div className="mb-4">
-        <Label htmlFor="categoryId">Category</Label>
-        <select id="categoryId" name="categoryId" className={selectClass} defaultValue="">
-          <option value="">No category</option>
-          {categories.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-      </div>
+      <SelectField id="categoryId" label="Category" defaultValue="" wrapClassName="mb-4">
+        <option value="">No category</option>
+        {categories.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.name}
+          </option>
+        ))}
+      </SelectField>
 
       <FormField
         id="description"

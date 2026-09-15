@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { BellIcon, SearchIcon } from '@/components/icons';
+import { TextField } from '@/components/ui/field';
 import { AppLogo } from '@/components/brand/app-logo';
 import { Avatar } from '@/components/ui/avatar';
 import { ThemeToggle } from '@/components/ui/theme-toggle';
@@ -48,23 +49,27 @@ export function TopBar({
           className="min-w-0 flex-1"
           role="search"
         >
-          <label htmlFor="global-search" className="sr-only">
-            Search transactions
-          </label>
-          <div className="relative max-w-md">
-            <SearchIcon
-              size={18}
-              className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted"
-            />
-            <input
-              id="global-search"
-              name="search"
-              type="search"
-              autoComplete="off"
-              placeholder="Search transactions…"
-              className="h-10 w-full rounded-full border border-border bg-surface pl-10 pr-4 text-sm text-text placeholder:text-text-muted"
-            />
-          </div>
+          {/*
+            The documented exception to the floating label (see globals.css).
+            A floated micro-label in a 40px pill, beside a 40px bell and a 40px
+            avatar, wrecks the bar's vertical rhythm — and the label it would
+            float is what the magnifier already says. So the label stays
+            sr-only and the placeholder stays visible. Still rendered through
+            TextField, so there remains one source of truth for field styling.
+          */}
+          <TextField
+            id="global-search"
+            name="search"
+            label="Search transactions"
+            labelHidden
+            variant="search"
+            type="search"
+            autoComplete="off"
+            placeholder="Search transactions…"
+            showMessage={false}
+            leadingIcon={<SearchIcon size={18} />}
+            wrapClassName="max-w-md"
+          />
         </form>
 
         {/* At phone width the bar is already search + bell + account. The

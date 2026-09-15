@@ -8,14 +8,10 @@ import {
 import type { ActionState } from '@/app/actions/auth';
 import { FormAlert } from '@/components/auth/form-alert';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
-import { Input } from '@/components/ui/input';
+import { SelectField, TextField } from '@/components/ui/field';
 import { LOW_CONFIDENCE_THRESHOLD } from '@/lib/ocr/schema';
 
 const initial: ActionState = {};
-
-const selectClass =
-  'w-full rounded-[var(--radius-hp)] border border-border-strong bg-surface px-3 py-2.5 text-[0.9375rem] text-text';
 
 const TARGETS = [
   { value: 'transaction', label: 'An expense I already paid' },
@@ -30,6 +26,10 @@ const TARGETS = [
  * §19: confidence guides review, it does not bypass it. Low-confidence fields
  * are marked so the eye goes there first — but every field stays editable and
  * nothing is pre-trusted.
+ *
+ * The confidence reading goes in the hint slot rather than a header row beside
+ * the label: the floating label lives inside the field now, and the slot under
+ * it already exists for exactly this kind of aside.
  */
 function Field({
   id,
@@ -49,32 +49,24 @@ function Field({
   const uncertain = confidence !== undefined && confidence < LOW_CONFIDENCE_THRESHOLD;
   const empty = !defaultValue;
 
+  const hint =
+    confidence !== undefined
+      ? `${Math.round(confidence * 100)}% sure${uncertain ? ' · check this' : ''}`
+      : empty
+        ? 'not found'
+        : undefined;
+
   return (
-    <div className="mb-4">
-      <div className="mb-1.5 flex items-baseline justify-between gap-2">
-        <Label htmlFor={id} className="mb-0">
-          {label}
-        </Label>
-        {confidence !== undefined ? (
-          <span
-            className={`hp-small ${uncertain ? 'text-warning-text' : 'text-text-muted'}`}
-          >
-            {Math.round(confidence * 100)}% sure
-            {uncertain ? ' · check this' : ''}
-          </span>
-        ) : empty ? (
-          <span className="hp-small text-text-muted">not found</span>
-        ) : null}
-      </div>
-      <Input
-        id={id}
-        name={id}
-        type={type}
-        inputMode={inputMode}
-        defaultValue={defaultValue ?? ''}
-        className={uncertain ? 'border-warning' : undefined}
-      />
-    </div>
+    <TextField
+      id={id}
+      label={label}
+      type={type}
+      inputMode={inputMode}
+      defaultValue={defaultValue ?? ''}
+      hint={hint}
+      tone={uncertain ? 'warning' : 'default'}
+      wrapClassName="mb-4"
+    />
   );
 }
 
@@ -113,28 +105,24 @@ export function ReviewForm({
         <input type="hidden" name="extractionId" value={extractionId} />
         <input type="hidden" name="documentId" value={documentId} />
 
-        <div className="mb-4">
-          <Label htmlFor="target">What is this?</Label>
-          <select
-            id="target"
-            name="target"
-            className={selectClass}
-            value={target}
-            onChange={(e) => setTarget(e.target.value)}
-          >
-            {TARGETS.map((t) => (
-              <option key={t.value} value={t.value}>
-                {t.label}
-              </option>
-            ))}
-          </select>
-          {suggestedTarget !== 'unknown' && suggestedTarget !== target ? (
-            <p className="hp-small mt-1 text-text-muted">
-              Read as &ldquo;{TARGETS.find((t) => t.value === suggestedTarget)?.label}
-              &rdquo;. You have changed it.
-            </p>
-          ) : null}
-        </div>
+        <SelectField
+          id="target"
+          label="What is this?"
+          value={target}
+          onChange={(e) => setTarget(e.target.value)}
+          hint={
+            suggestedTarget !== 'unknown' && suggestedTarget !== target
+              ? `Read as “${TARGETS.find((t) => t.value === suggestedTarget)?.label}”. You have changed it.`
+              : undefined
+          }
+          wrapClassName="mb-4"
+        >
+          {TARGETS.map((t) => (
+            <option key={t.value} value={t.value}>
+              {t.label}
+            </option>
+          ))}
+        </SelectField>
 
         <Field
           id="amount"
@@ -164,38 +152,36 @@ export function ReviewForm({
               defaultValue={fields.transactionDate}
               confidence={confidence.transactionDate}
             />
-            <div className="mb-4">
-              <Label htmlFor="accountId">Paid from</Label>
-              <select id="accountId" name="accountId" className={selectClass} required>
-                {accounts.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </select>
-              {fields.paymentMethod ? (
-                <p className="hp-small mt-1 text-text-muted">
-                  The document mentions {fields.paymentMethod}. Choose the matching
-                  account — it is a hint, not a selection.
-                </p>
-              ) : null}
-            </div>
-            <div className="mb-5">
-              <Label htmlFor="categoryId">Category</Label>
-              <select
-                id="categoryId"
-                name="categoryId"
-                className={selectClass}
-                defaultValue=""
-              >
-                <option value="">No category</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <SelectField
+              id="accountId"
+              label="Paid from"
+              required
+              hint={
+                fields.paymentMethod
+                  ? `The document mentions ${fields.paymentMethod}. Choose the matching account — it is a hint, not a selection.`
+                  : undefined
+              }
+              wrapClassName="mb-4"
+            >
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </SelectField>
+            <SelectField
+              id="categoryId"
+              label="Category"
+              defaultValue=""
+              wrapClassName="mb-5"
+            >
+              <option value="">No category</option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </SelectField>
           </>
         ) : null}
 

@@ -6,7 +6,7 @@ import type { ActionState } from '@/app/actions/auth';
 import { FormAlert } from '@/components/auth/form-alert';
 import { FormField } from '@/components/auth/form-field';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
+import { SelectField } from '@/components/ui/field';
 import { ACCOUNT_TYPES, DEFAULT_NATURE, type AccountType } from '@/lib/finance/types';
 
 const initial: ActionState = {};
@@ -23,9 +23,6 @@ const TYPE_LABELS: Record<AccountType, string> = {
   other: 'Other',
 };
 
-const selectClass =
-  'w-full rounded-[var(--radius-hp)] border border-border-strong bg-surface px-3 py-2.5 text-[0.9375rem] text-text';
-
 export function NewAccountForm({ defaultCurrency }: { defaultCurrency: string }) {
   const [state, action, pending] = useActionState(createAccountAction, initial);
   const [type, setType] = useState<AccountType>('cash');
@@ -38,33 +35,32 @@ export function NewAccountForm({ defaultCurrency }: { defaultCurrency: string })
     <form action={action} noValidate>
       {state.error ? <FormAlert tone="error">{state.error}</FormAlert> : null}
 
-      <div className="mb-4">
-        <Label htmlFor="type">Account type</Label>
-        <select
-          id="type"
-          name="type"
-          value={type}
-          onChange={(e) => setType(e.target.value as AccountType)}
-          className={selectClass}
-        >
-          {ACCOUNT_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {TYPE_LABELS[t]}
-            </option>
-          ))}
-        </select>
-      </div>
+      <SelectField
+        id="type"
+        label="Account type"
+        value={type}
+        onChange={(e) => setType(e.target.value as AccountType)}
+        wrapClassName="mb-4"
+      >
+        {ACCOUNT_TYPES.map((t) => (
+          <option key={t} value={t}>
+            {TYPE_LABELS[t]}
+          </option>
+        ))}
+      </SelectField>
 
       {nature ? (
         <input type="hidden" name="nature" value={nature} />
       ) : (
-        <div className="mb-4">
-          <Label htmlFor="nature">Is this money you own or money you owe?</Label>
-          <select id="nature" name="nature" className={selectClass} defaultValue="asset">
-            <option value="asset">Money I own (asset)</option>
-            <option value="liability">Money I owe (liability)</option>
-          </select>
-        </div>
+        <SelectField
+          id="nature"
+          label="Money you own, or money you owe?"
+          defaultValue="asset"
+          wrapClassName="mb-4"
+        >
+          <option value="asset">Money I own (asset)</option>
+          <option value="liability">Money I owe (liability)</option>
+        </SelectField>
       )}
 
       <FormField
@@ -79,21 +75,18 @@ export function NewAccountForm({ defaultCurrency }: { defaultCurrency: string })
         error={state.fieldErrors?.institutionName}
       />
 
-      <div className="mb-4">
-        <Label htmlFor="currencyCode">Currency</Label>
-        <select
-          id="currencyCode"
-          name="currencyCode"
-          defaultValue={defaultCurrency}
-          className={selectClass}
-        >
-          {['PHP', 'USD', 'EUR', 'JPY', 'SGD'].map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
-      </div>
+      <SelectField
+        id="currencyCode"
+        label="Currency"
+        defaultValue={defaultCurrency}
+        wrapClassName="mb-4"
+      >
+        {['PHP', 'USD', 'EUR', 'JPY', 'SGD'].map((c) => (
+          <option key={c} value={c}>
+            {c}
+          </option>
+        ))}
+      </SelectField>
 
       <FormField
         id="openingBalance"

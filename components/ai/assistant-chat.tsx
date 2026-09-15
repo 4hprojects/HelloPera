@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { askAssistantAction, type AssistantState } from '@/app/actions/ai';
 import { Button, buttonClass } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { TextareaField } from '@/components/ui/field';
 import { MAX_QUESTION_LENGTH } from '@/schemas/ai.schema';
 
 /**
@@ -57,21 +58,16 @@ export function AssistantChat({ conversationId }: { conversationId: string | nul
           name="conversationId"
           value={state.answer?.conversationId ?? conversationId ?? ''}
         />
-        <div>
-          <label htmlFor="question" className="hp-label text-text-muted">
-            Ask about your money
-          </label>
-          <textarea
-            ref={inputRef}
-            id="question"
-            name="question"
-            rows={3}
-            maxLength={MAX_QUESTION_LENGTH}
-            required
-            placeholder="How much did I spend on food this month?"
-            className="mt-1 w-full rounded-[var(--radius-hp)] border border-border bg-surface px-3 py-2 text-text placeholder:text-text-muted focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/30"
-          />
-        </div>
+        <TextareaField
+          ref={inputRef}
+          id="question"
+          label="Ask about your money"
+          rows={3}
+          maxLength={MAX_QUESTION_LENGTH}
+          required
+          placeholder="How much did I spend on food this month?"
+          showMessage={false}
+        />
         <div className="flex items-center justify-between gap-3">
           {/* §79 — said once, where someone is about to ask. */}
           <p className="hp-small text-text-muted">

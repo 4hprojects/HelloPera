@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { PageHeader } from '@/components/ui/page-header';
+import { SelectField, TextField } from '@/components/ui/field';
 import { Cell, DataTable, StatusText } from '@/components/admin/data-table';
 import { requireAdmin } from '@/lib/auth/guards';
 import { listUsers } from '@/services/admin.service';
@@ -31,33 +32,27 @@ export default async function AdminUsersPage({
       <PageHeader title="Users" description="Accounts and their operational state." />
 
       <form method="get" className="mb-4 flex flex-wrap items-end gap-2">
-        <div className="min-w-0 flex-1">
-          <label htmlFor="q" className="hp-label text-text-muted">
-            Search by email or name
-          </label>
-          <input
-            id="q"
-            name="q"
-            defaultValue={params.q ?? ''}
-            className="mt-1 w-full rounded-[var(--radius-hp)] border border-border bg-surface px-3 py-2 text-text"
-          />
-        </div>
-        <div>
-          <label htmlFor="status" className="hp-label text-text-muted">
-            Status
-          </label>
-          <select
-            id="status"
-            name="status"
-            defaultValue={params.status ?? ''}
-            className="mt-1 rounded-[var(--radius-hp)] border border-border bg-surface px-3 py-2 text-text"
-          >
-            <option value="">Any</option>
-            <option value="active">Active</option>
-            <option value="suspended">Suspended</option>
-            <option value="disabled">Disabled</option>
-          </select>
-        </div>
+        <TextField
+          id="q"
+          label="Search by email or name"
+          defaultValue={params.q ?? ''}
+          size="sm"
+          showMessage={false}
+          wrapClassName="min-w-0 flex-1"
+        />
+        <SelectField
+          id="status"
+          label="Status"
+          defaultValue={params.status ?? ''}
+          size="sm"
+          showMessage={false}
+          wrapClassName="w-40"
+        >
+          <option value="">Any</option>
+          <option value="active">Active</option>
+          <option value="suspended">Suspended</option>
+          <option value="disabled">Disabled</option>
+        </SelectField>
         <button
           type="submit"
           className="rounded-[var(--radius-hp)] border border-border-strong px-3 py-2 text-sm font-medium text-text"

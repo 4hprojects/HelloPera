@@ -4,6 +4,7 @@ import { useActionState, useRef, useState } from 'react';
 import { uploadDocumentAction, type UploadState } from '@/app/actions/documents';
 import { FormAlert } from '@/components/auth/form-alert';
 import { Button } from '@/components/ui/button';
+import { SelectField } from '@/components/ui/field';
 import { Label } from '@/components/ui/label';
 import { MAX_IMAGE_BYTES } from '@/lib/documents/validation';
 
@@ -80,21 +81,18 @@ export function UploadForm() {
         </p>
       </div>
 
-      <div className="mb-4">
-        <Label htmlFor="documentType">What is it?</Label>
-        <select
-          id="documentType"
-          name="documentType"
-          defaultValue="receipt"
-          className="w-full rounded-[var(--radius-hp)] border border-border-strong bg-surface px-3 py-2.5 text-[0.9375rem] text-text"
-        >
-          {TYPES.map((t) => (
-            <option key={t.value} value={t.value}>
-              {t.label}
-            </option>
-          ))}
-        </select>
-      </div>
+      <SelectField
+        id="documentType"
+        label="What is it?"
+        defaultValue="receipt"
+        wrapClassName="mb-4"
+      >
+        {TYPES.map((t) => (
+          <option key={t.value} value={t.value}>
+            {t.label}
+          </option>
+        ))}
+      </SelectField>
 
       <Button type="submit" disabled={pending || Boolean(clientError)}>
         {pending ? 'Uploading…' : 'Upload'}

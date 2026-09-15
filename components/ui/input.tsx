@@ -1,55 +1,43 @@
 import * as React from 'react';
-import { cn } from '@/lib/utils/cn';
 
 /**
- * Text input.
+ * Bare text input, styled as a field control.
  *
- * ## The three border states
+ * Prefer `TextField` from `@/components/ui/field` — it brings the floating
+ * label, the message slot and the aria wiring. This exists for the handful of
+ * places that compose their own chrome around a control, and it must be
+ * rendered inside an `.hp-field` wrapper (or a `FieldShell`) for the label to
+ * have anything to float against.
  *
- * Idle → focused → **filled**. A field the user has completed takes a jade
- * border, which gives silent, continuous progress down a long form without a
- * step indicator. Borrowed from helloRun's signup, where it is the single best
- * idea on the page.
+ * ## `placeholder` defaults to a space, and that is load-bearing
  *
- * Implemented in CSS with `:not(:placeholder-shown)` rather than helloRun's
- * JS-applied `.filled` class: no state to sync, no re-render per keystroke,
- * and it survives autofill — which a keystroke listener does not.
+ * Two things hang off `:placeholder-shown`: the floating label, and the filled
+ * border — a completed field takes a jade border, which gives silent,
+ * continuous progress down a long form without a step indicator. Borrowed
+ * from helloRun's signup, where it is the single best idea on the page.
  *
- * **That requires a `placeholder`.** `:placeholder-shown` never matches
- * without one, so the filled state would silently never appear. `placeholder`
- * defaults to a single space: invisible to a sighted reader, ignored by
- * screen readers (the `<Label>` carries the name), and enough for the selector
- * to work.
+ * Both are implemented in CSS rather than helloRun's JS-applied `.filled`
+ * class: no state to sync, no re-render per keystroke, and it survives
+ * autofill — which a keystroke listener does not. But `:placeholder-shown`
+ * never matches without a placeholder, so without this default the field
+ * would look permanently filled and its label would never come to rest. A
+ * single space is invisible to a sighted reader and ignored by screen readers
+ * (the label carries the name).
  *
- * ## Colour is not the only signal (DESIGN-SYSTEM §4.1)
+ * A real placeholder is fine, and better than it used to be: `globals.css`
+ * hides it at rest and reveals it on focus, so it reads as a format example
+ * under the floated label instead of competing with it.
  *
- * The filled border is reinforcement, never information — nothing is conveyed
- * by it that the visible text in the field does not already say. In greyscale
- * it reads as a slightly darker edge, which is exactly as much as it should.
+ * ## There is no `className` here on purpose
  *
- * Measured: `--hp-primary` #138a72 on `--hp-surface` #ffffff is 4.03:1, and on
- * dark #142235 it is 3.34:1 — both clear the 3:1 that WCAG 1.4.11 asks of a
- * non-text boundary. The idle `--hp-border-strong` remains the default.
+ * `app/globals.css` is unlayered and loads after `@import 'tailwindcss'`, so
+ * `.hp-control` beats every utility class regardless of specificity — a
+ * `className="border-danger"` would silently do nothing. State belongs on the
+ * `.hp-field` wrapper as a `data-*` attribute; see `field.tsx`.
  */
 export function Input({
-  className,
   placeholder = ' ',
   ...props
-}: React.InputHTMLAttributes<HTMLInputElement>) {
-  return (
-    <input
-      placeholder={placeholder}
-      className={cn(
-        'w-full rounded-[var(--radius-hp)] border border-border-strong bg-surface',
-        'px-3 py-2.5 text-[0.9375rem] text-text placeholder:text-text-muted',
-        'transition-colors',
-        // The filled state. `:placeholder-shown` is true while the field is
-        // empty, so the negation is "has a value".
-        '[&:not(:placeholder-shown)]:border-primary',
-        'disabled:opacity-50',
-        className,
-      )}
-      {...props}
-    />
-  );
+}: Omit<React.InputHTMLAttributes<HTMLInputElement>, 'className'>) {
+  return <input placeholder={placeholder} className="hp-control" {...props} />;
 }

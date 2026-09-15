@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Amount } from '@/components/finance/amount';
+import { SelectField, TextField } from '@/components/ui/field';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
@@ -57,12 +58,21 @@ export default async function TransactionsPage({
         }
       />
 
+      {/*
+        A set filter floats its own label and takes the jade border, so the row
+        says which filters are on without a separate "2 active" counter. The
+        `aria-label`s these controls used to carry are gone: a visible <label>
+        is the accessible name now, and keeping both would make the two
+        disagree (WCAG 2.5.3).
+      */}
       <form className="mb-4 flex flex-wrap gap-2" method="get">
-        <select
-          name="type"
+        <SelectField
+          id="type"
+          label="Type"
           defaultValue={filter.type ?? ''}
-          className="rounded-[var(--radius-hp)] border border-border-strong bg-surface px-3 py-2 text-sm text-text"
-          aria-label="Transaction type"
+          size="sm"
+          showMessage={false}
+          wrapClassName="w-44"
         >
           <option value="">All types</option>
           {TRANSACTION_TYPES.map((t) => (
@@ -70,12 +80,14 @@ export default async function TransactionsPage({
               {TYPE_LABELS[t]}
             </option>
           ))}
-        </select>
-        <select
-          name="accountId"
+        </SelectField>
+        <SelectField
+          id="accountId"
+          label="Account"
           defaultValue={filter.accountId ?? ''}
-          className="rounded-[var(--radius-hp)] border border-border-strong bg-surface px-3 py-2 text-sm text-text"
-          aria-label="Account"
+          size="sm"
+          showMessage={false}
+          wrapClassName="w-44"
         >
           <option value="">All accounts</option>
           {accounts.map((a) => (
@@ -83,18 +95,19 @@ export default async function TransactionsPage({
               {a.name}
             </option>
           ))}
-        </select>
-        <input
+        </SelectField>
+        <TextField
+          id="search"
+          label="Merchant or note"
           type="search"
-          name="search"
           defaultValue={filter.search ?? ''}
-          placeholder="Search merchant or note"
-          className="min-w-0 flex-1 rounded-[var(--radius-hp)] border border-border-strong bg-surface px-3 py-2 text-sm text-text"
-          aria-label="Search transactions"
+          size="sm"
+          showMessage={false}
+          wrapClassName="min-w-0 flex-1"
         />
         <button
           type="submit"
-          className="rounded-[var(--radius-hp)] border border-border-strong px-3 py-2 text-sm font-medium text-text"
+          className="h-11 rounded-[var(--radius-hp)] border border-border-strong px-3 text-sm font-medium text-text"
         >
           Filter
         </button>

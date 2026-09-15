@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { PageHeader } from '@/components/ui/page-header';
+import { SelectField, TextField } from '@/components/ui/field';
 import { Card, SectionCard } from '@/components/ui/card';
 import { StatusText } from '@/components/admin/data-table';
 import { AdminForm } from '@/components/admin/admin-form';
@@ -123,22 +124,28 @@ export default async function AdminUserPage({
             submitLabel="Record adjustment"
           >
             <div className="flex flex-wrap gap-2">
-              <select
-                name="featureKey"
-                className="rounded-[var(--radius-hp)] border border-border bg-surface px-3 py-2 text-text"
+              <SelectField
+                id="featureKey"
+                label="Feature"
+                size="sm"
+                showMessage={false}
+                wrapClassName="w-52"
               >
                 {METERED_FEATURES.map((f) => (
                   <option key={f} value={f}>
                     {f}
                   </option>
                 ))}
-              </select>
-              <input
-                name="quantityDelta"
+              </SelectField>
+              <TextField
+                id="quantityDelta"
+                label="Delta"
                 type="number"
                 required
                 placeholder="-1"
-                className="w-24 rounded-[var(--radius-hp)] border border-border bg-surface px-3 py-2 text-text"
+                size="sm"
+                showMessage={false}
+                wrapClassName="w-28"
               />
             </div>
           </AdminForm>
@@ -178,26 +185,35 @@ export default async function AdminUserPage({
             submitLabel="Grant override"
           >
             <div className="flex flex-wrap gap-2">
-              <select
-                name="entitlementKey"
-                className="rounded-[var(--radius-hp)] border border-border bg-surface px-3 py-2 text-text"
+              <SelectField
+                id="entitlementKey"
+                label="Entitlement"
+                size="sm"
+                showMessage={false}
+                wrapClassName="w-52"
               >
                 {ENTITLEMENT_KEYS.map((k) => (
                   <option key={k} value={k}>
                     {k}
                   </option>
                 ))}
-              </select>
-              <input
-                name="value"
+              </SelectField>
+              <TextField
+                id="value"
+                label="Value"
                 required
                 placeholder="true / 100 / null"
-                className="w-32 rounded-[var(--radius-hp)] border border-border bg-surface px-3 py-2 text-text"
+                size="sm"
+                showMessage={false}
+                wrapClassName="w-36"
               />
-              <input
-                name="endsAt"
+              <TextField
+                id="endsAt"
+                label="Ends"
                 type="date"
-                className="rounded-[var(--radius-hp)] border border-border bg-surface px-3 py-2 text-text"
+                size="sm"
+                showMessage={false}
+                wrapClassName="w-40"
               />
             </div>
             {/* A promotion nobody remembers granting is a promotion nobody ends. */}

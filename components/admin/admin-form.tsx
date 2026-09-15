@@ -2,6 +2,7 @@
 
 import { useActionState } from 'react';
 import { Button } from '@/components/ui/button';
+import { TextField, TextareaField } from '@/components/ui/field';
 import type { ActionState } from '@/app/actions/auth';
 
 /**
@@ -52,43 +53,38 @@ export function AdminForm({
 
       {children}
 
-      <div>
-        <label htmlFor={`${reasonName}-field`} className="hp-label text-text-muted">
-          {reasonLabel}
-        </label>
-        {multiline ? (
-          <textarea
-            id={`${reasonName}-field`}
-            name={reasonName}
-            required
-            minLength={3}
-            maxLength={4000}
-            rows={3}
-            className="mt-1 w-full rounded-[var(--radius-hp)] border border-border bg-surface px-3 py-2 text-text"
-          />
-        ) : (
-          <input
-            id={`${reasonName}-field`}
-            name={reasonName}
-            required
-            minLength={3}
-            maxLength={500}
-            placeholder="Why are you doing this?"
-            className="mt-1 w-full rounded-[var(--radius-hp)] border border-border bg-surface px-3 py-2 text-text"
-          />
-        )}
-      </div>
+      {multiline ? (
+        <TextareaField
+          id={`${reasonName}-field`}
+          name={reasonName}
+          label={reasonLabel}
+          required
+          minLength={3}
+          maxLength={4000}
+          rows={3}
+          showMessage={false}
+        />
+      ) : (
+        <TextField
+          id={`${reasonName}-field`}
+          name={reasonName}
+          label={reasonLabel}
+          required
+          minLength={3}
+          maxLength={500}
+          placeholder="Why are you doing this?"
+          showMessage={false}
+        />
+      )}
 
       {destructive ? (
-        <div>
-          <label className="hp-label text-text-muted">Type CONFIRM to continue</label>
-          <input
-            name="confirmation"
-            required
-            autoComplete="off"
-            className="mt-1 w-full rounded-[var(--radius-hp)] border border-border bg-surface px-3 py-2 text-text"
-          />
-        </div>
+        <TextField
+          id="confirmation"
+          label="Type CONFIRM"
+          required
+          autoComplete="off"
+          showMessage={false}
+        />
       ) : null}
 
       <Button

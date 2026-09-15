@@ -4,6 +4,7 @@ import { useActionState } from 'react';
 import { expectedEventAction } from '@/app/actions/recurring';
 import type { ActionState } from '@/app/actions/auth';
 import { Badge } from '@/components/ui/badge';
+import { SelectField } from '@/components/ui/field';
 import { Button } from '@/components/ui/button';
 import { formatMoney } from '@/lib/money';
 import type { ExpectedEvent, ExpectedEventStatus } from '@/types/recurring';
@@ -128,14 +129,14 @@ export function OccurrenceList({
                 <form action={action} className="mt-2 flex flex-wrap items-center gap-2">
                   <input type="hidden" name="id" value={event.id} />
                   <input type="hidden" name="action" value="fulfill" />
-                  <label htmlFor={`tx-${event.id}`} className="hp-small text-text-muted">
-                    Already recorded?
-                  </label>
-                  <select
+                  <SelectField
                     id={`tx-${event.id}`}
                     name="transactionId"
+                    label="Already recorded?"
                     defaultValue=""
-                    className="rounded-[var(--radius-hp)] border border-border-strong bg-surface px-2 py-1.5 text-xs text-text"
+                    size="sm"
+                    showMessage={false}
+                    wrapClassName="min-w-0 flex-1"
                   >
                     <option value="">Choose the transaction…</option>
                     {matches.map((c) => (
@@ -143,7 +144,7 @@ export function OccurrenceList({
                         {c.date} · {c.label} · {c.amount}
                       </option>
                     ))}
-                  </select>
+                  </SelectField>
                   <Button type="submit" variant="ghost" size="sm" disabled={pending}>
                     Link
                   </Button>

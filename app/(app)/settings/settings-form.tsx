@@ -5,7 +5,7 @@ import { updateProfile, type ActionState } from '@/app/actions/auth';
 import { FormAlert } from '@/components/auth/form-alert';
 import { FormField } from '@/components/auth/form-field';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
+import { SelectField } from '@/components/ui/field';
 
 const initial: ActionState = {};
 
@@ -48,44 +48,33 @@ export function SettingsForm({
         />
       </div>
 
-      <div className="mb-4">
-        <Label htmlFor="timezone">Timezone</Label>
-        <select
-          id="timezone"
-          name="timezone"
-          defaultValue={timezone}
-          className="w-full rounded-[var(--radius-hp)] border border-border-strong bg-surface px-3 py-2.5 text-[0.9375rem] text-text"
-        >
-          {TIMEZONES.map((tz) => (
-            <option key={tz} value={tz}>
-              {tz}
-            </option>
-          ))}
-        </select>
-        <p className="hp-small mt-1 text-text-muted">
-          Used for transaction dates, bill due dates and monthly totals.
-        </p>
-      </div>
+      <SelectField
+        id="timezone"
+        label="Timezone"
+        defaultValue={timezone}
+        hint="Used for transaction dates, bill due dates and monthly totals."
+        wrapClassName="mb-4"
+      >
+        {TIMEZONES.map((tz) => (
+          <option key={tz} value={tz}>
+            {tz}
+          </option>
+        ))}
+      </SelectField>
 
-      <div className="mb-5">
-        <Label htmlFor="defaultCurrency">Default currency</Label>
-        <select
-          id="defaultCurrency"
-          name="defaultCurrency"
-          defaultValue={defaultCurrency}
-          className="w-full rounded-[var(--radius-hp)] border border-border-strong bg-surface px-3 py-2.5 text-[0.9375rem] text-text"
-        >
-          {CURRENCIES.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
-        <p className="hp-small mt-1 text-text-muted">
-          HelloPera never converts between currencies — totals are always shown per
-          currency.
-        </p>
-      </div>
+      <SelectField
+        id="defaultCurrency"
+        label="Default currency"
+        defaultValue={defaultCurrency}
+        hint="HelloPera never converts between currencies — totals are always shown per currency."
+        wrapClassName="mb-5"
+      >
+        {CURRENCIES.map((c) => (
+          <option key={c} value={c}>
+            {c}
+          </option>
+        ))}
+      </SelectField>
 
       <Button type="submit" disabled={pending}>
         {pending ? 'Saving…' : 'Save changes'}

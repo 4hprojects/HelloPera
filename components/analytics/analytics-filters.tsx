@@ -3,6 +3,7 @@ import { analyticsHref, type AnalyticsParams } from '@/schemas/analytics.schema'
 import { PRESET_LABELS, RANGE_PRESETS } from '@/lib/analytics/range';
 import { TRANSACTION_TYPES } from '@/lib/finance/types';
 import { Card } from '@/components/ui/card';
+import { SelectField, TextField } from '@/components/ui/field';
 import { cn } from '@/lib/utils/cn';
 import type { FilterOption } from '@/types/analytics';
 
@@ -28,9 +29,6 @@ const TYPE_LABELS: Record<string, string> = {
   adjustment: 'Adjustment',
   opening_balance: 'Opening balance',
 };
-
-const CONTROL =
-  'rounded-[var(--radius-hp)] border border-border-strong bg-surface px-3 py-2 text-sm text-text';
 
 export function AnalyticsFilters({
   params,
@@ -73,101 +71,116 @@ export function AnalyticsFilters({
         {/* A select rather than a hidden field: with the period hidden, typing
             two custom dates while the range still said "This month" would
             silently discard them. */}
-        <Field label="Period">
-          <select name="range" defaultValue={params.range} className={CONTROL}>
-            {RANGE_PRESETS.map((preset) => (
-              <option key={preset} value={preset}>
-                {PRESET_LABELS[preset]}
-              </option>
-            ))}
-          </select>
-        </Field>
+        <SelectField
+          id="range"
+          label="Period"
+          defaultValue={params.range}
+          size="sm"
+          showMessage={false}
+          wrapClassName="w-40"
+        >
+          {RANGE_PRESETS.map((preset) => (
+            <option key={preset} value={preset}>
+              {PRESET_LABELS[preset]}
+            </option>
+          ))}
+        </SelectField>
 
-        <Field label="From">
-          <input
-            type="date"
-            name="from"
-            defaultValue={params.from ?? ''}
-            className={CONTROL}
-          />
-        </Field>
-        <Field label="To">
-          <input
-            type="date"
-            name="to"
-            defaultValue={params.to ?? ''}
-            className={CONTROL}
-          />
-        </Field>
+        <TextField
+          id="from"
+          label="From"
+          type="date"
+          defaultValue={params.from ?? ''}
+          size="sm"
+          showMessage={false}
+          wrapClassName="w-40"
+        />
+        <TextField
+          id="to"
+          label="To"
+          type="date"
+          defaultValue={params.to ?? ''}
+          size="sm"
+          showMessage={false}
+          wrapClassName="w-40"
+        />
 
         {currencies.length > 1 ? (
-          <Field label="Currency">
-            <select
-              name="currency"
-              defaultValue={params.currency ?? ''}
-              className={CONTROL}
-            >
-              {currencies.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-          </Field>
+          <SelectField
+            id="currency"
+            label="Currency"
+            defaultValue={params.currency ?? ''}
+            size="sm"
+            showMessage={false}
+            wrapClassName="w-28"
+          >
+            {currencies.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </SelectField>
         ) : null}
 
-        <Field label="Account">
-          <select
-            name="accountId"
-            defaultValue={params.accountId ?? ''}
-            className={CONTROL}
-          >
-            <option value="">All accounts</option>
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.label}
-                {a.hint ? ` (${a.hint})` : ''}
-              </option>
-            ))}
-          </select>
-        </Field>
+        <SelectField
+          id="accountId"
+          label="Account"
+          defaultValue={params.accountId ?? ''}
+          size="sm"
+          showMessage={false}
+          wrapClassName="w-44"
+        >
+          <option value="">All accounts</option>
+          {accounts.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.label}
+              {a.hint ? ` (${a.hint})` : ''}
+            </option>
+          ))}
+        </SelectField>
 
-        <Field label="Category">
-          <select
-            name="categoryId"
-            defaultValue={params.categoryId ?? ''}
-            className={CONTROL}
-          >
-            <option value="">All categories</option>
-            {categories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.label}
-              </option>
-            ))}
-          </select>
-        </Field>
+        <SelectField
+          id="categoryId"
+          label="Category"
+          defaultValue={params.categoryId ?? ''}
+          size="sm"
+          showMessage={false}
+          wrapClassName="w-44"
+        >
+          <option value="">All categories</option>
+          {categories.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.label}
+            </option>
+          ))}
+        </SelectField>
 
-        <Field label="Type">
-          <select name="type" defaultValue={params.type ?? ''} className={CONTROL}>
-            <option value="">All types</option>
-            {TRANSACTION_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {TYPE_LABELS[t] ?? t}
-              </option>
-            ))}
-          </select>
-        </Field>
+        <SelectField
+          id="type"
+          label="Type"
+          defaultValue={params.type ?? ''}
+          size="sm"
+          showMessage={false}
+          wrapClassName="w-40"
+        >
+          <option value="">All types</option>
+          {TRANSACTION_TYPES.map((t) => (
+            <option key={t} value={t}>
+              {TYPE_LABELS[t] ?? t}
+            </option>
+          ))}
+        </SelectField>
 
         <button
           type="submit"
-          className="rounded-[var(--radius-hp)] border border-border-strong px-3 py-2 text-sm font-medium text-text"
+          className="h-11 rounded-[var(--radius-hp)] border border-border-strong px-3 text-sm font-medium text-text"
         >
           Apply
         </button>
 
         <Link
           href="/analytics"
-          className="rounded-[var(--radius-hp)] px-3 py-2 text-sm font-medium text-text-muted hover:text-text"
+          className="inline-flex h-11 items-center rounded-[var(--radius-hp)] px-3 text-sm font-medium text-text-muted hover:text-text"
         >
           Reset
         </Link>
@@ -178,14 +191,5 @@ export function AnalyticsFilters({
         and To dates apply when the period is set to {PRESET_LABELS.custom}.
       </p>
     </Card>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="flex flex-col gap-1">
-      <span className="hp-label text-text-muted">{label}</span>
-      {children}
-    </label>
   );
 }

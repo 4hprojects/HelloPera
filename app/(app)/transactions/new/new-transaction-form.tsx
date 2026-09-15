@@ -6,7 +6,7 @@ import type { ActionState } from '@/app/actions/auth';
 import { FormAlert } from '@/components/auth/form-alert';
 import { FormField } from '@/components/auth/form-field';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
+import { SelectField } from '@/components/ui/field';
 import { ACCOUNT_REQUIREMENTS } from '@/lib/finance/balance';
 import type { AccountNature, TransactionType } from '@/lib/finance/types';
 
@@ -28,9 +28,6 @@ const PICKABLE: Array<{ value: TransactionType; label: string; hint: string }> =
   { value: 'transfer', label: 'Transfer', hint: 'Between your own accounts' },
   { value: 'adjustment', label: 'Adjustment', hint: 'Correct a balance' },
 ];
-
-const selectClass =
-  'w-full rounded-[var(--radius-hp)] border border-border-strong bg-surface px-3 py-2.5 text-[0.9375rem] text-text';
 
 export function NewTransactionForm({
   accounts,
@@ -109,66 +106,47 @@ export function NewTransactionForm({
       />
 
       {needs.source ? (
-        <div className="mb-4">
-          <Label htmlFor="sourceAccountId">{sourceLabel}</Label>
-          <select
-            id="sourceAccountId"
-            name="sourceAccountId"
-            className={selectClass}
-            required
-          >
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name} ({a.currency})
-              </option>
-            ))}
-          </select>
-          {state.fieldErrors?.sourceAccountId ? (
-            <p role="alert" className="hp-small mt-1 text-danger-text">
-              {state.fieldErrors.sourceAccountId}
-            </p>
-          ) : null}
-        </div>
+        <SelectField
+          id="sourceAccountId"
+          label={sourceLabel}
+          required
+          error={state.fieldErrors?.sourceAccountId}
+          wrapClassName="mb-4"
+        >
+          {accounts.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name} ({a.currency})
+            </option>
+          ))}
+        </SelectField>
       ) : null}
 
       {needs.destination ? (
-        <div className="mb-4">
-          <Label htmlFor="destinationAccountId">
-            {type === 'transfer' ? 'To account' : 'Received into'}
-          </Label>
-          <select
-            id="destinationAccountId"
-            name="destinationAccountId"
-            className={selectClass}
-            required
-          >
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name} ({a.currency})
-              </option>
-            ))}
-          </select>
-          {state.fieldErrors?.destinationAccountId ? (
-            <p role="alert" className="hp-small mt-1 text-danger-text">
-              {state.fieldErrors.destinationAccountId}
-            </p>
-          ) : null}
-        </div>
+        <SelectField
+          id="destinationAccountId"
+          label={type === 'transfer' ? 'To account' : 'Received into'}
+          required
+          error={state.fieldErrors?.destinationAccountId}
+          wrapClassName="mb-4"
+        >
+          {accounts.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name} ({a.currency})
+            </option>
+          ))}
+        </SelectField>
       ) : null}
 
       {needs.direction ? (
-        <div className="mb-4">
-          <Label htmlFor="direction">Direction</Label>
-          <select
-            id="direction"
-            name="direction"
-            className={selectClass}
-            defaultValue="increase"
-          >
-            <option value="increase">Increase the balance</option>
-            <option value="decrease">Decrease the balance</option>
-          </select>
-        </div>
+        <SelectField
+          id="direction"
+          label="Direction"
+          defaultValue="increase"
+          wrapClassName="mb-4"
+        >
+          <option value="increase">Increase the balance</option>
+          <option value="decrease">Decrease the balance</option>
+        </SelectField>
       ) : null}
 
       {type === 'transfer' ? (
@@ -179,22 +157,19 @@ export function NewTransactionForm({
       ) : null}
 
       {type !== 'transfer' && type !== 'adjustment' ? (
-        <div className="mb-4">
-          <Label htmlFor="categoryId">Category</Label>
-          <select
-            id="categoryId"
-            name="categoryId"
-            className={selectClass}
-            defaultValue=""
-          >
-            <option value="">No category</option>
-            {relevantCategories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </div>
+        <SelectField
+          id="categoryId"
+          label="Category"
+          defaultValue=""
+          wrapClassName="mb-4"
+        >
+          <option value="">No category</option>
+          {relevantCategories.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </SelectField>
       ) : null}
 
       <FormField
