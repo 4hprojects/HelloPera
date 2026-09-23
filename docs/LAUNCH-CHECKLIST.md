@@ -1,12 +1,16 @@
 # HelloPera — launch checklist
 
+> 23 September implementation update: see [LAUNCH-IMPLEMENTATION.md](LAUNCH-IMPLEMENTATION.md).
+> Historical checked items below are not verification of the new release. Staging,
+> real Google deletion, recovery, email, and production configuration remain open.
+
 Everything that cannot be done from the codebase. These are operational,
 account-level or judgement calls, grouped by what they block.
 
 Nothing here is optional theatre: each item blocks something specific, and the
 blocked thing is named.
 
-Last updated: 14 September 2026 (end of Phase 10 implementation).
+Last updated: 21 September 2026 (Phase 5 operational hardening).
 
 ---
 
@@ -14,16 +18,16 @@ Last updated: 14 September 2026 (end of Phase 10 implementation).
 
 | Area | State |
 |---|---|
-| Code | Phases 00–14 built, 676 tests passing |
-| Remote database | **11 of 24 applied** — 13 pending, including a live security fix |
-| Scheduled jobs | Unknown — `pg_cron` availability unconfirmed |
+| Code | Phases 00–14 built, 736 tests passing |
+| Remote database | All 25 migrations applied (21 September 2026); security fix live |
+| Scheduled jobs | `pg_cron` 1.6.4 confirmed; all 6 expected jobs active |
 | Push notifications | Unconfigured — no VAPID keys |
 | Email | Unconfigured — Supabase default is ~2/hour, dev only |
-| Domain | `hellopera.online` does not resolve |
+| Domain | `hellopera.online` resolves (23 September); HTTPS verification timed out |
 | Ads | Off by flag, no AdSense account |
 | Payments | No provider chosen — see §11 |
 | Assistant | Built, off by flag, needs an API key — see §12 |
-| Admin | Built — but nobody is an admin yet, see §13 |
+| Admin | 1 active admin; `/admin` and `/admin/users` browser-verified |
 | Public launch | **Blocked** — see §1 |
 
 ---
@@ -49,9 +53,8 @@ Already done in code, but re-verify once the migrations are applied:
 - [x] Auth rate limiting — active on login, registration and password reset
 - [x] No secret reachable from the client bundle — `lib/env` rejects a
       `service_role` key behind `NEXT_PUBLIC_`
-- [ ] **Cross-user access tests passing against the live project.** The test
-      exists (`services/analytics.integration.test.ts`) but has never run,
-      because it creates real auth users. See §3.
+- [x] **Cross-user access tests passing against the live project.** Passed
+      20 September 2026 (see §3).
 
 ---
 
@@ -61,14 +64,14 @@ Already done in code, but re-verify once the migrations are applied:
 `/notifications`, `/settings/plan`, `/settings/billing` and
 `/admin/subscriptions` will all error until their tables exist.
 
-- [ ] Set `DATABASE_URL` in `.env` to the **pooler** connection string
+- [x] Set `DATABASE_URL` in `.env` to the **pooler** connection string
       (Dashboard → Settings → Database → Connection string). The direct
       `db.<ref>` host is IPv6-only and will not connect from most networks —
       `scripts/db.mjs` rejects it deliberately.
-- [ ] `npm run db:status` — see what is pending.
-- [ ] `npm run db:migrate` — apply. Each file runs in one transaction, so a
+- [x] `npm run db:status` — see what is pending.
+- [x] `npm run db:migrate` — apply. Each file runs in one transaction, so a
       failure leaves nothing half-applied.
-- [ ] `npm run db:verify` — confirm RLS is enforced.
+- [x] `npm run db:verify` — confirm RLS is enforced.
 
 **This is now confirmed on your live project, not a theoretical risk.**
 Supabase's own linter reports 16 `SECURITY DEFINER` functions callable by the
@@ -94,10 +97,10 @@ because those roles inherit `EXECUTE` from `PUBLIC`.
 These are excluded from `npm test` because they need live credentials and
 create real rows.
 
-- [ ] Ensure `SUPABASE_SECRET_KEY`, `NEXT_PUBLIC_SUPABASE_URL` and
+- [x] Ensure `SUPABASE_SECRET_KEY`, `NEXT_PUBLIC_SUPABASE_URL` and
       `NEXT_PUBLIC_SUPABASE_ANON_KEY` are set.
-- [ ] `npm run test:integration`
-- [ ] Confirm `services/analytics.integration.test.ts` passes — it signs in as
+- [x] `npm run test:integration` — 12/12 passed against the live project, 20 September 2026
+- [x] Confirm `services/analytics.integration.test.ts` passes — it signs in as
       two real users and asserts neither can read the other's data. It creates
       and then deletes its own test accounts.
 
@@ -110,16 +113,15 @@ on their own.** Both still work when a user opens the relevant page — the lazy
 safety checks cover correctness — so this governs *timeliness*, not whether the
 features work.
 
-- [ ] Confirm `pg_cron` is available on your Supabase plan
-      (Dashboard → Database → Extensions).
-- [ ] After migrating, check the jobs registered:
+- [x] Confirm `pg_cron` is available on your Supabase plan. Version 1.6.4 was
+      verified on the live project on 21 September 2026.
+- [x] After migrating, check the jobs registered:
       `select jobname, schedule from cron.job;`
       Expect `recurring_generation` (hourly), `notification_generation`
       (hourly at :05), `notification_cleanup` and `rate_limit_cleanup` (daily).
-- [ ] If `pg_cron` is **not** available, the migrations still applied — they
-      warn rather than fail. Pick a fallback from `PHASE-07` §2: a Supabase
-      scheduled Edge Function, or a GitHub Actions workflow calling
-      `POST /api/scheduler`.
+- [x] No generation fallback is currently needed because `pg_cron` is active.
+      Push delivery still requires an external caller for `POST /api/scheduler`
+      after VAPID and `SCHEDULER_SECRET` are configured.
 
 ---
 
@@ -141,6 +143,8 @@ Full instructions: `docs/EMAIL-SETUP.md`.
 ## 6. Push notifications
 
 **Blocks: push delivery only.** In-app notifications work without this.
+`push_enabled` is now enforced by the delivery service and remains off until
+the credentials, scheduler caller, and real-device test are complete.
 
 - [ ] Generate a key pair: `npx web-push generate-vapid-keys`
 - [ ] Set `NEXT_PUBLIC_VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and
@@ -304,8 +308,12 @@ exactly that. The first one is a SQL statement you run once:
 update public.profiles set role = 'admin' where email = 'you@example.com';
 ```
 
-- [ ] Run it, after §2's migrations and after you have signed up.
-- [ ] Confirm `/admin` loads and `/admin/users` lists your account.
+- [x] Run it, after §2's migrations and after you have signed up. Done 20
+      September 2026 for the first account, which was created in the Supabase
+      dashboard because email delivery was failing (SMTP `535 Invalid username`,
+      see §5).
+- [x] Confirm `/admin` loads and `/admin/users` lists an admin account. Verified
+      in headless Chrome with a disposable admin on 21 September 2026.
 
 After that, admins promote each other from `/admin/users/[id]` — with a reason,
 an audit row, and a refusal if you target your own account. That last rule is
@@ -374,26 +382,44 @@ you do not use. The report-only week is the whole point.
 
 Stated plainly so it is not mistaken for done:
 
-- **No signed-in page from Phases 07–14 has been rendered in a browser**, the admin area included. They
-  compile, build and are type-checked, but the tables they read do not exist
-  remotely yet. Expect small UI problems on first run.
+- **Core signed-in workflows and the admin area have been rendered in a
+  browser.** Dashboard, transactions, documents, notifications, `/admin`, and
+  `/admin/users` are covered. Forecast, recurring detail, billing, and AI still
+  need provider-ready browser passes.
 - **The signed-out pages have now been rendered**, in a headless Chrome at 320,
   360, 414 and 768px. That pass found the site header overflowing every phone
   width — the landing page scrolled sideways by 237px at 320px — which is now
   fixed and re-measured. It is a fair warning about the pages that have not had
   the same treatment.
 - **Push has never been sent to a device.**
-- **The scheduler endpoint has never been called.**
+- **The scheduler endpoint has been checked only in its unconfigured state.**
+  It returned the intended 503; authenticated delivery still needs VAPID keys.
 - **No payment has ever been taken**, and no provider adapter exists. The
   webhook endpoint refuses everything (§11).
 - **No question has ever been asked of the assistant**, because no API key is
   configured. Its pure layers are tested; the provider call itself is verified
   only against a stub.
-- **The SQL for Phases 07–14 was executed** against a local throwaway Postgres —
-  all 24 migrations apply from scratch, deletion clears every table including
-  the billing ones, rate limiting holds under concurrency, replayed webhook
-  events are rejected, and generation is idempotent — but never against your
-  project.
+- **All 25 migrations are applied to the live project.** RLS verification,
+  cross-user isolation, storage integration, scheduled jobs, and provider flag
+  defaults have been rechecked there.
+
+---
+
+## 17. Known build warnings
+
+Keep this list visible until the production build is warning-free. A warning
+must have an owner and a follow-up phase; it should not quietly become part of
+the normal output.
+
+- [x] **Next.js middleware convention migrated.** The request layer now uses
+      `proxy.ts`, with regression coverage for matching, maintenance mode,
+      session refresh, authenticated-user redirects, and admin protection.
+
+Current known build warning count: **0**.
+
+Node.js 20's Supabase deprecation warning is not an accepted project warning:
+the repository, CI, and deployment all target Node.js 22, and
+`npm run check:node` fails early when a local shell uses the wrong major.
 
 ---
 

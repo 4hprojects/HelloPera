@@ -1,3 +1,4 @@
+import { VoidTransactionForm } from '@/components/finance/void-transaction-form';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Amount } from '@/components/finance/amount';
@@ -15,6 +16,7 @@ import { listAccounts } from '@/services/account.service';
 import { listTransactions } from '@/services/transaction.service';
 import { TRANSACTION_TYPES } from '@/lib/finance/types';
 import { buttonClass } from '@/components/ui/button';
+import { SuccessNextSteps } from '@/components/ui/success-next-steps';
 
 export const metadata: Metadata = { title: 'Transactions' };
 
@@ -39,8 +41,18 @@ export default async function TransactionsPage({
   // should not be a dead end.
   const parsed = transactionFilterSchema.safeParse(raw);
   const filter = parsed.success ? parsed.data : transactionFilterSchema.parse({});
+  const createdType = raw.created === '1' ? raw.type : undefined;
+  const createdLabel = createdType ? TYPE_LABELS[createdType] : undefined;
+  const hasFilters = Boolean(
+    filter.from ||
+    filter.to ||
+    filter.type ||
+    filter.accountId ||
+    filter.categoryId ||
+    filter.search,
+  );
 
-  const [{ transactions, total, page, pageCount }, accounts] = await Promise.all([
+  const [{ transactions, page, hasNext }, accounts] = await Promise.all([
     listTransactions(filter),
     listAccounts({ includeArchived: true }),
   ]);
@@ -50,13 +62,32 @@ export default async function TransactionsPage({
     <div className="mx-auto max-w-5xl">
       <PageHeader
         title="Transactions"
-        description={total === 1 ? '1 transaction' : `${total} transactions`}
+        description={
+          transactions.length === 1
+            ? '1 transaction on this page'
+            : `${transactions.length} transactions on this page`
+        }
         actions={
           <Link href="/transactions/new" className={buttonClass('primary', 'sm')}>
             Add
           </Link>
         }
       />
+
+      {createdLabel ? (
+        <SuccessNextSteps
+          title={`${createdLabel} saved`}
+          description="Your balances and dashboard have been updated."
+          primary={{ href: '/dashboard', label: 'View dashboard' }}
+          secondary={[
+            {
+              href: `/transactions/new?type=${createdType}`,
+              label: `Add another ${createdLabel.toLowerCase()}`,
+            },
+            { href: '/documents', label: 'Upload receipt' },
+          ]}
+        />
+      ) : null}
 
       {/*
         A set filter floats its own label and takes the jade border, so the row
@@ -115,11 +146,19 @@ export default async function TransactionsPage({
 
       {transactions.length === 0 ? (
         <EmptyState
-          title="No transactions found"
+          title={hasFilters ? 'No matching transactions' : 'No transactions yet'}
           description={
-            total === 0
-              ? 'Record your first income, expense or transfer.'
-              : 'No transactions match these filters.'
+            hasFilters
+              ? 'Try clearing the filters to see your full history.'
+              : 'Record an expense, income or transfer to start your history.'
+          }
+          action={
+            <Link
+              href={hasFilters ? '/transactions' : '/transactions/new?type=expense'}
+              className={buttonClass(hasFilters ? 'ghost' : 'primary', 'md')}
+            >
+              {hasFilters ? 'Clear filters' : 'Add your first expense'}
+            </Link>
           }
         />
       ) : (
@@ -153,6 +192,7 @@ export default async function TransactionsPage({
                       />
                     </div>
                   </div>
+                  {!voided && <VoidTransactionForm id={tx.id} />}
                 </Card>
               </li>
             );
@@ -160,11 +200,9 @@ export default async function TransactionsPage({
         </ul>
       )}
 
-      {pageCount > 1 ? (
+      {page > 1 || hasNext ? (
         <nav className="mt-4 flex items-center justify-between" aria-label="Pagination">
-          <span className="hp-small text-text-muted">
-            Page {page} of {pageCount}
-          </span>
+          <span className="hp-small text-text-muted">Page {page}</span>
           <div className="flex gap-2">
             {page > 1 ? (
               <Link
@@ -174,7 +212,7 @@ export default async function TransactionsPage({
                 Previous
               </Link>
             ) : null}
-            {page < pageCount ? (
+            {hasNext ? (
               <Link
                 href={pageHref(filter, page + 1)}
                 className="rounded-[var(--radius-hp)] border border-border-strong px-3 py-2 text-sm text-text"

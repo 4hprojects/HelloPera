@@ -87,7 +87,7 @@ export default async function AdminPage() {
         {[
           ['Subscriptions', '/admin/subscriptions'],
           ['Usage', '/admin/usage'],
-          ['Feature flags', '/admin/feature-flags'],
+          ['Feature switches', '/admin/feature-flags'],
           ['Audit log', '/admin/audit'],
           ['Content', '/admin/content'],
         ].map(([label, href]) => (

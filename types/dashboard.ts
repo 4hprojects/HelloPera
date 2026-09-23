@@ -98,6 +98,7 @@ export type DashboardData = {
   upcomingBills: ObligationView[];
   openReceivables: ObligationView[];
   upcomingExpected: ObligationView[];
+  projected: { opening: Money; closing: Money } | null;
   /** True when the user has no accounts at all — the first-run state. */
   isEmpty: boolean;
 };

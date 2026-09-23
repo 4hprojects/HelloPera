@@ -1,20 +1,36 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { isMaintenanceMode } from '@/lib/ops/kill-switches';
+import {
+  REQUEST_ID_HEADER,
+  resolveRequestId,
+  safeRouteLabel,
+} from '@/lib/log/request-id';
+import { logProxyRequest } from '@/lib/log/proxy';
 
 /**
  * Session refresh — Phase 01 §30.
  *
  * Server Components cannot write cookies, so a token refreshed during a page
- * render is lost. Middleware runs before the render and can set cookies, which
+ * render is lost. Proxy runs before the render and can set cookies, which
  * is the only place a refreshed session can actually be persisted.
  *
- * This deliberately does NOT enforce authorization. Middleware runs on every
+ * This deliberately does NOT enforce authorization. Proxy runs on every
  * matched request and a mistake here fails open; the guards in lib/auth run
- * server-side per route and fail closed. Middleware keeps sessions alive,
+ * server-side per route and fail closed. Proxy keeps sessions alive,
  * guards decide access.
  */
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
+  const requestId = resolveRequestId(request.headers);
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set(REQUEST_ID_HEADER, requestId);
+
+  logProxyRequest({
+    requestId,
+    method: request.method,
+    route: safeRouteLabel(request.nextUrl.pathname),
+  });
+
   /**
    * PHASE-14 §22 — maintenance, checked before anything else happens.
    *
@@ -35,11 +51,18 @@ export async function middleware(request: NextRequest) {
         // permanent is how a maintenance window costs search rankings.
         'retry-after': '600',
         'cache-control': 'no-store',
+        [REQUEST_ID_HEADER]: requestId,
       },
     });
   }
 
-  let response = NextResponse.next({ request });
+  const nextResponse = () => {
+    const next = NextResponse.next({ request: { headers: requestHeaders } });
+    next.headers.set(REQUEST_ID_HEADER, requestId);
+    return next;
+  };
+
+  let response = nextResponse();
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -54,7 +77,7 @@ export async function middleware(request: NextRequest) {
         for (const { name, value } of cookiesToSet) {
           request.cookies.set(name, value);
         }
-        response = NextResponse.next({ request });
+        response = nextResponse();
         for (const { name, value, options } of cookiesToSet) {
           response.cookies.set(name, value, options);
         }

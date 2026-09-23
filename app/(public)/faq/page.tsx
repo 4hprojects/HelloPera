@@ -28,7 +28,7 @@ const FAQS: Array<{ q: string; a: string }> = [
   },
   {
     q: 'What happens when I upload a receipt?',
-    a: 'It is stored, and nothing else happens until you ask HelloPera to read it. When you do, the file is sent to Anthropic to extract the details, and the result is shown to you as a suggestion. Nothing becomes a financial record until you confirm it.',
+    a: 'It is stored privately. Uploading does not create a transaction. Automatic document reading is not enabled at launch; enter the details manually. When document reading becomes available, it will require your request and confirmation.',
   },
   {
     q: 'Can I get my data out?',

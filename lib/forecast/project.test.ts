@@ -5,6 +5,7 @@ import {
   includesEvent,
   netChange,
   projectBalance,
+  projectDashboardBalance,
 } from '@/lib/forecast/project';
 import { money, type Money } from '@/lib/money';
 import type { ForecastEvent, Horizon } from '@/types/forecast';
@@ -86,6 +87,79 @@ describe('projectBalance — §29 the formula', () => {
         f.points[i - 1]!.closingProjectedBalance,
       );
     }
+  });
+});
+
+describe('projectDashboardBalance', () => {
+  it('reuses loaded rows and includes only liquid accounts in the currency', () => {
+    const result = projectDashboardBalance({
+      today: '2026-09-14',
+      currency: PHP,
+      accounts: [
+        {
+          type: 'bank',
+          nature: 'asset',
+          currency_code: PHP,
+          balance: php(10_000),
+        },
+        {
+          type: 'credit_card',
+          nature: 'liability',
+          currency_code: PHP,
+          balance: php(5_000),
+        },
+        {
+          type: 'bank',
+          nature: 'asset',
+          currency_code: PHP,
+          balance: php(50_000),
+          is_archived: true,
+        },
+      ],
+      bills: [
+        {
+          id: 'bill-1',
+          name: 'Internet',
+          date: '2026-09-20',
+          currency: PHP,
+          remaining: php(1_000),
+        },
+      ],
+      expectedIncome: [
+        {
+          id: 'income-1',
+          name: 'Salary',
+          date: '2026-09-25',
+          currency: PHP,
+          remaining: php(4_000),
+          lifecycle: 'open',
+        },
+        {
+          id: 'income-paid',
+          name: 'Already received',
+          date: '2026-09-24',
+          currency: PHP,
+          remaining: php(20_000),
+          lifecycle: 'paid',
+        },
+      ],
+      events: [],
+    });
+
+    expect(result).toEqual({ opening: php(10_000), closing: php(13_000) });
+  });
+
+  it('returns null when there is no liquid account in the selected currency', () => {
+    expect(
+      projectDashboardBalance({
+        today: '2026-09-14',
+        currency: PHP,
+        accounts: [],
+        bills: [],
+        expectedIncome: [],
+        events: [],
+      }),
+    ).toBeNull();
   });
 });
 

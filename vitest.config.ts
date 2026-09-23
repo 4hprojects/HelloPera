@@ -23,7 +23,9 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['**/*.test.ts', '**/*.test.tsx'],
+    include: process.env.HELLOPERA_ONLY_INTEGRATION
+      ? ['**/*.integration.test.ts']
+      : ['**/*.test.ts', '**/*.test.tsx'],
     exclude: ['node_modules/**', '.next/**'],
     /**
      * `lib/env` validates configuration at import and throws when it is
@@ -34,12 +36,21 @@ export default defineConfig({
      * These are syntactically valid placeholders, never real credentials. The
      * anon key is an unsigned JWT whose payload says role=anon, because the
      * env schema checks that claim rather than merely that a string exists.
+     *
+     * The integration suite is the exception: it exists to talk to the real
+     * project, and placeholders here silently pointed it at a host that does not
+     * exist (every test failed with ENOTFOUND, and the unit-test URL was being
+     * paired with the real secret key). `npm run test:integration` sets
+     * HELLOPERA_INTEGRATION=1 and loads `.env`, and only then are the real
+     * values left alone.
      */
-    env: {
-      NEXT_PUBLIC_SUPABASE_URL: 'https://testtesttesttesttest.supabase.co',
-      NEXT_PUBLIC_SUPABASE_ANON_KEY:
-        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiJ9.test-signature-not-real',
-      NEXT_PUBLIC_APP_URL: 'https://hellopera.test',
-    },
+    env: process.env.HELLOPERA_INTEGRATION
+      ? {}
+      : {
+          NEXT_PUBLIC_SUPABASE_URL: 'https://testtesttesttesttest.supabase.co',
+          NEXT_PUBLIC_SUPABASE_ANON_KEY:
+            'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiJ9.test-signature-not-real',
+          NEXT_PUBLIC_APP_URL: 'https://hellopera.test',
+        },
   },
 });

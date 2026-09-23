@@ -162,26 +162,28 @@ export function LineChart({
         )}
       </svg>
 
-      <table className="sr-only">
-        <caption>
-          {caption}
-          {markerIndex != null && markerLabel ? ` ${markerLabel}` : ''}
-        </caption>
-        <thead>
-          <tr>
-            <th scope="col">Date</th>
-            <th scope="col">Projected balance</th>
-          </tr>
-        </thead>
-        <tbody>
-          {points.map((p, i) => (
-            <tr key={p.label + String(i)}>
-              <th scope="row">{p.label}</th>
-              <td>{formatValue(p.value)}</td>
+      <div className="sr-only">
+        <table>
+          <caption>
+            {caption}
+            {markerIndex != null && markerLabel ? ` ${markerLabel}` : ''}
+          </caption>
+          <thead>
+            <tr>
+              <th scope="col">Date</th>
+              <th scope="col">Projected balance</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {points.map((p, i) => (
+              <tr key={p.label + String(i)}>
+                <th scope="row">{p.label}</th>
+                <td>{formatValue(p.value)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

@@ -47,22 +47,36 @@ export const appNav: NavItem[] = [
 ];
 
 /**
- * Mobile priority bar — master plan §51. The showcase draws five slots with
- * Capture in the middle; Phase 04 shipped upload, so it points at /documents
- * rather than sitting dead.
+ * The way into the admin area, shown to admins only.
+ *
+ * Login sends every account to /dashboard, and nothing else in the app linked
+ * to /admin, so the area was reachable only by typing the URL. Showing this is
+ * cosmetic: `requireAdmin()` in app/admin/layout.tsx is the actual gate, and a
+ * non-admin who guesses the address is still refused.
+ */
+export const adminEntry: NavItem = { label: 'Admin', href: '/admin', icon: 'settings' };
+
+/**
+ * Four persistent mobile destinations. MobileNav renders More as the fifth
+ * slot and reveals lower-frequency destinations without crowding the bar.
  */
 export const mobileNav: NavItem[] = [
   { label: 'Home', href: '/dashboard', icon: 'home' },
   { label: 'Transactions', href: '/transactions', icon: 'transactions' },
   { label: 'Capture', href: '/documents', icon: 'capture' },
   { label: 'Analytics', href: '/analytics', icon: 'analytics' },
-  /**
-   * PHASE-12 §92 — the route exists, but the page 404s while `ai_enabled` is
-   * off. Left unmarked rather than `placeholder: true`, because the code is
-   * real: what gates it is a flag and an API key, not an unwritten page.
-   */
+];
+
+export const mobileMoreNav: NavItem[] = [
+  { label: 'Accounts', href: '/accounts', icon: 'accounts' },
+  { label: 'Bills', href: '/bills', icon: 'bills' },
+  { label: 'Receivables', href: '/receivables', icon: 'receivables' },
+  { label: 'Expected income', href: '/expected-income', icon: 'income' },
+  { label: 'Recurring', href: '/recurring', icon: 'calendar' },
+  { label: 'Forecast', href: '/forecast', icon: 'analytics' },
   { label: 'Assistant', href: '/assistant', icon: 'analytics' },
-  { label: 'More', href: '/settings', icon: 'more' },
+  { label: 'Notifications', href: '/notifications', icon: 'calendar' },
+  { label: 'Settings', href: '/settings', icon: 'settings' },
 ];
 
 export const adminNav: NavItem[] = [
@@ -70,7 +84,7 @@ export const adminNav: NavItem[] = [
   { label: 'Users', href: '/admin/users' },
   { label: 'Subscriptions', href: '/admin/subscriptions' },
   { label: 'Usage', href: '/admin/usage' },
-  { label: 'Feature flags', href: '/admin/feature-flags' },
+  { label: 'Feature switches', href: '/admin/feature-flags' },
   { label: 'OCR Jobs', href: '/admin/ocr-jobs' },
   { label: 'AI', href: '/admin/ai' },
   { label: 'Notifications', href: '/admin/notifications' },

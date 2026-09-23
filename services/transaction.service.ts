@@ -4,6 +4,8 @@ import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { fromDatabase, type Money } from '@/lib/money';
 import { analyticsClass } from '@/lib/finance/balance';
+import { takeLookaheadPage } from '@/lib/pagination/lookahead';
+import { withServiceTiming } from '@/lib/performance/service-timing';
 import type { Direction, TransactionStatus, TransactionType } from '@/lib/finance/types';
 import type { CreateTransactionInput, TransactionFilter } from '@/schemas/finance.schema';
 
@@ -41,55 +43,69 @@ function toTransaction(row: TransactionRow): Transaction {
 }
 
 export async function listTransactions(filter: TransactionFilter) {
-  const supabase = await createClient();
-  let query = supabase.from('transactions').select('*', { count: 'exact' });
+  return withServiceTiming(
+    'transactions.list',
+    async () => {
+      const supabase = await createClient();
+      let query = supabase.from('transactions').select('*');
 
-  if (filter.from) query = query.gte('transaction_date', filter.from);
-  if (filter.to) query = query.lte('transaction_date', filter.to);
-  if (filter.type) query = query.eq('type', filter.type);
-  if (filter.categoryId) query = query.eq('category_id', filter.categoryId);
-  if (filter.accountId) {
-    // An account can be either side of a transaction.
-    query = query.or(
-      `source_account_id.eq.${filter.accountId},destination_account_id.eq.${filter.accountId}`,
-    );
-  }
-  if (filter.search) {
-    const term = filter.search.replace(/[%,()]/g, '');
-    query = query.or(
-      `merchant_name.ilike.%${term}%,description.ilike.%${term}%,notes.ilike.%${term}%`,
-    );
-  }
+      if (filter.from) query = query.gte('transaction_date', filter.from);
+      if (filter.to) query = query.lte('transaction_date', filter.to);
+      if (filter.type) query = query.eq('type', filter.type);
+      if (filter.categoryId) query = query.eq('category_id', filter.categoryId);
+      if (filter.accountId) {
+        // An account can be either side of a transaction.
+        query = query.or(
+          `source_account_id.eq.${filter.accountId},destination_account_id.eq.${filter.accountId}`,
+        );
+      }
+      if (filter.search) {
+        const term = filter.search.replace(/[%,()]/g, '');
+        query = query.or(
+          `merchant_name.ilike.%${term}%,description.ilike.%${term}%,notes.ilike.%${term}%`,
+        );
+      }
 
-  switch (filter.sort) {
-    case 'oldest':
-      query = query.order('transaction_date', { ascending: true });
-      break;
-    case 'highest':
-      query = query.order('amount', { ascending: false });
-      break;
-    case 'lowest':
-      query = query.order('amount', { ascending: true });
-      break;
-    default:
-      query = query.order('transaction_date', { ascending: false }).order('created_at', {
-        ascending: false,
-      });
-  }
+      switch (filter.sort) {
+        case 'oldest':
+          query = query.order('transaction_date', { ascending: true });
+          break;
+        case 'highest':
+          query = query.order('amount', { ascending: false });
+          break;
+        case 'lowest':
+          query = query.order('amount', { ascending: true });
+          break;
+        default:
+          query = query
+            .order('transaction_date', { ascending: false })
+            .order('created_at', { ascending: false });
+      }
 
-  const offset = (filter.page - 1) * PAGE_SIZE;
-  const { data, error, count } = await query
-    .range(offset, offset + PAGE_SIZE - 1)
-    .returns<TransactionRow[]>();
+      const offset = (filter.page - 1) * PAGE_SIZE;
+      const { data, error } = await query
+        // One extra row answers "is there a next page?" without COUNT(*).
+        .order('id', { ascending: true })
+        .range(offset, offset + PAGE_SIZE)
+        .returns<TransactionRow[]>();
 
-  if (error) throw new Error(`Could not load transactions: ${error.code}`);
+      if (error) throw new Error(`Could not load transactions: ${error.code}`);
+      const page = takeLookaheadPage(data ?? [], PAGE_SIZE);
 
-  return {
-    transactions: (data ?? []).map(toTransaction),
-    total: count ?? 0,
-    page: filter.page,
-    pageCount: Math.max(1, Math.ceil((count ?? 0) / PAGE_SIZE)),
-  };
+      return {
+        transactions: page.items.map(toTransaction),
+        page: filter.page,
+        hasNext: page.hasNext,
+      };
+    },
+    {
+      fields: { page: filter.page },
+      resultFields: (result) => ({
+        row_count: result.transactions.length,
+        has_next: result.hasNext,
+      }),
+    },
+  );
 }
 
 export async function getTransaction(id: string): Promise<Transaction | null> {

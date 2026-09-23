@@ -1,0 +1,5 @@
+import { ObligationDetail } from '@/components/finance/obligation-detail';
+export default async function Page({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  return <ObligationDetail kind="receivable" id={id} />;
+}

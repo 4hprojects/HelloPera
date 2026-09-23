@@ -1,9 +1,11 @@
+import Link from 'next/link';
+import { createClient } from '@/lib/supabase/server';
 import { MobileNav } from '@/components/navigation/mobile-nav';
 import { Sidebar } from '@/components/navigation/sidebar';
 import { TopBar } from '@/components/layout/top-bar';
 import { LogoutButton } from '@/components/auth/logout-button';
 import { requireUser } from '@/lib/auth/guards';
-import { appNav, mobileNav } from '@/lib/constants/navigation';
+import { adminEntry, appNav, mobileMoreNav, mobileNav } from '@/lib/constants/navigation';
 import { unreadCount } from '@/services/notification.service';
 import { getEffectivePlan } from '@/services/plan.service';
 
@@ -19,6 +21,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   // §20 — the bell counts unread notifications. If the count cannot be read,
   // the bar renders without a badge rather than taking the whole shell down.
+  const supabase = await createClient();
+  const { data: deletion } = await supabase
+    .from('account_deletions')
+    .select('stage')
+    .eq('user_id', user.id)
+    .maybeSingle();
   const unread = await unreadCount().catch(() => 0);
 
   // PHASE-09 — the plan line was hardcoded 'Free plan'. It now resolves, and
@@ -30,7 +38,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <div className="flex min-h-dvh">
       <Sidebar
-        items={appNav}
+        items={profile.role === 'admin' ? [...appNav, adminEntry] : appNav}
         user={{
           name: profile.full_name,
           email: profile.email ?? '',
@@ -48,11 +56,25 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           unreadCount={unread}
         />
         <main id="main" className="flex-1 px-4 pb-24 pt-5 sm:px-6 lg:pb-10">
+          {deletion && (
+            <div role="alert" className="mb-4 rounded border border-warning p-4">
+              Account deletion is in progress. Financial records are read-only and some
+              files may already be removed.{' '}
+              <Link className="underline" href="/settings/delete">
+                Resume deletion
+              </Link>
+            </div>
+          )}
           {children}
         </main>
       </div>
 
-      <MobileNav items={mobileNav} />
+      <MobileNav
+        items={mobileNav}
+        moreItems={
+          profile.role === 'admin' ? [...mobileMoreNav, adminEntry] : mobileMoreNav
+        }
+      />
     </div>
   );
 }

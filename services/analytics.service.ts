@@ -20,6 +20,7 @@ import {
 import { MAX_RANGE_YEARS, monthsInRange, rangeFor } from '@/lib/analytics/range';
 import { todayInTimezone } from '@/lib/finance/obligation';
 import { fromDatabase } from '@/lib/money';
+import { withServiceTiming } from '@/lib/performance/service-timing';
 import type { Direction, TransactionStatus, TransactionType } from '@/lib/finance/types';
 import { listAccounts } from '@/services/account.service';
 import { listCategories } from '@/services/category.service';
@@ -110,18 +111,21 @@ const SELECT = `
  * could ask for someone else's rows, and the embedded parent is filtered by
  * the same policy, so a refund cannot borrow another user's category.
  */
-export async function fetchAnalyticsRows(
-  window: AnalyticsWindow,
-): Promise<AnalyticsRow[]> {
+export function fetchAnalyticsRows(window: AnalyticsWindow): Promise<AnalyticsRow[]> {
+  return withServiceTiming('analytics.rows', () => readAnalyticsRows(window), {
+    resultFields: (rows) => ({ row_count: rows.length }),
+  });
+}
+
+async function readAnalyticsRows(window: AnalyticsWindow): Promise<AnalyticsRow[]> {
   const supabase = await createClient();
   const rows: Row[] = [];
-  let expected: number | null = null;
 
   for (let page = 0; page < MAX_PAGES; page += 1) {
     const offset = page * PAGE;
-    const { data, error, count } = await supabase
+    const { data, error } = await supabase
       .from('transactions')
-      .select(SELECT, { count: page === 0 ? 'exact' : undefined })
+      .select(SELECT)
       .eq('status', 'confirmed')
       .gte('transaction_date', window.from)
       .lte('transaction_date', window.to)
@@ -136,22 +140,13 @@ export async function fetchAnalyticsRows(
     const batch = data ?? [];
     rows.push(...batch);
 
-    if (page === 0) expected = count ?? batch.length;
-    if (batch.length < PAGE) break;
-    if (expected !== null && rows.length >= expected) break;
+    if (batch.length < PAGE) return rows.map(toAnalyticsRow);
   }
 
-  // Loud rather than quietly wrong: a short read means every total below it
-  // is understated, which is the one failure mode a finance dashboard must
-  // not have.
-  if (expected !== null && rows.length < expected) {
-    throw new Error(
-      `Analytics read incomplete: got ${rows.length} of ${expected} rows. ` +
-        'Totals would be understated, so nothing is shown.',
-    );
-  }
-
-  return rows.map(toAnalyticsRow);
+  throw new Error(
+    `Analytics window exceeded ${MAX_PAGES * PAGE} rows. ` +
+      'Totals would be incomplete, so nothing is shown.',
+  );
 }
 
 function toAnalyticsRow(row: Row): AnalyticsRow {
@@ -220,7 +215,19 @@ export async function resolveCategoryNames(
  * that §14 nets against their original purchase, and every breakdown would
  * come out overstated. `lib/analytics/filter.ts` explains it at length.
  */
-export async function getAnalyticsData({
+export function getAnalyticsData(
+  params: Parameters<typeof buildAnalyticsData>[0],
+): Promise<AnalyticsData> {
+  return withServiceTiming('analytics.load', () => buildAnalyticsData(params), {
+    resultFields: (data) => ({
+      account_count: data.accountOptions.length,
+      category_count: data.categoryOptions.length,
+      cash_flow_row_count: data.cashFlow.rowCount,
+    }),
+  });
+}
+
+async function buildAnalyticsData({
   timezone,
   preferredCurrency,
   params,

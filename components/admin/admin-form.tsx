@@ -28,6 +28,8 @@ export function AdminForm({
   reasonLabel = 'Reason',
   reasonName = 'reason',
   multiline = false,
+  confirmLabel = 'Type CONFIRM',
+  submitVariant,
 }: {
   action: (state: ActionState, formData: FormData) => Promise<ActionState>;
   hidden?: Record<string, string>;
@@ -42,6 +44,17 @@ export function AdminForm({
    */
   reasonName?: string;
   multiline?: boolean;
+  /**
+   * Wording for the typed-confirmation box. The value the server checks for is
+   * still CONFIRM; only the prompt around it changes.
+   */
+  confirmLabel?: string;
+  /**
+   * The submit button's style. Defaults to danger for a destructive form and
+   * primary otherwise. Set it when the form needs the typed confirmation but
+   * the action is not itself alarming — turning a routine switch on.
+   */
+  submitVariant?: 'primary' | 'danger';
 }) {
   const [state, formAction, pending] = useActionState<ActionState, FormData>(action, {});
 
@@ -80,7 +93,7 @@ export function AdminForm({
       {destructive ? (
         <TextField
           id="confirmation"
-          label="Type CONFIRM"
+          label={confirmLabel}
           required
           autoComplete="off"
           showMessage={false}
@@ -89,7 +102,7 @@ export function AdminForm({
 
       <Button
         type="submit"
-        variant={destructive ? 'danger' : 'primary'}
+        variant={submitVariant ?? (destructive ? 'danger' : 'primary')}
         disabled={pending}
       >
         {pending ? 'Working…' : submitLabel}

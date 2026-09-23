@@ -16,16 +16,9 @@ import { log } from '@/lib/log';
  * that is the worst possible bug: the user only discovers it later, somewhere
  * else, having already deleted the original.
  *
- * So every table is paged explicitly and the row count is checked against
- * `count: 'exact'`. A short read throws rather than exporting.
- *
- * This mirrors `fetchAnalyticsRows` in `services/analytics.service.ts`, which
- * learned the same lesson in Phase 06.
+ * One RLS-scoped database RPC reads all sections in a single MVCC snapshot.
+ * This avoids both REST row caps and offset drift during concurrent writes.
  */
-
-const PAGE = 1000;
-/** Refuse to spin forever if `count` and the row stream ever disagree. */
-const MAX_PAGES = 500;
 
 export class ExportError extends Error {
   constructor(message: string) {
@@ -35,47 +28,6 @@ export class ExportError extends Error {
 }
 
 type Row = Record<string, unknown>;
-
-/**
- * Every row of a table the user owns, paged.
- *
- * RLS scopes the read, so there is no `user_id` predicate to write — and
- * therefore none to get wrong.
- */
-async function fetchAll(table: string, columns: string, orderBy: string): Promise<Row[]> {
-  const supabase = await createClient();
-  const rows: Row[] = [];
-  let expected: number | null = null;
-
-  for (let page = 0; page < MAX_PAGES; page += 1) {
-    const offset = page * PAGE;
-    const { data, error, count } = await supabase
-      .from(table)
-      .select(columns, { count: page === 0 ? 'exact' : undefined })
-      // A stable order is what makes paging safe: without it two pages can
-      // overlap or skip rows entirely.
-      .order(orderBy, { ascending: true })
-      .order('id', { ascending: true })
-      .range(offset, offset + PAGE - 1);
-
-    if (error) throw new ExportError(`We could not read your ${table}: ${error.code}`);
-
-    const batch = (data ?? []) as unknown as Row[];
-    rows.push(...batch);
-
-    if (page === 0) expected = count ?? batch.length;
-    if (batch.length < PAGE) break;
-    if (expected !== null && rows.length >= expected) break;
-  }
-
-  if (expected !== null && rows.length < expected) {
-    throw new ExportError(
-      `Your export was incomplete (${rows.length} of ${expected} ${table}), so nothing was downloaded. Please try again.`,
-    );
-  }
-
-  return rows;
-}
 
 /**
  * What goes in the export — PHASE-14 §67.
@@ -140,18 +92,42 @@ const TABLES: Array<{ key: string; table: string; columns: string; orderBy: stri
       'id, document_type, original_filename, original_mime_type, original_size_bytes, processing_status, retention_status, created_at',
     orderBy: 'created_at',
   },
+  {
+    key: 'bill_payments',
+    table: 'bill_payments',
+    columns: 'id, bill_id, transaction_id, amount_applied, created_at',
+    orderBy: 'created_at',
+  },
+  {
+    key: 'receivable_payments',
+    table: 'receivable_payments',
+    columns: 'id, receivable_id, transaction_id, amount_applied, created_at',
+    orderBy: 'created_at',
+  },
+  {
+    key: 'expected_income_receipts',
+    table: 'expected_income_receipts',
+    columns: 'id, expected_income_id, transaction_id, amount_applied, created_at',
+    orderBy: 'created_at',
+  },
+  {
+    key: 'expected_events',
+    table: 'expected_events',
+    columns:
+      'id, recurring_rule_id, event_type, name, amount, currency_code, scheduled_date, status, account_id, category_id, actual_transaction_id, include_in_forecast, detached_from_rule, source_entity_type, source_entity_id, created_at',
+    orderBy: 'created_at',
+  },
 ];
 
 export type ExportBundle = Record<string, Row[]>;
 
 /** Everything, as structured data. */
 export async function buildExport(): Promise<ExportBundle> {
-  const bundle: ExportBundle = {};
-
-  for (const spec of TABLES) {
-    bundle[spec.key] = await fetchAll(spec.table, spec.columns, spec.orderBy);
-  }
-
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc('export_financial_snapshot');
+  if (error || !data)
+    throw new ExportError('Your export could not be completed. Please try again.');
+  const bundle = data as ExportBundle;
   const total = Object.values(bundle).reduce((n, rows) => n + rows.length, 0);
   log.info('export built', { rows: total });
 
@@ -163,7 +139,7 @@ export function toJsonExport(bundle: ExportBundle): string {
   return JSON.stringify(
     {
       exported_at: new Date().toISOString(),
-      format_version: 1,
+      format_version: 2,
       note: 'Amounts are exact decimal strings, as stored. Document files are not included; download those from the Documents screen.',
       data: bundle,
     },

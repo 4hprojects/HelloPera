@@ -9,6 +9,7 @@ import { getPreferences } from '@/services/notification.service';
 import { listPushDevices } from '@/services/push.service';
 import { PushOptIn } from '@/components/notifications/push-opt-in';
 import { env, isPushConfigured } from '@/lib/env';
+import { isFlagEnabled } from '@/services/plan.service';
 
 export const metadata: Metadata = { title: 'Notification settings' };
 
@@ -16,9 +17,10 @@ export const metadata: Metadata = { title: 'Notification settings' };
 export default async function NotificationSettingsPage() {
   const { user, profile } = await requireUser();
 
-  const [preferences, devices] = await Promise.all([
+  const [preferences, devices, pushEnabled] = await Promise.all([
     getPreferences(user.id, profile.timezone),
     listPushDevices(user.id),
+    isFlagEnabled('push_enabled'),
   ]);
 
   const active = devices.filter((d) => d.isActive);
@@ -57,7 +59,9 @@ export default async function NotificationSettingsPage() {
         */}
         <PushOptIn
           vapidPublicKey={
-            isPushConfigured() ? (env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? null) : null
+            pushEnabled && isPushConfigured()
+              ? (env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? null)
+              : null
           }
         />
 

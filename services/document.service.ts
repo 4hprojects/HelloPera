@@ -16,6 +16,7 @@ import {
 } from '@/services/image-processing.service';
 import { removeDocumentObjects, uploadObject } from '@/services/storage.service';
 import { log } from '@/lib/log';
+import { withServiceTiming } from '@/lib/performance/service-timing';
 
 export type DocumentRow = {
   id: string;
@@ -39,16 +40,25 @@ export type DocumentRow = {
 export class UploadError extends Error {}
 
 export async function listDocuments(options: { includeArchived?: boolean } = {}) {
-  const supabase = await createClient();
-  let query = supabase
-    .from('documents')
-    .select('*')
-    .order('created_at', { ascending: false });
-  if (!options.includeArchived) query = query.eq('is_archived', false);
+  return withServiceTiming(
+    'documents.list',
+    async () => {
+      const supabase = await createClient();
+      let query = supabase
+        .from('documents')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (!options.includeArchived) query = query.eq('is_archived', false);
 
-  const { data, error } = await query.returns<DocumentRow[]>();
-  if (error) throw new Error(`Could not load documents: ${error.code}`);
-  return data ?? [];
+      const { data, error } = await query.returns<DocumentRow[]>();
+      if (error) throw new Error(`Could not load documents: ${error.code}`);
+      return data ?? [];
+    },
+    {
+      fields: { include_archived: options.includeArchived ?? false },
+      resultFields: (documents) => ({ row_count: documents.length }),
+    },
+  );
 }
 
 export async function getDocument(id: string): Promise<DocumentRow | null> {
@@ -136,7 +146,7 @@ export async function uploadDocument(params: {
     uploaded.push(originalPath);
 
     if (validation.isPdf) {
-      await admin
+      const { error: readyError } = await admin
         .from('documents')
         .update({
           original_path: originalPath,
@@ -148,6 +158,7 @@ export async function uploadDocument(params: {
         })
         .eq('id', documentId);
 
+      if (readyError) throw new Error('Document metadata could not be saved.');
       return { id: documentId, duplicateOf: existing?.id ?? null };
     }
 
@@ -174,7 +185,7 @@ export async function uploadDocument(params: {
     });
     uploaded.push(thumbPath);
 
-    await admin
+    const { error: readyError } = await admin
       .from('documents')
       .update({
         original_path: originalPath,
@@ -189,6 +200,7 @@ export async function uploadDocument(params: {
       })
       .eq('id', documentId);
 
+    if (readyError) throw new Error('Document metadata could not be saved.');
     return { id: documentId, duplicateOf: existing?.id ?? null };
   } catch (error) {
     const message =
@@ -198,10 +210,12 @@ export async function uploadDocument(params: {
 
     // Keep the row, mark it failed, allow retry (§31). Remove the partial
     // objects so storage does not accumulate orphans.
-    await admin
+    const { error: failureError } = await admin
       .from('documents')
       .update({ processing_status: 'failed', processing_error: message })
       .eq('id', documentId);
+    if (failureError)
+      log.error('document: failed state could not be saved', { code: failureError.code });
     await removeDocumentObjects(uploaded);
 
     log.error('document processing failed', { document_id: documentId });

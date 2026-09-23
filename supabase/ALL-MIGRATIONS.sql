@@ -25,6 +25,16 @@
 --   16. Phase 09 — monetization
 --   17. 20260914000600 gate rate limits
 --   18. 20260914000700 profiles first last name
+--   19. Phase 11 — billing
+--   20. Phase 12 — ai assistant
+--   21. Phase 13 — admin operations
+--   22. Phase 14 — financial integrity
+--   23. Phase 14 — ops flags
+--   24. Phase 14 — retention
+--   25. 20260921000100 provider features default off
+--   26. 20260923000100 launch integrity
+--   27. 20260923000200 account deletion
+--   28. 20260923000300 export snapshot
 --
 -- Prefer `npm run db:migrate` where you have DATABASE_URL: it applies each
 -- file in its own transaction and records what ran. This bundle is for the
@@ -4514,3 +4524,1496 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
+
+
+-- ======================================================================
+-- 20260914000800_phase11_billing.sql
+-- ======================================================================
+
+-- =============================================================================
+-- Phase 11 — Premium Billing: customer mapping and payment history
+--
+-- The provider-independent half. No adapter, no checkout, no provider names:
+-- §6 leaves provider selection open and §40 of Phase 09 forbids baking one
+-- into the domain model, so `provider` is a plain text column and everything
+-- provider-shaped lives in `subscription_events.payload`.
+--
+-- ## What is deliberately NOT stored
+--
+-- §37, §38 and criterion 24: HelloPera never stores a card number, a CVV, an
+-- expiry, or bank credentials. The provider's hosted checkout and portal hold
+-- those, which is what keeps this application out of PCI scope entirely. The
+-- columns below are amounts, dates, opaque provider ids and a receipt URL —
+-- enough to show someone their own billing history and nothing more.
+--
+-- Idempotent.
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- billing_customers (§11)
+--
+-- One row per user per provider. Exists because a provider identifies people
+-- by its own customer id, and a webhook arrives carrying that id and nothing
+-- else — without this table there is no way back to a HelloPera user.
+-- -----------------------------------------------------------------------------
+
+create table if not exists public.billing_customers (
+  id                   uuid primary key default gen_random_uuid(),
+  user_id              uuid not null references auth.users (id) on delete cascade,
+  provider             text not null,
+  provider_customer_id text not null,
+  created_at           timestamptz not null default now(),
+  updated_at           timestamptz not null default now()
+);
+
+-- The lookup a webhook performs: provider + their id -> our user.
+create unique index if not exists billing_customers_provider_customer_uidx
+  on public.billing_customers (provider, provider_customer_id);
+
+-- One customer record per provider per user. A second would make "which
+-- customer is this person?" ambiguous at exactly the moment money moves.
+create unique index if not exists billing_customers_user_provider_uidx
+  on public.billing_customers (user_id, provider);
+
+-- -----------------------------------------------------------------------------
+-- billing_history (§34)
+-- -----------------------------------------------------------------------------
+
+create table if not exists public.billing_history (
+  id                    uuid primary key default gen_random_uuid(),
+  user_id               uuid not null references auth.users (id) on delete cascade,
+  subscription_id       uuid references public.subscriptions (id) on delete set null,
+  provider              text not null,
+  provider_invoice_id   text,
+  provider_payment_id   text,
+  amount                numeric(18, 2) not null,
+  currency_code         text not null default 'PHP',
+  status                text not null,
+  billing_period_start  timestamptz,
+  billing_period_end    timestamptz,
+  receipt_url           text,
+  created_at            timestamptz not null default now()
+);
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'billing_history_status_check'
+  ) then
+    alter table public.billing_history add constraint billing_history_status_check
+      check (status in ('paid', 'failed', 'refunded', 'pending'));
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint where conname = 'billing_history_amount_check'
+  ) then
+    -- Zero is legitimate (a fully discounted period); negative is not — a
+    -- refund is its own status, not a negative charge.
+    alter table public.billing_history add constraint billing_history_amount_check
+      check (amount >= 0);
+  end if;
+end $$;
+
+-- §16, criterion 7 — a replayed webhook must not write a second invoice row.
+-- Partial, because a provider may deliver a payment with no invoice id.
+create unique index if not exists billing_history_invoice_uidx
+  on public.billing_history (provider, provider_invoice_id)
+  where provider_invoice_id is not null;
+
+-- The billing history page: newest first, per user.
+create index if not exists billing_history_user_created_idx
+  on public.billing_history (user_id, created_at desc);
+
+-- -----------------------------------------------------------------------------
+-- updated_at
+-- -----------------------------------------------------------------------------
+
+drop trigger if exists billing_customers_set_updated_at on public.billing_customers;
+create trigger billing_customers_set_updated_at
+  before update on public.billing_customers
+  for each row execute function public.set_updated_at();
+
+-- -----------------------------------------------------------------------------
+-- RLS (criterion 18, criterion 22)
+--
+-- SELECT own rows, and no write policy of any kind. Billing rows are written
+-- by the webhook handler using the secret key, after a verified signature —
+-- there is no client-reachable path, and criterion 22 asks for the database to
+-- be the thing that refuses rather than the application.
+-- -----------------------------------------------------------------------------
+
+do $$
+declare t text;
+begin
+  foreach t in array array['billing_customers', 'billing_history'] loop
+    execute format('alter table public.%I enable row level security', t);
+    execute format('alter table public.%I force row level security', t);
+    execute format('revoke all on public.%I from anon, authenticated', t);
+    execute format('drop policy if exists %I_select_own on public.%I', t, t);
+    execute format(
+      'create policy %I_select_own on public.%I for select to authenticated
+       using (user_id = (select auth.uid()))', t, t);
+    execute format('grant select on public.%I to authenticated', t);
+  end loop;
+end $$;
+
+-- §11 — billing_customers holds a provider's customer id. It is not secret,
+-- but it is also nothing a browser needs: the mapping is only ever used
+-- server-side to turn a webhook into a user. Withheld on that basis.
+revoke select on public.billing_customers from authenticated;
+drop policy if exists billing_customers_select_own on public.billing_customers;
+
+
+-- ======================================================================
+-- 20260914000900_phase12_ai_assistant.sql
+-- ======================================================================
+
+-- =============================================================================
+-- Phase 12 — AI Financial Assistant: conversations, messages, provider logs
+--
+-- The storage half. Nothing here knows which model answers a question: §7
+-- forbids hardcoding model identifiers through business logic, so `provider`
+-- and `model` are plain text columns written by whichever adapter ran.
+--
+-- ## What is deliberately NOT stored
+--
+-- §18: not whole query result payloads, not raw OCR text, not account numbers.
+-- `ai_messages.query_metadata` holds the intent and the resolved date range —
+-- enough to show why an answer said what it said, and to investigate a bad
+-- one, without keeping a second copy of the user's finances in a jsonb column
+-- that no retention policy covers.
+--
+-- §94: the audit log never receives prompt text either. That rule lives in
+-- `lib/auth/audit.ts` callers; this file is where the *conversation* copy
+-- lives, and it is scoped to the user who wrote it.
+--
+-- Idempotent.
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- ai_conversations (§17)
+-- -----------------------------------------------------------------------------
+
+create table if not exists public.ai_conversations (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null references auth.users (id) on delete cascade,
+  title       text,
+  is_archived boolean not null default false,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+
+-- The list page: a user's live threads, most recently used first.
+create index if not exists ai_conversations_user_idx
+  on public.ai_conversations (user_id, updated_at desc)
+  where is_archived = false;
+
+-- -----------------------------------------------------------------------------
+-- ai_messages (§17, §18)
+--
+-- `role` is constrained rather than free text because the whole grounding
+-- story depends on being able to tell whose words a row holds. A forged
+-- 'assistant' row is the application appearing to have said something it never
+-- said — which is why there is no client write path to this table at all.
+-- -----------------------------------------------------------------------------
+
+create table if not exists public.ai_messages (
+  id              uuid primary key default gen_random_uuid(),
+  conversation_id uuid not null references public.ai_conversations (id) on delete cascade,
+  user_id         uuid not null references auth.users (id) on delete cascade,
+  role            text not null,
+  content         text not null,
+  -- Null for a user turn, and for an assistant turn that never resolved to a
+  -- supported intent (a clarification, or a refusal).
+  intent          text,
+  query_metadata  jsonb not null default '{}'::jsonb,
+  created_at      timestamptz not null default now()
+);
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'ai_messages_role_check') then
+    alter table public.ai_messages add constraint ai_messages_role_check
+      check (role in ('user', 'assistant'));
+  end if;
+
+  -- §44 — the same 2000-character ceiling the action enforces, stated here too
+  -- so a future caller that forgets cannot write an unbounded prompt.
+  if not exists (select 1 from pg_constraint where conname = 'ai_messages_content_length_check') then
+    alter table public.ai_messages add constraint ai_messages_content_length_check
+      check (char_length(content) <= 8000);
+  end if;
+end $$;
+
+-- Reading one thread in order.
+create index if not exists ai_messages_conversation_idx
+  on public.ai_messages (conversation_id, created_at);
+
+-- -----------------------------------------------------------------------------
+-- ai_usage_logs (§54, §55)
+--
+-- Provider calls, for cost analysis. Deliberately NOT the quota unit: one
+-- question is one `ai_queries` row in `usage_records` even when it makes two
+-- provider calls (intent parsing, then explanation). The gap between the two
+-- counts is what the cost-per-question number is made of.
+--
+-- `input_units` / `output_units` rather than `input_tokens`: a future provider
+-- may not bill in tokens, and §40 of Phase 09 is that the domain must not take
+-- on one provider's vocabulary.
+-- -----------------------------------------------------------------------------
+
+create table if not exists public.ai_usage_logs (
+  id              uuid primary key default gen_random_uuid(),
+  user_id         uuid not null references auth.users (id) on delete cascade,
+  conversation_id uuid references public.ai_conversations (id) on delete set null,
+  intent          text,
+  provider        text not null,
+  model           text not null,
+  -- The call this row describes: parsing a question, or explaining figures.
+  call_type       text not null,
+  input_units     integer not null default 0,
+  output_units    integer not null default 0,
+  duration_ms     integer not null default 0,
+  status          text not null,
+  error_code      text,
+  created_at      timestamptz not null default now()
+);
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'ai_usage_logs_status_check') then
+    alter table public.ai_usage_logs add constraint ai_usage_logs_status_check
+      check (status in ('succeeded', 'failed', 'timeout', 'rejected'));
+  end if;
+
+  if not exists (select 1 from pg_constraint where conname = 'ai_usage_logs_call_type_check') then
+    alter table public.ai_usage_logs add constraint ai_usage_logs_call_type_check
+      check (call_type in ('intent', 'explanation'));
+  end if;
+end $$;
+
+-- §55 — cost per user per period, and the failure rate behind §30's provider
+-- health panel.
+create index if not exists ai_usage_logs_user_created_idx
+  on public.ai_usage_logs (user_id, created_at desc);
+
+create index if not exists ai_usage_logs_failures_idx
+  on public.ai_usage_logs (created_at desc)
+  where status <> 'succeeded';
+
+-- -----------------------------------------------------------------------------
+-- updated_at
+-- -----------------------------------------------------------------------------
+
+drop trigger if exists ai_conversations_set_updated_at on public.ai_conversations;
+create trigger ai_conversations_set_updated_at
+  before update on public.ai_conversations
+  for each row execute function public.set_updated_at();
+
+-- -----------------------------------------------------------------------------
+-- RLS (criterion 19, criterion 20)
+--
+-- Client reads its own rows; every write goes through a server action (master
+-- plan §33), which is the pattern every table since Phase 02 has used.
+--
+-- For `ai_messages` that rule carries extra weight and is worth naming: a
+-- client able to insert an 'assistant' row could forge the system's own words
+-- into a user's history — a grounded answer that HelloPera never produced,
+-- indistinguishable afterwards from one it did. Criterion 19 asks for exactly
+-- this, and the database is what refuses.
+-- -----------------------------------------------------------------------------
+
+do $$
+declare t text;
+begin
+  foreach t in array array['ai_conversations', 'ai_messages', 'ai_usage_logs'] loop
+    execute format('alter table public.%I enable row level security', t);
+    execute format('alter table public.%I force  row level security', t);
+    execute format('revoke all on public.%I from anon, authenticated', t);
+    execute format('drop policy if exists %I on public.%I', t || '_select_own', t);
+    execute format(
+      'create policy %I on public.%I for select to authenticated
+       using (user_id = (select auth.uid()))', t || '_select_own', t);
+    execute format('grant select on public.%I to authenticated', t);
+  end loop;
+end $$;
+
+-- §55 — cost analysis is operational, not something a user reads about
+-- themselves, and it names the provider and model HelloPera uses. No browser
+-- needs it; withheld on that basis, the same way `billing_customers` is.
+revoke select on public.ai_usage_logs from authenticated;
+drop policy if exists ai_usage_logs_select_own on public.ai_usage_logs;
+
+
+-- ======================================================================
+-- 20260914001000_phase13_admin_operations.sql
+-- ======================================================================
+
+-- =============================================================================
+-- Phase 13 — Admin and Operations: support notes, overrides, adjustments
+--
+-- Three tables that exist for one reason, stated in DATA-MODEL.md: **to avoid
+-- falsifying primary records.**
+--
+-- Promotional Premium is an `entitlement_overrides` row, not a subscription row
+-- invented to look like a purchase. A goodwill usage credit is a
+-- `usage_adjustments` row, not an edit to `usage_records`. In both cases the
+-- alternative — writing the lie into the primary table — is cheaper today and
+-- unrecoverable later: nothing afterwards can tell an operator's kindness apart
+-- from a real payment or a real scan.
+--
+-- ## Access
+--
+-- These are OPERATIONAL tables. Unlike every user-owned table since Phase 02,
+-- they get no SELECT-own policy, because none of these rows belongs to the user
+-- they are about: a support note is written by an admin about someone, and
+-- letting that someone read it changes what admins are willing to write down.
+-- RLS is enabled and forced, everything is revoked, and no policy exists — so
+-- the browser role cannot reach them at all, whatever a future query attempts.
+--
+-- Idempotent.
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- admin_support_notes (§16)
+-- -----------------------------------------------------------------------------
+
+create table if not exists public.admin_support_notes (
+  id            uuid primary key default gen_random_uuid(),
+  user_id       uuid not null references auth.users (id) on delete cascade,
+  -- `set null`, not cascade: deleting a departed admin's account must not erase
+  -- the support history of the users they helped.
+  admin_user_id uuid references auth.users (id) on delete set null,
+  note          text not null,
+  created_at    timestamptz not null default now()
+);
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'admin_support_notes_note_check'
+  ) then
+    alter table public.admin_support_notes add constraint admin_support_notes_note_check
+      check (char_length(btrim(note)) between 1 and 4000);
+  end if;
+end $$;
+
+create index if not exists admin_support_notes_user_idx
+  on public.admin_support_notes (user_id, created_at desc);
+
+-- -----------------------------------------------------------------------------
+-- entitlement_overrides (§19)
+--
+-- A per-user override of one entitlement key, for a window of time.
+--
+-- `value_json` deliberately matches `plan_entitlements.value_json`, because
+-- `resolveEntitlements()` already reduces rows of that exact shape into a map
+-- where a later row wins. An override in effect is therefore appended after the
+-- plan's rows and needs no second resolution path — one place decides what a
+-- user is entitled to, which is what stops the two answers drifting.
+-- -----------------------------------------------------------------------------
+
+create table if not exists public.entitlement_overrides (
+  id              uuid primary key default gen_random_uuid(),
+  user_id         uuid not null references auth.users (id) on delete cascade,
+  entitlement_key text not null,
+  value_json      jsonb not null,
+  -- §54 — never optional. An override with no reason is indistinguishable from
+  -- a mistake six months later.
+  reason          text not null,
+  starts_at       timestamptz not null default now(),
+  -- Null means open-ended. Allowed, but the admin UI defaults to a date:
+  -- a promotion nobody remembers granting is a promotion nobody ends.
+  ends_at         timestamptz,
+  created_by      uuid references auth.users (id) on delete set null,
+  created_at      timestamptz not null default now()
+);
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'entitlement_overrides_key_check'
+  ) then
+    -- The same keys `plan_entitlements` constrains. A typo here would resolve
+    -- to nothing and look like the override silently failing.
+    alter table public.entitlement_overrides add constraint entitlement_overrides_key_check
+      check (entitlement_key in (
+        'ocr_monthly_limit', 'ai_monthly_limit', 'advanced_analytics',
+        'forecast_horizon_days', 'export_enabled', 'ads_shown',
+        'document_retention_days', 'max_documents', 'max_accounts',
+        'premium_support'
+      ));
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint where conname = 'entitlement_overrides_window_check'
+  ) then
+    alter table public.entitlement_overrides add constraint entitlement_overrides_window_check
+      check (ends_at is null or ends_at > starts_at);
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint where conname = 'entitlement_overrides_reason_check'
+  ) then
+    alter table public.entitlement_overrides add constraint entitlement_overrides_reason_check
+      check (char_length(btrim(reason)) between 3 and 500);
+  end if;
+end $$;
+
+-- The lookup `getEffectivePlan` performs on every request: this user's
+-- overrides that are in effect now.
+create index if not exists entitlement_overrides_active_idx
+  on public.entitlement_overrides (user_id, starts_at, ends_at);
+
+-- -----------------------------------------------------------------------------
+-- usage_adjustments (§23)
+--
+-- A signed credit or debit against a metered feature, recorded separately from
+-- the usage it adjusts. §32 of Phase 09 says usage already spent is not erased;
+-- this is how a refund of one is expressed without contradicting that.
+-- -----------------------------------------------------------------------------
+
+create table if not exists public.usage_adjustments (
+  id              uuid primary key default gen_random_uuid(),
+  user_id         uuid not null references auth.users (id) on delete cascade,
+  feature_key     text not null,
+  -- Signed. Negative gives a user back a scan that HelloPera's own failure
+  -- consumed; positive exists for the rarer correction in the other direction.
+  quantity_delta  integer not null,
+  reason          text not null,
+  created_by      uuid references auth.users (id) on delete set null,
+  created_at      timestamptz not null default now()
+);
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'usage_adjustments_feature_check'
+  ) then
+    alter table public.usage_adjustments add constraint usage_adjustments_feature_check
+      check (feature_key in ('ocr_jobs', 'ai_queries', 'document_uploads', 'exports'));
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint where conname = 'usage_adjustments_delta_check'
+  ) then
+    -- Zero is not an adjustment, and a bounded magnitude turns a slipped digit
+    -- into a refusal rather than a year of free scans.
+    alter table public.usage_adjustments add constraint usage_adjustments_delta_check
+      check (quantity_delta <> 0 and abs(quantity_delta) <= 1000);
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint where conname = 'usage_adjustments_reason_check'
+  ) then
+    alter table public.usage_adjustments add constraint usage_adjustments_reason_check
+      check (char_length(btrim(reason)) between 3 and 500);
+  end if;
+end $$;
+
+create index if not exists usage_adjustments_user_idx
+  on public.usage_adjustments (user_id, created_at desc);
+
+-- -----------------------------------------------------------------------------
+-- RLS (criterion 19, criterion 21)
+--
+-- Enabled, forced, everything revoked, and NO policy on any of the three. A
+-- table with RLS on and no policy is readable by nobody through the browser
+-- role, which is the intent — these are operational records about users, not
+-- records belonging to them.
+-- -----------------------------------------------------------------------------
+
+do $$
+declare t text;
+begin
+  foreach t in array array[
+    'admin_support_notes', 'entitlement_overrides', 'usage_adjustments'
+  ] loop
+    execute format('alter table public.%I enable row level security', t);
+    execute format('alter table public.%I force  row level security', t);
+    execute format('revoke all on public.%I from anon, authenticated', t);
+  end loop;
+end $$;
+
+-- -----------------------------------------------------------------------------
+-- §14 — a user can never make themselves an admin
+--
+-- Today this trigger cannot fire from a browser: `authenticated` holds only
+-- SELECT on `profiles` (Phase 01), so there is no client UPDATE to intercept.
+-- It is written anyway, and the reason is worth stating plainly rather than
+-- overselling.
+--
+-- "No write path exists" is a property of the *grants*, and grants change. The
+-- obvious future change — letting people edit their own name without a round
+-- trip through a server action — is one `grant update` away, and it would
+-- silently hand every user `role` and `status` as well. This trigger is what
+-- makes that a refusal instead of a privilege-escalation bug, and it costs one
+-- function.
+--
+-- The service role is exempt (`auth.uid()` is null for it): admin actions run
+-- through it, after `requireAdminAction()` has checked the caller.
+-- -----------------------------------------------------------------------------
+
+create or replace function public.reject_self_privilege_change()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  -- Trusted server paths only. `auth.uid()` is null for the service role.
+  if (select auth.uid()) is null then
+    return new;
+  end if;
+
+  if new.role is distinct from old.role then
+    raise exception 'role cannot be changed from the client'
+      using errcode = 'insufficient_privilege';
+  end if;
+
+  if new.status is distinct from old.status then
+    raise exception 'status cannot be changed from the client'
+      using errcode = 'insufficient_privilege';
+  end if;
+
+  return new;
+end $$;
+
+revoke all on function public.reject_self_privilege_change() from public;
+
+drop trigger if exists profiles_reject_self_privilege_change on public.profiles;
+create trigger profiles_reject_self_privilege_change
+  before update on public.profiles
+  for each row execute function public.reject_self_privilege_change();
+
+
+-- ======================================================================
+-- 20260915000100_phase14_financial_integrity.sql
+-- ======================================================================
+
+-- =============================================================================
+-- Phase 14 — Financial integrity: detect without repairing
+--
+-- §65: "It should report mismatches. **Do not silently modify data without
+-- controlled repair.**"
+--
+-- `check_balance_integrity()` as Phase 02 shipped it cannot satisfy that,
+-- because it calls `recalculate_account_balance()` — whose last statement is
+-- `update public.accounts set current_balance = ...`. Its own comment said so
+-- plainly: "Recalculating repairs as it reads, so run it to both detect and fix
+-- drift."
+--
+-- That was a reasonable thing to ship in Phase 02, when nothing was watching.
+-- It is the wrong thing now, and the reason is worth stating: a checker that
+-- repairs destroys the evidence of the drift it found. Nobody can then answer
+-- how often it happens, to which accounts, or after which operation — so a real
+-- bug in the balance engine looks exactly like a system that is working. A
+-- finance application that silently self-corrects is one where the most
+-- important class of defect is invisible by construction.
+--
+-- So the arithmetic is split from the write:
+--
+--   derive_account_balance()      the §34 matrix. Returns a number. Writes
+--                                 nothing.
+--   recalculate_account_balance() calls derive, then writes. Every existing
+--                                 write path is unchanged.
+--   check_balance_integrity()     calls derive. Reports. Never writes.
+--
+-- One copy of the matrix instead of two, which also means
+-- `lib/finance/sql-parity.test.ts` guards one thing rather than needing to
+-- guard both.
+--
+-- Idempotent.
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+-- derive_account_balance (§64)
+--
+-- The PHASE-02 §34 balance-effect matrix, moved here verbatim from
+-- `recalculate_account_balance`. `accounts.opening_balance` is deliberately
+-- excluded: an opening balance enters the ledger as an `opening_balance`
+-- transaction, and counting the column as well would double it.
+-- -----------------------------------------------------------------------------
+
+create or replace function public.derive_account_balance(p_account_id uuid)
+returns numeric
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_nature  text;
+  v_balance numeric(18, 2);
+begin
+  select nature into v_nature from public.accounts where id = p_account_id;
+  if v_nature is null then
+    raise exception 'No account %', p_account_id;
+  end if;
+
+  select coalesce(sum(
+    case
+      -- as SOURCE
+      when t.source_account_id = p_account_id then
+        case t.type
+          when 'expense'    then case when v_nature = 'asset' then -t.amount else  t.amount end
+          when 'transfer'   then case when v_nature = 'asset' then -t.amount else  t.amount end
+          when 'adjustment' then case when t.direction = 'decrease' then -t.amount else t.amount end
+          else 0
+        end
+      -- as DESTINATION
+      when t.destination_account_id = p_account_id then
+        case t.type
+          when 'income'          then case when v_nature = 'asset' then t.amount else 0 end
+          when 'refund'          then case when v_nature = 'asset' then t.amount else -t.amount end
+          when 'transfer'        then case when v_nature = 'asset' then t.amount else -t.amount end
+          when 'opening_balance' then case when t.direction = 'decrease' then -t.amount else t.amount end
+          else 0
+        end
+      else 0
+    end
+  ), 0)
+  into v_balance
+  from public.transactions t
+  where t.status = 'confirmed'
+    and (t.source_account_id = p_account_id or t.destination_account_id = p_account_id);
+
+  return v_balance;
+end;
+$$;
+
+comment on function public.derive_account_balance(uuid) is
+  'The PHASE-02 section 34 matrix. Returns the balance implied by confirmed transactions. Writes nothing.';
+
+-- -----------------------------------------------------------------------------
+-- recalculate_account_balance — now a thin write over derive
+--
+-- Behaviour is identical for every caller: the transaction RPCs still call this
+-- after a write to refresh the cache. What changed is that the arithmetic lives
+-- in one place.
+-- -----------------------------------------------------------------------------
+
+create or replace function public.recalculate_account_balance(p_account_id uuid)
+returns numeric
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_balance numeric(18, 2);
+begin
+  v_balance := public.derive_account_balance(p_account_id);
+  update public.accounts set current_balance = v_balance where id = p_account_id;
+  return v_balance;
+end;
+$$;
+
+comment on function public.recalculate_account_balance(uuid) is
+  'Derives via derive_account_balance and writes the cache. Called after every balance-affecting write.';
+
+-- -----------------------------------------------------------------------------
+-- check_balance_integrity — now genuinely a check (§64, §65)
+-- -----------------------------------------------------------------------------
+
+create or replace function public.check_balance_integrity(p_user_id uuid)
+returns table (account_id uuid, account_name text, cached numeric, derived numeric)
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+begin
+  return query
+  select a.id, a.name, a.current_balance, public.derive_account_balance(a.id)
+  from public.accounts a
+  where a.user_id = p_user_id;
+end;
+$$;
+
+comment on function public.check_balance_integrity(uuid) is
+  'Reports cached vs derived balance per account. Read-only: repair is a separate audited admin action (PHASE-14 section 66).';
+
+-- -----------------------------------------------------------------------------
+-- check_financial_integrity (§64)
+--
+-- Every §64 check in one call, returning a uniform row shape so a caller can
+-- render them without knowing what each one means.
+--
+-- `p_user_id` null means every user — the scheduled job's case. Scoped for an
+-- admin looking at one account.
+-- -----------------------------------------------------------------------------
+
+create or replace function public.check_financial_integrity(p_user_id uuid default null)
+returns table (
+  check_name  text,
+  user_id     uuid,
+  entity_type text,
+  entity_id   uuid,
+  detail      text,
+  expected    numeric,
+  actual      numeric
+)
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+begin
+  -- 1. Cached balance vs the transactions that imply it.
+  return query
+  select 'account_balance'::text, a.user_id, 'account'::text, a.id,
+         a.name, public.derive_account_balance(a.id), a.current_balance
+  from public.accounts a
+  where (p_user_id is null or a.user_id = p_user_id)
+    and a.current_balance is distinct from public.derive_account_balance(a.id);
+
+  -- 2. A bill cannot have more applied to it than it is for. Over-allocation
+  --    means a payment was linked twice, or a bill's amount was reduced after
+  --    payments were recorded against it.
+  return query
+  select 'bill_over_allocated'::text, b.user_id, 'bill'::text, b.id,
+         b.provider_name, b.amount, sum(p.amount_applied)
+  from public.bills b
+  join public.bill_payments p on p.bill_id = b.id
+  where (p_user_id is null or b.user_id = p_user_id)
+  group by b.id, b.user_id, b.provider_name, b.amount
+  having sum(p.amount_applied) > b.amount;
+
+  -- 3. Same for money owed to the user.
+  return query
+  select 'receivable_over_allocated'::text, r.user_id, 'receivable'::text, r.id,
+         r.party_name, r.amount, sum(p.amount_applied)
+  from public.receivables r
+  join public.receivable_payments p on p.receivable_id = r.id
+  where (p_user_id is null or r.user_id = p_user_id)
+  group by r.id, r.user_id, r.party_name, r.amount
+  having sum(p.amount_applied) > r.amount;
+
+  -- 4. And for expected income.
+  return query
+  select 'expected_income_over_allocated'::text, e.user_id, 'expected_income'::text, e.id,
+         e.source_name, e.amount, sum(p.amount_applied)
+  from public.expected_income e
+  join public.expected_income_receipts p on p.expected_income_id = e.id
+  where (p_user_id is null or e.user_id = p_user_id)
+  group by e.id, e.user_id, e.source_name, e.amount
+  having sum(p.amount_applied) > e.amount;
+
+  -- 5. A payment link whose obligation says it is fully paid but whose applied
+  --    total says otherwise. The status is a cache of the sum, and a status
+  --    that disagrees with its own evidence is how a paid bill reappears.
+  return query
+  select 'bill_status_mismatch'::text, b.user_id, 'bill'::text, b.id,
+         b.provider_name || ' is marked ' || b.status, b.amount,
+         coalesce((select sum(p.amount_applied) from public.bill_payments p where p.bill_id = b.id), 0)
+  from public.bills b
+  where (p_user_id is null or b.user_id = p_user_id)
+    and b.status = 'paid'
+    and coalesce((select sum(p.amount_applied) from public.bill_payments p where p.bill_id = b.id), 0) < b.amount;
+
+  -- 6. Document links point at a uuid in another table with no foreign key to
+  --    enforce it (`document_links.entity_id` is deliberately polymorphic), so
+  --    nothing but this notices when the target is gone.
+  return query
+  select 'orphaned_document_link'::text, l.user_id, 'document_link'::text, l.id,
+         'points at a missing ' || l.entity_type, null::numeric, null::numeric
+  from public.document_links l
+  where (p_user_id is null or l.user_id = p_user_id)
+    and not exists (
+      select 1 from public.transactions t
+      where l.entity_type = 'transaction' and t.id = l.entity_id
+      union all
+      select 1 from public.bills b
+      where l.entity_type = 'bill' and b.id = l.entity_id
+      union all
+      select 1 from public.receivables r
+      where l.entity_type = 'receivable' and r.id = l.entity_id
+      union all
+      select 1 from public.expected_income e
+      where l.entity_type = 'expected_income' and e.id = l.entity_id
+    );
+
+  -- 7. A subscription whose stored status contradicts its own dates. PHASE-11
+  --    §29 makes the read path correct without this ever running, so a hit here
+  --    means the reconciliation job is not running rather than that anyone lost
+  --    access.
+  return query
+  select 'subscription_stale'::text, s.user_id, 'subscription'::text, s.id,
+         'status ' || s.status || ' but the period ended', null::numeric, null::numeric
+  from public.subscriptions s
+  where (p_user_id is null or s.user_id = p_user_id)
+    and (
+      (s.status = 'grace'     and s.grace_period_end   is not null and s.grace_period_end   <= now())
+      or
+      (s.status = 'cancelled' and s.current_period_end is not null and s.current_period_end <= now())
+    );
+end;
+$$;
+
+comment on function public.check_financial_integrity(uuid) is
+  'PHASE-14 section 64. Reports every integrity mismatch. Writes nothing, ever.';
+
+-- -----------------------------------------------------------------------------
+-- repair_account_balance (§66)
+--
+-- The controlled repair §65 requires. Narrow: one account. Deterministic: the
+-- same derivation the check uses. It is called only from the admin action,
+-- which supplies a reason and writes the audit row — this function deliberately
+-- does neither, because a repair that audits itself would let a future caller
+-- skip the reason and still look accounted for.
+-- -----------------------------------------------------------------------------
+
+create or replace function public.repair_account_balance(p_account_id uuid)
+returns table (previous numeric, corrected numeric)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_previous numeric(18, 2);
+  v_corrected numeric(18, 2);
+begin
+  select current_balance into v_previous from public.accounts where id = p_account_id;
+  if v_previous is null then
+    raise exception 'No account %', p_account_id;
+  end if;
+
+  v_corrected := public.recalculate_account_balance(p_account_id);
+  return query select v_previous, v_corrected;
+end;
+$$;
+
+comment on function public.repair_account_balance(uuid) is
+  'PHASE-14 section 66. Narrow, deterministic repair of one account. The caller audits.';
+
+-- -----------------------------------------------------------------------------
+-- run_financial_integrity_check (§65)
+--
+-- The scheduled reporter. Takes the advisory lock, records a `job_runs` row,
+-- counts mismatches by check, and finishes. It repairs nothing — the whole
+-- point is that a human sees the number and decides.
+--
+-- The lock is taken, held and released within this one call: a begin/finish
+-- split leaks the lock under Supavisor, where the next statement may arrive on
+-- a different session.
+-- -----------------------------------------------------------------------------
+
+create or replace function public.run_financial_integrity_check()
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_job_type text := 'financial_integrity_check';
+  v_job_id   uuid;
+  v_started  timestamptz := clock_timestamp();
+  v_counts   jsonb;
+  v_total    integer := 0;
+begin
+  if not pg_try_advisory_lock(hashtext(v_job_type)) then
+    return jsonb_build_object('skipped', true, 'reason', 'locked');
+  end if;
+
+  insert into public.job_runs (job_type, status)
+  values (v_job_type, 'running')
+  returning id into v_job_id;
+
+  begin
+    select coalesce(jsonb_object_agg(check_name, n), '{}'::jsonb), coalesce(sum(n), 0)
+    into v_counts, v_total
+    from (
+      select check_name, count(*)::integer as n
+      from public.check_financial_integrity(null)
+      group by check_name
+    ) grouped;
+
+    update public.job_runs
+    set status       = 'succeeded',
+        completed_at = now(),
+        duration_ms  = (extract(epoch from (clock_timestamp() - v_started)) * 1000)::integer,
+        -- The findings live here rather than in a table of their own: they are
+        -- derived, so a stored copy would go stale the moment anything is
+        -- fixed, and a stale integrity report is worse than none.
+        metadata     = jsonb_build_object('mismatches', v_total, 'by_check', v_counts)
+    where id = v_job_id;
+
+  exception when others then
+    update public.job_runs
+    set status       = 'failed',
+        completed_at = now(),
+        duration_ms  = (extract(epoch from (clock_timestamp() - v_started)) * 1000)::integer,
+        error_code   = sqlstate,
+        metadata     = jsonb_build_object('error', left(sqlerrm, 500))
+    where id = v_job_id;
+
+    perform pg_advisory_unlock(hashtext(v_job_type));
+    raise;
+  end;
+
+  perform pg_advisory_unlock(hashtext(v_job_type));
+  return jsonb_build_object('mismatches', v_total, 'by_check', v_counts);
+end;
+$$;
+
+-- -----------------------------------------------------------------------------
+-- Grants — §71, and the Phase 07 lesson
+--
+-- `revoke ... from anon, authenticated` is a NO-OP for a function: PUBLIC holds
+-- EXECUTE by default and those roles inherit it. Revoking from PUBLIC is what
+-- actually closes the door. This is the same mistake 20260914000200 fixed
+-- across sixteen functions.
+-- -----------------------------------------------------------------------------
+
+revoke all on function public.derive_account_balance(uuid) from public;
+revoke all on function public.check_financial_integrity(uuid) from public;
+revoke all on function public.repair_account_balance(uuid) from public;
+revoke all on function public.run_financial_integrity_check() from public;
+
+grant execute on function public.derive_account_balance(uuid) to service_role;
+grant execute on function public.check_financial_integrity(uuid) to service_role;
+grant execute on function public.repair_account_balance(uuid) to service_role;
+grant execute on function public.run_financial_integrity_check() to service_role;
+
+-- -----------------------------------------------------------------------------
+-- Schedule (§65) — daily, guarded the same way Phase 07's is.
+-- -----------------------------------------------------------------------------
+
+do $$
+begin
+  create extension if not exists pg_cron;
+
+  if exists (select 1 from cron.job where jobname = 'financial_integrity_check') then
+    perform cron.unschedule('financial_integrity_check');
+  end if;
+
+  -- Daily rather than hourly: drift is not urgent, and this scans every
+  -- account for every user. 04:40 UTC is 12:40pm in Manila — deliberately not
+  -- on the hour, where it would contend with the generation job.
+  perform cron.schedule(
+    'financial_integrity_check',
+    '40 4 * * *',
+    $cron$ select public.run_financial_integrity_check() $cron$
+  );
+
+  raise notice 'pg_cron: financial_integrity_check scheduled daily';
+exception when others then
+  raise warning 'pg_cron unavailable (%): run public.run_financial_integrity_check() from the admin screen instead.', sqlerrm;
+end $$;
+
+
+-- ======================================================================
+-- 20260915000200_phase14_ops_flags.sql
+-- ======================================================================
+
+-- =============================================================================
+-- Phase 14 — operational flags
+--
+-- `financial_writes_enabled` (§23) and `retention_enabled` (§73).
+--
+-- Note the asymmetry in their defaults, which is deliberate:
+--
+--   financial_writes_enabled  ships ON.  It is a freeze, and a freeze that is
+--                                        on by default means a fresh deployment
+--                                        silently refuses every transaction.
+--   retention_enabled         ships OFF. It deletes things, and §73 says the
+--                                        policy must match the privacy page.
+--                                        No periods have been decided, so
+--                                        nothing should be deleting yet.
+--
+-- `maintenance_mode` is deliberately NOT here. It is an environment variable,
+-- because the usual reason to enter maintenance is that this database is the
+-- problem, and a switch stored in the thing it protects is unreadable exactly
+-- when it is needed. See lib/ops/kill-switches.ts.
+--
+-- Idempotent.
+-- =============================================================================
+
+insert into public.feature_flags (key, enabled, config)
+values
+  (
+    'financial_writes_enabled',
+    true,
+    '{"note": "PHASE-14 section 23. Turn OFF to freeze the ledger: records stay readable, nothing can be written."}'::jsonb
+  ),
+  (
+    'retention_enabled',
+    false,
+    '{"note": "PHASE-14 section 73. Turn ON only once retention periods are decided and match the privacy page."}'::jsonb
+  )
+on conflict (key) do nothing;
+
+
+-- ======================================================================
+-- 20260915000300_phase14_retention.sql
+-- ======================================================================
+
+-- =============================================================================
+-- Phase 14 — retention cleanup, built and switched off
+--
+-- §73: "Define actual retention for: documents, OCR raw text, AI
+-- conversations, notifications, logs, audit records, deleted accounts. **Policy
+-- must match Privacy page.**"
+--
+-- No policy exists yet, and PHASE-12 §19 already says retention must not be
+-- destructive without one. So these functions are written, tested and
+-- **disabled**: every one of them refuses to run unless `retention_enabled` is
+-- on, and that flag ships off.
+--
+-- Periods are parameters with conservative defaults rather than decisions.
+-- Inventing a number here would put the application in contradiction with the
+-- published privacy page, which is worse than deleting nothing — the page is a
+-- promise, and this is the code that would break it.
+--
+-- ## What each one would delete
+--
+-- Recorded here so the decision can be made against the privacy page rather
+-- than in the abstract, and repeated in LAUNCH-CHECKLIST.md §15.
+--
+--   expired_notifications   notifications past `expires_at`. Least sensitive:
+--                           they are derived from bills and balances that
+--                           still exist.
+--   ocr_text                `ocr_results.raw_text` only. The extracted FIELDS
+--                           and the document survive — this drops the verbatim
+--                           transcription, which is the most sensitive artefact
+--                           OCR produces and the least useful to keep.
+--   inactive_push           subscriptions that have failed repeatedly. Not user
+--                           data in any meaningful sense; a dead device.
+--
+-- Documents themselves are deliberately NOT here. `document_retention_days` is
+-- an entitlement users are sold on, so expiring their receipts is a product
+-- decision, not an operational one.
+--
+-- Idempotent.
+-- =============================================================================
+
+create or replace function public.retention_is_enabled()
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce((select enabled from public.feature_flags where key = 'retention_enabled'), false)
+$$;
+
+comment on function public.retention_is_enabled() is
+  'PHASE-14 section 73. Ships false. Every retention job checks this first.';
+
+-- -----------------------------------------------------------------------------
+-- run_retention_cleanup (§74, §75, §76, §77)
+--
+-- One function rather than three, so there is one place the flag is checked and
+-- one `job_runs` row to read. Each step reports what it removed; a step that
+-- removes nothing is normal, not an error.
+--
+-- Lock taken, held and released in this one call — a begin/finish split leaks
+-- it under Supavisor, where the next statement may land on another session.
+-- -----------------------------------------------------------------------------
+
+create or replace function public.run_retention_cleanup(
+  p_notification_days integer default 30,
+  p_ocr_text_days     integer default 365,
+  p_push_failures     integer default 10
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_job_type text := 'retention_cleanup';
+  v_job_id   uuid;
+  v_started  timestamptz := clock_timestamp();
+  v_notifications integer := 0;
+  v_ocr_text      integer := 0;
+  v_push          integer := 0;
+  v_n             integer;
+begin
+  -- The switch, before anything else. A disabled job is not a failure: it
+  -- returns and says so, and the scheduler can keep firing harmlessly until
+  -- someone decides the policy.
+  if not public.retention_is_enabled() then
+    return jsonb_build_object('skipped', true, 'reason', 'retention_disabled');
+  end if;
+
+  if not pg_try_advisory_lock(hashtext(v_job_type)) then
+    return jsonb_build_object('skipped', true, 'reason', 'locked');
+  end if;
+
+  insert into public.job_runs (job_type, status)
+  values (v_job_type, 'running')
+  returning id into v_job_id;
+
+  begin
+    -- 1. Notifications past their own expiry, plus a grace period.
+    delete from public.notifications
+    where expires_at is not null
+      and expires_at < now() - make_interval(days => p_notification_days);
+    get diagnostics v_n = row_count;
+    v_notifications := v_n;
+
+    -- 2. The verbatim OCR transcription, nulled rather than deleted: the row
+    --    records that a document was read, when, and by which provider, and
+    --    losing that would make the job history unreadable. It is the TEXT that
+    --    is sensitive.
+    update public.ocr_results
+    set raw_text = null
+    where raw_text is not null
+      and created_at < now() - make_interval(days => p_ocr_text_days);
+    get diagnostics v_n = row_count;
+    v_ocr_text := v_n;
+
+    -- 3. Push subscriptions that have failed enough times to be dead devices.
+    delete from public.push_subscriptions
+    where failure_count >= p_push_failures
+      and is_active = false;
+    get diagnostics v_n = row_count;
+    v_push := v_n;
+
+    update public.job_runs
+    set status       = 'succeeded',
+        completed_at = now(),
+        duration_ms  = (extract(epoch from (clock_timestamp() - v_started)) * 1000)::integer,
+        metadata     = jsonb_build_object(
+                         'notifications_deleted', v_notifications,
+                         'ocr_text_cleared',      v_ocr_text,
+                         'push_subscriptions_deleted', v_push
+                       )
+    where id = v_job_id;
+
+  exception when others then
+    update public.job_runs
+    set status       = 'failed',
+        completed_at = now(),
+        duration_ms  = (extract(epoch from (clock_timestamp() - v_started)) * 1000)::integer,
+        error_code   = sqlstate,
+        metadata     = jsonb_build_object('error', left(sqlerrm, 500))
+    where id = v_job_id;
+
+    perform pg_advisory_unlock(hashtext(v_job_type));
+    raise;
+  end;
+
+  perform pg_advisory_unlock(hashtext(v_job_type));
+
+  return jsonb_build_object(
+    'notifications_deleted',      v_notifications,
+    'ocr_text_cleared',           v_ocr_text,
+    'push_subscriptions_deleted', v_push
+  );
+end;
+$$;
+
+-- PUBLIC holds EXECUTE by default; revoking from anon/authenticated is a no-op.
+revoke all on function public.retention_is_enabled() from public;
+revoke all on function public.run_retention_cleanup(integer, integer, integer) from public;
+grant execute on function public.retention_is_enabled() to service_role;
+grant execute on function public.run_retention_cleanup(integer, integer, integer) to service_role;
+
+-- -----------------------------------------------------------------------------
+-- Schedule — the job runs daily and does nothing until the flag is on.
+--
+-- Scheduling a disabled job is deliberate: it means turning retention on is one
+-- flag in the admin UI rather than a migration, and the schedule has already
+-- been exercised by then.
+-- -----------------------------------------------------------------------------
+
+do $$
+begin
+  create extension if not exists pg_cron;
+
+  if exists (select 1 from cron.job where jobname = 'retention_cleanup') then
+    perform cron.unschedule('retention_cleanup');
+  end if;
+
+  perform cron.schedule(
+    'retention_cleanup',
+    '50 4 * * *',
+    $cron$ select public.run_retention_cleanup() $cron$
+  );
+
+  raise notice 'pg_cron: retention_cleanup scheduled daily (disabled until retention_enabled is on)';
+exception when others then
+  raise warning 'pg_cron unavailable (%): retention cleanup will not run automatically.', sqlerrm;
+end $$;
+
+
+-- ======================================================================
+-- 20260921000100_provider_features_default_off.sql
+-- ======================================================================
+
+-- Provider-backed features stay dark until credentials and delivery have been
+-- verified in a production-like environment. The application now consults
+-- both switches, so these rows are operational kill switches rather than
+-- descriptive metadata.
+
+update public.feature_flags
+set enabled = false,
+    config = config || '{"requires_provider_configuration": true}'::jsonb,
+    updated_at = now()
+where key in ('ocr_enabled', 'push_enabled');
+
+
+-- ======================================================================
+-- 20260923000100_launch_integrity.sql
+-- ======================================================================
+
+-- Launch integrity: retry-safe payments and validated recurring settlement.
+create table if not exists public.payment_requests (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  request_id uuid not null,
+  payload jsonb not null,
+  transaction_id uuid not null references public.transactions(id),
+  allocation_id uuid not null,
+  created_at timestamptz not null default now(),
+  primary key (user_id, request_id)
+);
+alter table public.payment_requests enable row level security;
+revoke all on public.payment_requests from public, anon, authenticated;
+grant all on public.payment_requests to service_role;
+
+create or replace function public.record_obligation_payment(
+  p_user_id uuid, p_request_id uuid, p_kind text, p_obligation_id uuid,
+  p_amount numeric, p_account_id uuid default null,
+  p_date date default null, p_transaction_id uuid default null
+) returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  v_payload jsonb; v_previous public.payment_requests%rowtype;
+  v_currency text; v_tx uuid; v_allocation uuid; v_type text;
+begin
+  if p_request_id is null or p_kind is null or p_kind not in ('bill','receivable','expected_income') then
+    raise exception 'INVALID_PAYMENT_REQUEST';
+  end if;
+  if p_amount is null or p_amount <= 0 or p_amount <> round(p_amount,2) then raise exception 'AMOUNT_NOT_POSITIVE'; end if;
+  -- One user's payment retries serialize, including concurrent identical requests.
+  perform pg_advisory_xact_lock(hashtextextended(p_user_id::text, 731));
+  if not exists(select 1 from public.profiles where id=p_user_id and status='active') then
+    raise exception 'USER_UNAVAILABLE';
+  end if;
+  v_payload := jsonb_build_object('kind',p_kind,'obligation',p_obligation_id,
+    'amount',p_amount,'account',p_account_id,'date',p_date,'transaction',p_transaction_id);
+  select * into v_previous from public.payment_requests
+    where user_id=p_user_id and request_id=p_request_id;
+  if found then
+    if v_previous.payload <> v_payload then raise exception 'REQUEST_ALREADY_USED'; end if;
+    return jsonb_build_object('transaction_id',v_previous.transaction_id,'allocation_id',v_previous.allocation_id);
+  end if;
+  -- Existing transaction first: same lock order as void_transaction.
+  if p_transaction_id is not null then
+    select id, type into v_tx,v_type from public.transactions
+      where id=p_transaction_id and user_id=p_user_id and status='confirmed' for update;
+    if v_tx is null then raise exception 'TRANSACTION_NOT_CONFIRMED'; end if;
+    if v_type <> (case when p_kind='bill' then 'expense' else 'income' end) then
+      raise exception 'TRANSACTION_DIRECTION_MISMATCH';
+    end if;
+  end if;
+  if p_kind='bill' then
+    select currency_code into v_currency from public.bills where id=p_obligation_id and user_id=p_user_id for update;
+  elsif p_kind='receivable' then
+    select currency_code into v_currency from public.receivables where id=p_obligation_id and user_id=p_user_id for update;
+  else
+    select currency_code into v_currency from public.expected_income where id=p_obligation_id and user_id=p_user_id for update;
+  end if;
+  if v_currency is null then raise exception 'OBLIGATION_NOT_FOUND'; end if;
+  if p_transaction_id is null then
+    if p_account_id is null or p_date is null then raise exception 'INVALID_PAYMENT_REQUEST'; end if;
+    v_tx := public.create_transaction(p_user_id,
+      case when p_kind='bill' then 'expense' else 'income' end,
+      p_amount,v_currency,p_date,
+      case when p_kind='bill' then p_account_id else null end,
+      case when p_kind<>'bill' then p_account_id else null end);
+  end if;
+  v_allocation := public.allocate_payment(p_user_id,p_kind,p_obligation_id,v_tx,p_amount);
+  insert into public.payment_requests(user_id,request_id,payload,transaction_id,allocation_id)
+    values(p_user_id,p_request_id,v_payload,v_tx,v_allocation);
+  return jsonb_build_object('transaction_id',v_tx,'allocation_id',v_allocation);
+end $$;
+revoke all on function public.record_obligation_payment(uuid,uuid,text,uuid,numeric,uuid,date,uuid) from public, anon, authenticated;
+grant execute on function public.record_obligation_payment(uuid,uuid,text,uuid,numeric,uuid,date,uuid) to service_role;
+
+create or replace function public.fulfill_expected_event(p_user_id uuid,p_event_id uuid,p_transaction_id uuid)
+returns void language plpgsql security definer set search_path = '' as $$
+declare v_tx public.transactions%rowtype; v_event public.expected_events%rowtype;
+begin
+  select * into v_tx from public.transactions where id=p_transaction_id and user_id=p_user_id for update;
+  select * into v_event from public.expected_events where id=p_event_id and user_id=p_user_id for update;
+  if v_tx.id is null or v_event.id is null then raise exception 'RECORD_NOT_FOUND'; end if;
+  if v_tx.status <> 'confirmed' then raise exception 'TRANSACTION_NOT_CONFIRMED'; end if;
+  if v_tx.currency_code <> v_event.currency_code then raise exception 'CURRENCY_MISMATCH'; end if;
+  if v_tx.type <> (case when v_event.event_type in ('income','expected_income') then 'income' else 'expense' end) then
+    raise exception 'TRANSACTION_DIRECTION_MISMATCH';
+  end if;
+  if v_event.status='fulfilled' and v_event.actual_transaction_id=p_transaction_id then return; end if;
+  if v_event.status<>'scheduled' then raise exception 'EVENT_NOT_SCHEDULED'; end if;
+  update public.expected_events set status='fulfilled',actual_transaction_id=p_transaction_id where id=p_event_id;
+end $$;
+revoke all on function public.fulfill_expected_event(uuid,uuid,uuid) from public,anon,authenticated;
+grant execute on function public.fulfill_expected_event(uuid,uuid,uuid) to service_role;
+
+create or replace function public.reopen_voided_expectations() returns trigger
+language plpgsql security definer set search_path = '' as $$
+begin
+  if new.status='voided' and old.status<>'voided' then
+    update public.expected_events set status='scheduled',actual_transaction_id=null
+      where actual_transaction_id=new.id and user_id=new.user_id;
+  end if;
+  return new;
+end $$;
+revoke all on function public.reopen_voided_expectations() from public,anon,authenticated;
+drop trigger if exists reopen_voided_expectations on public.transactions;
+create trigger reopen_voided_expectations after update of status on public.transactions
+  for each row execute function public.reopen_voided_expectations();
+
+
+-- ======================================================================
+-- 20260923000200_account_deletion.sql
+-- ======================================================================
+
+-- Durable deletion state and one-use, short-lived reauthentication challenges.
+create table if not exists public.account_deletions (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  stage text not null default 'files' check(stage in ('files','auth')),
+  started_at timestamptz not null default now()
+);
+create table if not exists public.deletion_challenges (
+  token_hash text primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null,
+  approved_at timestamptz,
+  consumed_at timestamptz
+);
+create index if not exists deletion_challenges_user_idx on public.deletion_challenges(user_id);
+alter table public.account_deletions enable row level security;
+alter table public.deletion_challenges enable row level security;
+revoke all on public.account_deletions,public.deletion_challenges from public,anon,authenticated;
+grant all on public.account_deletions,public.deletion_challenges to service_role;
+grant select on public.account_deletions to authenticated;
+drop policy if exists deletion_read_own on public.account_deletions;
+create policy deletion_read_own on public.account_deletions for select to authenticated using(user_id=(select auth.uid()));
+
+create or replace function public.begin_account_deletion(p_user_id uuid,p_challenge_hash text default null)
+returns void language plpgsql security definer set search_path='' as $$
+begin
+  perform 1 from public.profiles where id=p_user_id and status='active' for update;
+  if not found then raise exception 'USER_UNAVAILABLE'; end if;
+  -- Null is used only after a server-verified password. OAuth must consume a challenge.
+  if p_challenge_hash is not null then
+    update public.deletion_challenges set consumed_at=now()
+      where token_hash=p_challenge_hash and user_id=p_user_id
+        and approved_at is not null and consumed_at is null and expires_at>now();
+    if not found then raise exception 'REAUTHENTICATION_REQUIRED'; end if;
+  end if;
+  insert into public.account_deletions(user_id) values(p_user_id) on conflict do nothing;
+end $$;
+revoke all on function public.begin_account_deletion(uuid,text) from public,anon,authenticated;
+grant execute on function public.begin_account_deletion(uuid,text) to service_role;
+
+create or replace function public.reject_writes_during_deletion() returns trigger
+language plpgsql security definer set search_path='' as $$
+declare v_user uuid;
+begin
+  v_user := new.user_id;
+  perform 1 from public.profiles where id=v_user for share;
+  if exists(select 1 from public.account_deletions where user_id=v_user) then
+    raise exception 'ACCOUNT_DELETION_IN_PROGRESS';
+  end if;
+  return new;
+end $$;
+revoke all on function public.reject_writes_during_deletion() from public,anon,authenticated;
+do $$ declare t text; begin
+  for t in select table_name from information_schema.columns where table_schema='public' and column_name='user_id'
+    and table_name not in ('account_deletions','deletion_challenges')
+  loop
+    execute format('drop trigger if exists reject_writes_during_deletion on public.%I',t);
+    execute format('create trigger reject_writes_during_deletion before insert or update on public.%I for each row execute function public.reject_writes_during_deletion()',t);
+  end loop;
+end $$;
+
+-- Stop an in-flight upload from creating new files after the deletion sweep.
+create or replace function public.reject_storage_during_deletion() returns trigger
+language plpgsql security definer set search_path='' as $$
+declare v_user uuid; v_prefix text;
+begin
+  if new.bucket_id <> 'hello-pera-documents' then return new; end if;
+  v_prefix := split_part(new.name,'/',1);
+  if v_prefix !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then return new; end if;
+  v_user := v_prefix::uuid;
+  perform 1 from public.profiles where id=v_user for share;
+  if exists(select 1 from public.account_deletions where user_id=v_user) then raise exception 'ACCOUNT_DELETION_IN_PROGRESS'; end if;
+  return new;
+end $$;
+revoke all on function public.reject_storage_during_deletion() from public,anon,authenticated;
+drop trigger if exists reject_storage_during_deletion on storage.objects;
+create trigger reject_storage_during_deletion before insert or update on storage.objects
+  for each row execute function public.reject_storage_during_deletion();
+
+create or replace function public.erase_deleted_user_audit() returns trigger
+language plpgsql security definer set search_path='' as $$
+begin
+  delete from public.audit_logs where actor_user_id=old.id or target_user_id=old.id;
+  delete from public.subscription_events where user_id=old.id;
+  insert into public.audit_logs(entity_type,event_type,metadata)
+    values('auth','account_deleted','{}'::jsonb);
+  return old;
+end $$;
+revoke all on function public.erase_deleted_user_audit() from public,anon,authenticated;
+drop trigger if exists erase_deleted_user_audit on auth.users;
+create trigger erase_deleted_user_audit before delete on auth.users
+  for each row execute function public.erase_deleted_user_audit();
+-- Previously detached deletion records must not retain an email.
+update public.audit_logs set metadata='{}'::jsonb,before_data=null,after_data=null,entity_id=null
+  where entity_type='auth' and actor_user_id is null and target_user_id is null;
+
+
+-- ======================================================================
+-- 20260923000300_export_snapshot.sql
+-- ======================================================================
+
+-- One MVCC snapshot for every export section; authenticated RLS scopes all reads.
+create or replace function public.export_financial_snapshot() returns jsonb
+language sql stable security invoker set search_path='' as $$
+select jsonb_build_object(
+  'accounts', (select coalesce(jsonb_agg(r order by r.id),'[]'::jsonb) from (select id, name, type, nature, currency_code, opening_balance::text as opening_balance, current_balance::text as current_balance, institution_name, is_active, is_archived, created_at from public.accounts) r),
+  'categories', (select coalesce(jsonb_agg(r order by r.id),'[]'::jsonb) from (select id, name, type, is_system, is_active, created_at from public.categories) r),
+  'transactions', (select coalesce(jsonb_agg(r order by r.id),'[]'::jsonb) from (select id, type, direction, amount::text as amount, currency_code, transaction_date, source_account_id, destination_account_id, category_id, merchant_name, description, notes, status, void_reason, created_at from public.transactions) r),
+  'bills', (select coalesce(jsonb_agg(r order by r.id),'[]'::jsonb) from (select id, provider_name, description, category_id, amount::text as amount, currency_code, due_date, status, notes, created_at from public.bills) r),
+  'receivables', (select coalesce(jsonb_agg(r order by r.id),'[]'::jsonb) from (select id, party_name, description, amount::text as amount, currency_code, due_date, status, notes, created_at from public.receivables) r),
+  'expected_income', (select coalesce(jsonb_agg(r order by r.id),'[]'::jsonb) from (select id, source_name, description, category_id, amount::text as amount, currency_code, expected_date, status, notes, created_at from public.expected_income) r),
+  'recurring_rules', (select coalesce(jsonb_agg(r order by r.id),'[]'::jsonb) from (select id, rule_type, name, description, amount::text as amount, currency_code, frequency, interval_count, day_of_month, day_of_week, start_date, end_date, is_active, is_paused, created_at from public.recurring_rules) r),
+  'documents', (select coalesce(jsonb_agg(r order by r.id),'[]'::jsonb) from (select id, document_type, original_filename, original_mime_type, original_size_bytes, processing_status, retention_status, created_at from public.documents) r),
+  'bill_payments', (select coalesce(jsonb_agg(r order by r.id),'[]'::jsonb) from (select id, bill_id, transaction_id, amount_applied::text as amount_applied, created_at from public.bill_payments) r),
+  'receivable_payments', (select coalesce(jsonb_agg(r order by r.id),'[]'::jsonb) from (select id, receivable_id, transaction_id, amount_applied::text as amount_applied, created_at from public.receivable_payments) r),
+  'expected_income_receipts', (select coalesce(jsonb_agg(r order by r.id),'[]'::jsonb) from (select id, expected_income_id, transaction_id, amount_applied::text as amount_applied, created_at from public.expected_income_receipts) r),
+  'expected_events', (select coalesce(jsonb_agg(r order by r.id),'[]'::jsonb) from (select id, recurring_rule_id, event_type, name, amount::text as amount, currency_code, scheduled_date, status, account_id, category_id, actual_transaction_id, include_in_forecast, detached_from_rule, source_entity_type, source_entity_id, created_at from public.expected_events) r)
+) where auth.uid() is not null;
+$$;
+revoke all on function public.export_financial_snapshot() from public,anon;
+grant execute on function public.export_financial_snapshot() to authenticated;
+
+-- Complete obligation totals, including more than 1,000 allocation links.
+create or replace function public.read_obligations(
+  p_kind text, p_archived boolean default false, p_open boolean default false,
+  p_from date default null, p_to date default null, p_id uuid default null,
+  p_offset integer default 0, p_limit integer default null
+) returns jsonb language plpgsql stable security invoker set search_path='' as $$
+declare t text; links text; fk text; date_col text; result jsonb;
+begin
+  case p_kind
+    when 'bill' then t:='bills'; links:='bill_payments'; fk:='bill_id'; date_col:='due_date';
+    when 'receivable' then t:='receivables'; links:='receivable_payments'; fk:='receivable_id'; date_col:='due_date';
+    when 'expected_income' then t:='expected_income'; links:='expected_income_receipts'; fk:='expected_income_id'; date_col:='expected_date';
+    else raise exception 'UNKNOWN_OBLIGATION_TYPE';
+  end case;
+  execute format('select coalesce(jsonb_agg(to_jsonb(o) || jsonb_build_object(''amount'',o.amount::text,%L,
+    jsonb_build_array(jsonb_build_object(''amount_applied'',(select coalesce(sum(l.amount_applied),0)::text from public.%I l where l.%I=o.id))))
+    order by o.%I,o.id),''[]''::jsonb) from (select * from public.%I
+    where ($1 or not is_archived) and (not $2 or status in (''open'',''partially_paid''))
+    and ($3 is null or %I >= $3) and ($4 is null or %I <= $4) and ($5 is null or id=$5)
+    order by %I,id limit $7 offset $6) o',links,links,fk,date_col,t,date_col,date_col,date_col)
+    into result using p_archived,p_open,p_from,p_to,p_id,p_offset,p_limit;
+  return result;
+end $$;
+revoke all on function public.read_obligations(text,boolean,boolean,date,date,uuid,integer,integer) from public,anon;
+grant execute on function public.read_obligations(text,boolean,boolean,date,date,uuid,integer,integer) to authenticated;

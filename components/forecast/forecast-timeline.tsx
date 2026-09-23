@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/states';
+import { buttonClass } from '@/components/ui/button';
 import { formatMoney } from '@/lib/money';
 import { dueLabel } from '@/lib/analytics/format';
 import { daysBetween } from '@/lib/finance/obligation';
@@ -37,6 +38,11 @@ export function ForecastTimeline({
       <EmptyState
         title="Nothing scheduled ahead"
         description="Add a recurring rule, a bill or expected income and it will appear here."
+        action={
+          <Link href="/recurring/new" className={buttonClass('primary', 'md')}>
+            Add a recurring rule
+          </Link>
+        }
       />
     );
   }

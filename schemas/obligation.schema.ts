@@ -65,6 +65,7 @@ export const createExpectedIncomeSchema = z.object({
  */
 export const recordPaymentSchema = z
   .object({
+    requestId: z.string().uuid('Reload this page before recording a payment.'),
     obligationType: z.enum(['bill', 'receivable', 'expected_income']),
     obligationId: z.string().uuid(),
     mode: z.enum(['new', 'existing']).default('new'),

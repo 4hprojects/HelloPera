@@ -2,7 +2,7 @@ import 'server-only';
 
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { fromDatabase, type Money } from '@/lib/money';
+import { fromDatabase, parseDecimal, toDecimalString, type Money } from '@/lib/money';
 import {
   displayStatus,
   remaining,
@@ -10,6 +10,7 @@ import {
   type LifecycleStatus,
 } from '@/lib/finance/obligation';
 import type {
+  RecordPaymentInput,
   CreateBillInput,
   CreateExpectedIncomeInput,
   CreateReceivableInput,
@@ -82,62 +83,53 @@ export async function listObligations(
   } = {},
 ): Promise<Obligation[]> {
   const supabase = await createClient();
-  const link = LINK_TABLE[kind];
-  const dateColumn = kind === 'expected_income' ? 'expected_date' : 'due_date';
-
-  let query = supabase
-    .from(TABLE[kind])
-    .select(`*, ${link.table}(amount_applied)`)
-    .order(dateColumn, { ascending: true })
-    // Supabase caps a REST read at 1000 rows silently (see
-    // services/analytics.service.ts). Obligations stay far below that in
-    // practice, but an explicit bound turns a silent short read into an
-    // obviously truncated list.
-    .limit(1000);
-
-  if (!options.includeArchived) query = query.eq('is_archived', false);
-  if (options.onlyOpen) query = query.in('status', ['open', 'partially_paid']);
-  if (options.from) query = query.gte(dateColumn, options.from);
-  if (options.to) query = query.lte(dateColumn, options.to);
-
-  const { data, error } = await query.returns<Row[]>();
-  if (error) throw new Error(`Could not load ${kind}: ${error.code}`);
-
-  return (data ?? []).map((row) => {
-    const currency = String(row.currency_code ?? 'PHP');
-    const links = (row[link.table] as Array<{ amount_applied: string }> | null) ?? [];
-    const appliedMinor = links.reduce(
-      (sum, l) => sum + fromDatabase(l.amount_applied, currency).minor,
-      0n,
-    );
-
-    const amount = fromDatabase(String(row.amount), currency);
-    const applied = { minor: appliedMinor, currency };
-    const lifecycle = row.status as LifecycleStatus;
-    const date = dateOf(kind, row);
-
-    return {
-      id: String(row.id),
-      kind,
-      name: nameOf(kind, row),
-      description: (row.description as string) ?? null,
-      amount,
-      applied,
-      remaining: remaining({ amount, applied }),
-      currency,
-      date,
-      lifecycle,
-      display: displayStatus(
-        { status: lifecycle, amount, applied, date },
-        today,
-        // Expected income that did not arrive is "missed", not "overdue" —
-        // nobody owes it, so nothing is late.
-        { missedInsteadOfOverdue: kind === 'expected_income' },
-      ),
-      notes: (row.notes as string) ?? null,
-      createdAt: String(row.created_at),
-    };
+  const { data, error } = await supabase.rpc('read_obligations', {
+    p_kind: kind,
+    p_archived: options.includeArchived ?? false,
+    p_open: options.onlyOpen ?? false,
+    p_from: options.from ?? null,
+    p_to: options.to ?? null,
   });
+  if (error)
+    throw new Error('Your complete totals could not be loaded. Please try again.');
+  return ((data as Row[]) ?? []).map((row) => toObligation(kind, today, row));
+}
+
+function toObligation(kind: ObligationKind, today: string, row: Row): Obligation {
+  const link = LINK_TABLE[kind];
+  const currency = String(row.currency_code ?? 'PHP');
+  const links = (row[link.table] as Array<{ amount_applied: string }> | null) ?? [];
+  const appliedMinor = links.reduce(
+    (sum, l) => sum + fromDatabase(l.amount_applied, currency).minor,
+    0n,
+  );
+
+  const amount = fromDatabase(String(row.amount), currency);
+  const applied = { minor: appliedMinor, currency };
+  const lifecycle = row.status as LifecycleStatus;
+  const date = dateOf(kind, row);
+
+  return {
+    id: String(row.id),
+    kind,
+    name: nameOf(kind, row),
+    description: (row.description as string) ?? null,
+    amount,
+    applied,
+    remaining: remaining({ amount, applied }),
+    currency,
+    date,
+    lifecycle,
+    display: displayStatus(
+      { status: lifecycle, amount, applied, date },
+      today,
+      // Expected income that did not arrive is "missed", not "overdue" —
+      // nobody owes it, so nothing is late.
+      { missedInsteadOfOverdue: kind === 'expected_income' },
+    ),
+    notes: (row.notes as string) ?? null,
+    createdAt: String(row.created_at),
+  };
 }
 
 export async function getObligation(
@@ -145,8 +137,15 @@ export async function getObligation(
   id: string,
   today: string,
 ): Promise<Obligation | null> {
-  const all = await listObligations(kind, today, { includeArchived: true });
-  return all.find((o) => o.id === id) ?? null;
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc('read_obligations', {
+    p_kind: kind,
+    p_archived: true,
+    p_id: id,
+  });
+  if (error) throw new Error('This item could not be loaded. Please try again.');
+  const row = (data as Row[] | null)?.[0];
+  return row ? toObligation(kind, today, row) : null;
 }
 
 export async function createBill(
@@ -220,6 +219,10 @@ export async function createExpectedIncome(
 export class AllocationError extends Error {}
 
 function friendlyAllocationError(message: string): string {
+  if (message.includes('REQUEST_ALREADY_USED'))
+    return 'This form already recorded a different payment. Reload the page to start another.';
+  if (message.includes('TRANSACTION_DIRECTION_MISMATCH'))
+    return 'Choose an expense for a bill, or income for money received.';
   if (message.includes('EXCEEDS_OBLIGATION_REMAINING')) {
     return 'That is more than the amount still outstanding.';
   }
@@ -266,4 +269,40 @@ export async function cancelObligation(userId: string, kind: ObligationKind, id:
     .eq('id', id)
     .eq('user_id', userId);
   if (error) throw new Error(error.message);
+}
+
+export async function recordObligationPayment(userId: string, input: RecordPaymentInput) {
+  const { data, error } = await createAdminClient().rpc('record_obligation_payment', {
+    p_user_id: userId,
+    p_request_id: input.requestId,
+    p_kind: input.obligationType,
+    p_obligation_id: input.obligationId,
+    p_amount: toDecimalString(parseDecimal(input.amount)),
+    p_account_id: input.mode === 'new' ? input.accountId : null,
+    p_date: input.mode === 'new' ? input.transactionDate : null,
+    p_transaction_id: input.mode === 'existing' ? input.transactionId : null,
+  });
+  if (error) throw new AllocationError(friendlyAllocationError(error.message));
+  return data as { transaction_id: string; allocation_id: string };
+}
+
+/** Display pages are bounded independently of the complete totals read. */
+export async function listObligationPage(
+  kind: ObligationKind,
+  today: string,
+  page: number,
+) {
+  const supabase = await createClient();
+  const offset = (page - 1) * 25;
+  const { data, error } = await supabase.rpc('read_obligations', {
+    p_kind: kind,
+    p_offset: offset,
+    p_limit: 26,
+  });
+  if (error) throw new Error('These items could not be loaded. Please try again.');
+  const rows = (data ?? []) as Row[];
+  return {
+    items: rows.slice(0, 25).map((row) => toObligation(kind, today, row)),
+    hasNext: rows.length > 25,
+  };
 }

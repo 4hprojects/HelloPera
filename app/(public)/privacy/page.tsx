@@ -129,7 +129,8 @@ export default function PrivacyPage() {
         <P>
           You can export everything at any time from your settings, as CSV or JSON. The
           export includes your accounts, transactions, bills, receivables, expected
-          income, categories, recurring rules and the details of your documents.
+          income, categories, recurring rules, occurrence states, payment links and the
+          details of your documents.
         </P>
         <P>
           The files you uploaded are not inside the export — download those from the
@@ -139,8 +140,9 @@ export default function PrivacyPage() {
 
       <Section title="Deleting your account">
         <P>
-          You can delete your account from your settings. It asks for your password and a
-          typed confirmation, because it cannot be undone.
+          You can delete your account from your settings. It asks you to verify your
+          identity with your password or Google and type a confirmation, because it cannot
+          be undone.
         </P>
         <P>
           Deleting removes your profile, every financial record listed above, and every

@@ -73,7 +73,7 @@ export function ObligationList({
                 {!settled ? (
                   <Link
                     href={`${newHref.replace('/new', '')}/${o.id}`}
-                    className="hp-small font-medium text-primary-text"
+                    className="inline-flex min-h-11 items-center hp-small font-medium text-primary-text"
                   >
                     Record payment
                   </Link>

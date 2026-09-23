@@ -8,6 +8,7 @@ import { renderPushNotification } from '@/lib/notifications/copy';
 import { notificationHref } from '@/lib/notifications/links';
 import { isWithinQuietHours, type NotificationType } from '@/lib/notifications/rules';
 import { recordPushFailure, recordPushSuccess } from '@/services/push.service';
+import { isFlagEnabled } from '@/services/plan.service';
 
 /**
  * Push delivery — PHASE-08 §23, §29, §30, §41, §55, §60.
@@ -63,6 +64,10 @@ export async function deliverPendingPushes(limit = 200): Promise<{
   failed: number;
   skipped: number;
 }> {
+  if (!(await isFlagEnabled('push_enabled'))) {
+    log.info('push: disabled by feature flag');
+    return { sent: 0, failed: 0, skipped: 0 };
+  }
   if (!configure()) {
     log.warn('push: VAPID not configured, skipping delivery');
     return { sent: 0, failed: 0, skipped: 0 };

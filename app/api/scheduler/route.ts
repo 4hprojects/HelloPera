@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { deliverPendingPushes } from '@/services/push-delivery.service';
 import { log } from '@/lib/log';
+import { requestLogFields } from '@/lib/log/request-id';
+import { env } from '@/lib/env';
 import {
   clientIp,
   enforceRateLimit,
@@ -39,13 +41,14 @@ function timingSafeEqual(a: string, b: string): boolean {
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
-  const expected = process.env.SCHEDULER_SECRET;
+  const expected = env.SCHEDULER_SECRET;
+  const requestFields = requestLogFields(request.headers);
 
   // Refuse rather than run unauthenticated. An unset secret on a deployed
   // instance is a public scheduler endpoint, which is exactly what §58
   // forbids — failing closed makes the misconfiguration visible.
   if (!expected) {
-    log.error('scheduler: SCHEDULER_SECRET is not set; refusing');
+    log.error('scheduler: SCHEDULER_SECRET is not set; refusing', requestFields);
     return NextResponse.json({ error: 'Scheduler is not configured.' }, { status: 503 });
   }
 
@@ -77,10 +80,11 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   try {
     const result = await deliverPendingPushes();
-    log.info('scheduler: push delivery complete', result);
+    log.info('scheduler: push delivery complete', { ...requestFields, ...result });
     return NextResponse.json(result);
   } catch (error) {
     log.error('scheduler: push delivery failed', {
+      ...requestFields,
       m: error instanceof Error ? error.message : 'unknown',
     });
     return NextResponse.json({ error: 'Delivery failed.' }, { status: 500 });

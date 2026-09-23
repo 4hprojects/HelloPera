@@ -11,6 +11,8 @@
     "start": "next start -p 3030",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
+    "check:node": "node scripts/check-node.mjs",
+    "preflight": "npm run check:node && npm run check:key && npm run typecheck && npm run lint && npm test && npm run build",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "icons": "node scripts/build-icons.mjs",
@@ -21,7 +23,14 @@
     "db:status": "node scripts/db.mjs status",
     "db:verify": "node scripts/db.mjs verify",
     "check:key": "node scripts/check-key.mjs",
-    "test:integration": "vitest run **/*.integration.test.ts"
+    "ops:check": "node scripts/check-operations.mjs",
+    "test:integration": "node scripts/run-staging-tests.mjs integration",
+    "test:db": "node scripts/test-database.mjs",
+    "test:e2e": "playwright test public.spec.ts",
+    "test:e2e:staging": "node scripts/run-staging-tests.mjs browser",
+    "verify:restore": "node scripts/verify-restore.mjs",
+    "test:performance:medium": "HELLOPERA_PERF_PROFILE=medium node scripts/run-staging-tests.mjs browser",
+    "test:performance:large": "HELLOPERA_PERF_PROFILE=large node scripts/run-staging-tests.mjs browser"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",
@@ -37,6 +46,9 @@
     "zod": "^4.1.11"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@electric-sql/pglite": "^0.5.8",
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4.1.13",
     "@types/node": "^22.18.1",
     "@types/react": "^19.1.13",

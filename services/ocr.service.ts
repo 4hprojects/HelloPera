@@ -9,6 +9,7 @@ import { assertWithinLimit, recordUsage } from '@/services/usage.service';
 import { enforceRateLimit } from '@/services/rate-limit.service';
 import { findCandidates, type ExistingRecord } from '@/lib/ocr/duplicate';
 import { log } from '@/lib/log';
+import { isFlagEnabled } from '@/services/plan.service';
 
 /**
  * OCR pipeline — Phase 05 §46.
@@ -72,6 +73,10 @@ export async function runExtraction(params: {
   defaultCurrency: string;
   timezone: string;
 }): Promise<{ extractionId: string }> {
+  if (!(await isFlagEnabled('ocr_enabled'))) {
+    throw new OcrError('Document reading is not available yet.');
+  }
+
   const admin = createAdminClient();
 
   const { data: doc } = await admin

@@ -1,3 +1,8 @@
+> 23 September 2026: the free-launch CSP is now enforced in `next.config.mjs`.
+> Public browser checks capture CSP violations. Revalidate real OAuth redirects and
+> production deployment; provider/advertising origins require separate checks before enabling.
+> The report-only discussion below is historical.
+
 # Content Security Policy — status and the header to ship
 
 **Status: report-only has shipped (PHASE-14 §43).** `next.config.mjs` now sends

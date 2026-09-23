@@ -1,7 +1,7 @@
 'use client';
 
 import { useActionState } from 'react';
-import { deleteAccountAction } from '@/app/actions/account';
+import { deleteAccountAction, startGoogleDeletionAction } from '@/app/actions/account';
 import type { ActionState } from '@/app/actions/auth';
 import { FormAlert } from '@/components/auth/form-alert';
 import { FormField } from '@/components/auth/form-field';
@@ -17,40 +17,55 @@ const initial: ActionState = {};
  * not the one above it). Either alone is too easy to do by accident or by
  * someone passing an unlocked laptop.
  */
-export function DeleteAccountForm() {
+export function DeleteAccountForm({ google = false }: { google?: boolean }) {
   const [state, action, pending] = useActionState(deleteAccountAction, initial);
 
   return (
-    <form action={action} noValidate>
-      {state.error ? <FormAlert tone="error">{state.error}</FormAlert> : null}
+    <div>
+      {google && (
+        <form action={startGoogleDeletionAction} className="mb-4">
+          <p className="hp-small mb-3">
+            First verify with Google, then type DELETE below. Verification expires after
+            10 minutes.
+          </p>
+          <Button type="submit" variant="secondary">
+            Verify with Google
+          </Button>
+        </form>
+      )}
+      <form action={action} noValidate>
+        {state.error ? <FormAlert tone="error">{state.error}</FormAlert> : null}
 
-      <FormField
-        id="password"
-        label="Your password"
-        type="password"
-        autoComplete="current-password"
-        required
-        error={state.fieldErrors?.password}
-      />
+        {!google && (
+          <FormField
+            id="password"
+            label="Your password"
+            type="password"
+            autoComplete="current-password"
+            required
+            error={state.fieldErrors?.password}
+          />
+        )}
 
-      <FormField
-        id="confirmation"
-        label="Type DELETE to confirm"
-        autoComplete="off"
-        placeholder="DELETE"
-        required
-        error={state.fieldErrors?.confirmation}
-      />
+        <FormField
+          id="confirmation"
+          label="Type DELETE to confirm"
+          autoComplete="off"
+          placeholder="DELETE"
+          required
+          error={state.fieldErrors?.confirmation}
+        />
 
-      <Button
-        type="submit"
-        variant="danger"
-        size="lg"
-        disabled={pending}
-        className="w-full"
-      >
-        {pending ? 'Deleting…' : 'Delete my account permanently'}
-      </Button>
-    </form>
+        <Button
+          type="submit"
+          variant="danger"
+          size="lg"
+          disabled={pending}
+          className="w-full"
+        >
+          {pending ? 'Deleting…' : 'Delete my account permanently'}
+        </Button>
+      </form>
+    </div>
   );
 }

@@ -66,7 +66,7 @@ export async function createAccountAction(
   revalidatePath('/accounts');
   revalidatePath('/dashboard');
   revalidatePath('/analytics');
-  redirect('/accounts');
+  redirect('/accounts?created=1');
 }
 
 export async function archiveAccountAction(formData: FormData): Promise<void> {
@@ -134,7 +134,7 @@ export async function createTransactionAction(
   revalidatePath('/accounts');
   revalidatePath('/dashboard');
   revalidatePath('/analytics');
-  redirect('/transactions?created=1');
+  redirect(`/transactions?created=1&type=${parsed.data.type}`);
 }
 
 export async function voidTransactionAction(
@@ -169,5 +169,13 @@ export async function voidTransactionAction(
   revalidatePath('/accounts');
   revalidatePath('/dashboard');
   revalidatePath('/analytics');
+  for (const route of [
+    '/bills',
+    '/receivables',
+    '/expected-income',
+    '/recurring',
+    '/forecast',
+  ])
+    revalidatePath(route, 'layout');
   return { success: 'Transaction voided. It no longer affects your balances.' };
 }

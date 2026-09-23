@@ -1,6 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { flagInfo } from '@/lib/admin/flag-catalog';
 import { adminAction, AdminActionError, rejectSelfTarget } from '@/lib/auth/admin';
 import { log } from '@/lib/log';
 import { ENTITLEMENT_KEYS } from '@/lib/monetization/entitlements';
@@ -189,7 +190,7 @@ export async function setFlagAction(
     });
 
     revalidatePath('/admin/feature-flags');
-    return { success: `${key} is now ${enabled ? 'on' : 'off'}.` };
+    return { success: `${flagInfo(key).title} is now ${enabled ? 'on' : 'off'}.` };
   } catch (error) {
     return fail(error);
   }

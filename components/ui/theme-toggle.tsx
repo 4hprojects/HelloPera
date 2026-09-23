@@ -87,7 +87,7 @@ export function ThemeToggle() {
             aria-pressed={active}
             onClick={() => choose(o.value)}
             className={
-              'rounded-full px-2.5 py-1 text-xs font-medium transition-colors ' +
+              'min-h-11 rounded-full px-2.5 py-1 text-xs font-medium transition-colors ' +
               (active
                 ? 'bg-primary-fill text-on-primary'
                 : 'text-text-muted hover:text-text')

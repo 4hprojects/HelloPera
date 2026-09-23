@@ -730,3 +730,24 @@ erase the support history of everyone they helped.
 Retention exceptions — billing records held for accounting or legal reasons,
 minimal audit records — are documented in `PHASE-14` §71–77 and must be
 reflected in the privacy policy.
+
+## Launch integrity additions (23 September 2026)
+
+- `payment_requests`: primary key `(user_id, request_id)`, normalized request payload,
+  resulting transaction/allocation IDs. Service-only, cascades with the auth user.
+  `record_obligation_payment` serializes a user's submissions and atomically creates
+  a transaction, allocates payment, and records the idempotent response.
+- `fulfill_expected_event`: server-only RPC, owner/status/currency/direction validation
+  with transaction-before-event locks. Voiding a transaction reopens its expectations.
+- `account_deletions`: one durable `files`/`auth` stage per user. Own-read RLS;
+  service-only writes. Mutation triggers freeze user tables and document storage
+  inserts/updates during deletion; deletion/cascade operations remain possible.
+- `deletion_challenges`: hashed random browser token, user ID, creation/expiry,
+  approval/consumption timestamps; service-only. Atomic consumption by
+  `begin_account_deletion`. Both tables cascade with the user.
+- Auth-user BEFORE DELETE cleanup removes that user's identifying audit and
+  subscription-event records and creates one anonymous `account_deleted` event.
+- `export_financial_snapshot`: authenticated, SECURITY INVOKER, RLS-scoped snapshot
+  including allocations and occurrences. Amounts are decimal strings.
+- `read_obligations`: authenticated, SECURITY INVOKER snapshot with complete payment
+  sums, owner-scoped ID lookup, optional date/status filters and display pagination.

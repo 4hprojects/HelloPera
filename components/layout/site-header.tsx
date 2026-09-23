@@ -95,8 +95,8 @@ export function SiteHeader() {
                   aria-current={current ? 'page' : undefined}
                   className={
                     current
-                      ? 'hp-small font-semibold text-text'
-                      : 'hp-small text-text-muted hover:text-text'
+                      ? 'inline-flex min-h-11 items-center hp-small font-semibold text-text'
+                      : 'inline-flex min-h-11 items-center hp-small text-text-muted hover:text-text'
                   }
                 >
                   {item.label}

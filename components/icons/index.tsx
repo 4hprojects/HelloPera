@@ -219,6 +219,14 @@ export function MoreIcon(p: IconProps) {
   );
 }
 
+export function CloseIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="m6 6 12 12M18 6 6 18" />
+    </Svg>
+  );
+}
+
 /** Name → component, so navigation data can stay plain serialisable objects. */
 export const ICONS = {
   home: HomeIcon,

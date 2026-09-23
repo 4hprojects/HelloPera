@@ -144,29 +144,31 @@ export function GroupedBars({
         })}
       </svg>
 
-      <table className="sr-only">
-        <caption>{caption}</caption>
-        <thead>
-          <tr>
-            <th scope="col">Period</th>
-            {series.map((s) => (
-              <th key={s.label} scope="col">
-                {s.label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {categories.map((cat, ci) => (
-            <tr key={cat}>
-              <th scope="row">{cat}</th>
+      <div className="sr-only">
+        <table>
+          <caption>{caption}</caption>
+          <thead>
+            <tr>
+              <th scope="col">Period</th>
               {series.map((s) => (
-                <td key={s.label}>{formatValue(s.values[ci] ?? 0)}</td>
+                <th key={s.label} scope="col">
+                  {s.label}
+                </th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {categories.map((cat, ci) => (
+              <tr key={cat}>
+                <th scope="row">{cat}</th>
+                {series.map((s) => (
+                  <td key={s.label}>{formatValue(s.values[ci] ?? 0)}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

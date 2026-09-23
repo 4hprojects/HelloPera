@@ -1,6 +1,6 @@
 'use client';
 
-import { useActionState, useRef, useState } from 'react';
+import { useActionState, useEffect, useRef, useState } from 'react';
 import { uploadDocumentAction, type UploadState } from '@/app/actions/documents';
 import { FormAlert } from '@/components/auth/form-alert';
 import { Button } from '@/components/ui/button';
@@ -27,6 +27,10 @@ export function UploadForm() {
   const [state, action, pending] = useActionState(uploadDocumentAction, initial);
   const [clientError, setClientError] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
+
+  useEffect(() => {
+    if (state.documentId) formRef.current?.reset();
+  }, [state.documentId]);
 
   /**
    * Check the size before sending. HelloDeploy's nginx rejects anything over
@@ -59,8 +63,8 @@ export function UploadForm() {
       {state.success ? (
         <FormAlert tone="success">
           {state.duplicateOf
-            ? 'Uploaded. You have uploaded this exact file before — both copies are kept.'
-            : state.success}
+            ? 'Uploaded. This file was already in your documents, so both copies are kept.'
+            : 'Uploaded and ready in your document library. Document reading is available only when enabled; uploading does not create a transaction.'}
         </FormAlert>
       ) : null}
 

@@ -49,3 +49,7 @@ Thumbs.db
 .temp
 supabase/.temp/
 .gstack/
+
+# Browser verification artifacts
+playwright-report/
+test-results/

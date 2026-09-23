@@ -1,3 +1,5 @@
+import { archiveAccountAction } from '@/app/actions/finance';
+import { Button } from '@/components/ui/button';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Amount } from '@/components/finance/amount';
@@ -8,6 +10,7 @@ import { EmptyState } from '@/components/ui/states';
 import { requireUser } from '@/lib/auth/guards';
 import { listAccounts, summarise } from '@/services/account.service';
 import { buttonClass } from '@/components/ui/button';
+import { SuccessNextSteps } from '@/components/ui/success-next-steps';
 
 export const metadata: Metadata = { title: 'Accounts' };
 
@@ -23,8 +26,13 @@ const TYPE_LABELS: Record<string, string> = {
   other: 'Other',
 };
 
-export default async function AccountsPage() {
+export default async function AccountsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ created?: string }>;
+}) {
   await requireUser();
+  const { created } = await searchParams;
   const accounts = await listAccounts();
   const totals = summarise(accounts);
 
@@ -39,6 +47,18 @@ export default async function AccountsPage() {
           </Link>
         }
       />
+
+      {created === '1' ? (
+        <SuccessNextSteps
+          title="Account added"
+          description="Your balance is ready. Record what comes in or goes out next."
+          primary={{ href: '/transactions/new?type=expense', label: 'Add an expense' }}
+          secondary={[
+            { href: '/transactions/new?type=income', label: 'Add income' },
+            { href: '/dashboard', label: 'View dashboard' },
+          ]}
+        />
+      ) : null}
 
       {/* One block per currency. HelloPera never sums across currencies. */}
       {totals.map((t) => (
@@ -79,7 +99,10 @@ export default async function AccountsPage() {
             <li key={account.id}>
               <Card className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="truncate font-medium text-text">{account.name}</p>
+                  <p className="truncate font-medium text-text">
+                    {account.name}
+                    {account.is_archived ? ' (archived)' : ''}
+                  </p>
                   <p className="hp-small text-text-muted">
                     {TYPE_LABELS[account.type] ?? account.type}
                     {account.institution_name ? ` · ${account.institution_name}` : ''}
@@ -95,6 +118,26 @@ export default async function AccountsPage() {
                   />
                 </div>
               </Card>
+              <details className="mt-2">
+                <summary className="min-h-11 cursor-pointer py-3 text-primary-text">
+                  {account.is_archived ? 'Restore account' : 'Archive account'}
+                </summary>
+                <p className="hp-small mb-2">
+                  History is kept. Archived accounts cannot receive new transactions and
+                  are excluded from dashboard balances.
+                </p>
+                <form action={archiveAccountAction}>
+                  <input type="hidden" name="id" value={account.id} />
+                  <input
+                    type="hidden"
+                    name="archived"
+                    value={String(!account.is_archived)}
+                  />
+                  <Button type="submit" variant="secondary">
+                    {account.is_archived ? 'Confirm restore' : 'Confirm archive'}
+                  </Button>
+                </form>
+              </details>
             </li>
           ))}
         </ul>

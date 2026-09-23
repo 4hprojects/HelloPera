@@ -21,7 +21,7 @@ import { log } from '@/lib/log';
  * stored in that database is unreadable at exactly the moment it is needed, and
  * a switch that requires the thing it protects to be healthy is not a switch.
  *
- * The second is cost. It is checked in middleware, on every request. A flag
+ * The second is cost. It is checked in the proxy, on every request. A flag
  * read there would add a Supabase round trip to every page load, forever, to
  * answer a question whose answer is "no" essentially always.
  *

@@ -6,20 +6,15 @@ A mobile-first personal finance tracking and financial document intelligence PWA
 Capture → Understand → Confirm → Track → Analyze → Forecast
 ```
 
-**Current phase: Phase 10 — Public Website, SEO and AdSense.**
+**Current phase: operational hardening before launch.**
 
-Phases 00–10 are built. **Gate 1, the manual tracker**, is a complete personal
-finance application: accounts, transactions, bills, receivables, expected
-income, documents with OCR, a dashboard with analytics, recurring rules and a
-deterministic forecast, reminders, and a monetization foundation.
+The free tracker is in launch hardening. Core workflows now include payment
+detail pages, corrections, retry-safe payments, and resumable deletion. Provider
+features remain disabled. Implementation is not evidence of production readiness.
 
-Phase 10 adds the public marketing site, guides, SEO foundations, and consent
-and advertising infrastructure that is built but switched off.
-
-> **Not yet launched.** The database migrations have not been applied to a
-> remote project, and the master plan's pre-public-launch gate has two
-> outstanding operational items. Start at **[docs/LAUNCH-CHECKLIST.md](docs/LAUNCH-CHECKLIST.md)**
-> — it lists what is left, what each item blocks, and what nobody has verified.
+Start at **[docs/LAUNCH-IMPLEMENTATION.md](docs/LAUNCH-IMPLEMENTATION.md)** for the
+current implementation, migration order, test commands, and unverified gates.
+**[docs/LAUNCH-CHECKLIST.md](docs/LAUNCH-CHECKLIST.md)** retains the operational checklist.
 
 Phase docs live in `docs/`, one per phase, each with its own acceptance
 criteria. `docs/DATA-MODEL.md` is the consolidated schema reference and is kept
@@ -76,9 +71,29 @@ npm run build         # production build (standalone output)
 npm start             # run the production build
 npm run lint          # ESLint
 npm run typecheck     # tsc --noEmit
+npm run check:node    # verify the active runtime matches .nvmrc
+npm run preflight     # key check, types, lint, unit tests, and production build
+npm test              # unit tests (live integration tests excluded)
+npm run test:integration # live Supabase integration tests
+npm run ops:check     # live cron, admin, flag, and provider-safety audit
 npm run format        # Prettier write
 npm run format:check  # Prettier check
 ```
+
+### Continuous integration
+
+GitHub Actions uses the Node version in `.nvmrc`. Every push and pull request
+runs type checking, linting, unit tests, and a production build. The build uses
+non-secret placeholder Supabase values; this verifies that compiling the app
+does not depend on privileged production credentials.
+
+The live integration job is separate because it creates temporary users and
+storage objects in a real Supabase project. It runs only after pushes to
+`main`, or when started manually, so credentials are never exposed to pull
+request code. Configure the isolated staging secrets listed in
+[LAUNCH-IMPLEMENTATION.md](docs/LAUNCH-IMPLEMENTATION.md). The release integration
+job fails when credentials are missing. `TEST_SUPABASE_PROJECT_REF` must match the
+configured test project. Never run these fixture-creating tests against production.
 
 ---
 
@@ -94,8 +109,8 @@ Cloudflare                                DNS, edge, TLS
 ```text
 app/
   (public)/     marketing and legal shell
-  (app)/        authenticated shell — placeholder until Phase 01
-  admin/        operational shell — placeholder until Phase 01
+  (app)/        authenticated shell — authenticated finance workflows
+  admin/        operational shell — authenticated finance workflows
   api/          route handlers
 components/     ui/, layout/, navigation/, brand/
 lib/            env/, supabase/, constants/, log/, utils/

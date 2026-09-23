@@ -1,7 +1,7 @@
 'use client';
 
 import { useId, useState } from 'react';
-import { FieldShell, errorId } from '@/components/ui/field';
+import { FieldShell, errorId, hintId } from '@/components/ui/field';
 import { passwordStrength } from '@/lib/auth/password-strength';
 import { cn } from '@/lib/utils/cn';
 
@@ -30,6 +30,8 @@ export function PasswordField({
    */
   matchAgainst,
   onChange,
+  hint,
+  wrapClassName = 'mb-4',
 }: {
   id: string;
   label: string;
@@ -39,6 +41,10 @@ export function PasswordField({
   showStrength?: boolean;
   matchAgainst?: string;
   onChange?: (value: string) => void;
+  /** Shown in the message slot while there is no error, so it costs no height. */
+  hint?: string;
+  /** Wrapper geometry only. Defaults to the normal field rhythm. */
+  wrapClassName?: string;
 }) {
   const [visible, setVisible] = useState(false);
   const [value, setValue] = useState('');
@@ -59,7 +65,8 @@ export function PasswordField({
       id={id}
       label={label}
       error={message ?? undefined}
-      wrapClassName="mb-4"
+      hint={hint}
+      wrapClassName={wrapClassName}
       control={
         <input
           id={id}
@@ -75,7 +82,10 @@ export function PasswordField({
           }}
           aria-invalid={message ? true : undefined}
           aria-describedby={
-            cn(message ? errorId(id) : '', strength?.label ? meterId : '') || undefined
+            cn(
+              message ? errorId(id) : hint ? hintId(id) : '',
+              strength?.label ? meterId : '',
+            ) || undefined
           }
           className="hp-control"
         />

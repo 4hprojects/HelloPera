@@ -50,10 +50,21 @@ export default async function AnalyticsPage({
         <PageHeader title="Analytics" description="Where your money goes, over time." />
         <EmptyState
           title="Nothing to analyse yet"
-          description="Add an account and record a few transactions — this page fills in from your own history."
+          description={
+            data.accountOptions.length
+              ? 'Record your first expense or income to start seeing patterns here.'
+              : 'Add an account, then record a few transactions to start seeing patterns here.'
+          }
           action={
-            <Link href="/accounts/new" className={buttonClass('primary')}>
-              Add an account
+            <Link
+              href={
+                data.accountOptions.length
+                  ? '/transactions/new?type=expense'
+                  : '/accounts/new'
+              }
+              className={buttonClass('primary')}
+            >
+              {data.accountOptions.length ? 'Add your first expense' : 'Add an account'}
             </Link>
           }
         />

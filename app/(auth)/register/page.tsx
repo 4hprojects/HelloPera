@@ -25,13 +25,13 @@ export default async function RegisterPage({
       subtitle="Cash, e-wallets, bills and the people who owe you — tracked in one place, by you."
     >
       <h2 className="hp-h2 text-text">Create your account</h2>
-      <p className="hp-body mb-6 mt-1 text-text-muted">
+      <p className="hp-body mb-4 mt-1 text-text-muted">
         Free to use. No bank connection required.
       </p>
 
       <RegisterForm cancelled={cancelled} />
 
-      <p className="hp-small mt-6 text-center text-text-muted">
+      <p className="hp-small mt-4 text-center text-text-muted">
         Already have an account?{' '}
         <Link href="/login" className="font-medium text-primary-text">
           Sign in

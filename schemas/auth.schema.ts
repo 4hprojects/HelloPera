@@ -28,26 +28,28 @@ export const passwordSchema = z
 /**
  * Name parts.
  *
- * Both are OPTIONAL, everywhere. The name is used to say hello on the
- * dashboard and to draw avatar initials — neither is worth a required field on
- * the one screen where friction costs most, and a person who would rather not
- * give it should not have to invent one.
+ * Both are REQUIRED, everywhere — at registration and in settings alike. They
+ * were optional once (the name only says hello and draws avatar initials), and
+ * that choice is reversed: an account should carry a real name.
  *
- * That also fixes a real bug. `updateProfileSchema` used to require the name
- * while `registerSchema` did not, so anyone who signed up without one could
- * never save their settings at all: the timezone form rejected its own blank
- * name field before it got to the timezone.
+ * Keep the two schemas in step. They disagreed once — settings required a name
+ * while registration did not — and anyone who signed up without one could never
+ * save their timezone, because the settings form rejected its own blank name
+ * field. Both sharing `namePart` is what prevents a repeat.
+ *
+ * Accounts made through Google take the name Google supplies. If Google sends
+ * none, the profile has none and the settings form asks for it — the same rule,
+ * not a special case.
  *
  * 40 each rather than 80, because the generated `full_name` joins them with a
  * space and the display surfaces were measured against 80 total.
  */
 const namePart = (label: string) =>
   z
-    .string()
+    .string({ error: `${label} is required` })
     .trim()
-    .max(40, `${label} must be 40 characters or fewer`)
-    .optional()
-    .or(z.literal(''));
+    .min(1, `${label} is required`)
+    .max(40, `${label} must be 40 characters or fewer`);
 
 export const firstNameSchema = namePart('First name');
 export const lastNameSchema = namePart('Last name');

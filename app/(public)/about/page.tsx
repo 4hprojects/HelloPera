@@ -57,8 +57,9 @@ export default function AboutPage() {
         because an invented exchange rate in a balance is worse than no balance at all.
       </p>
       <p className="hp-body mt-3 text-text-muted">
-        Automatic document reading suggests; you confirm. Nothing extracted from an image
-        becomes a financial record on its own.
+        Automatic document reading is planned for a later release. When enabled, it
+        suggests; you confirm. Nothing extracted from an image becomes a financial record
+        on its own.
       </p>
 
       <h2 className="hp-h2 mt-8 text-text">Where it is going</h2>

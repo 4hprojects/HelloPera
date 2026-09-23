@@ -28,7 +28,7 @@ export function SiteFooter() {
             <Link
               key={route.path}
               href={route.path}
-              className="hp-small text-text-muted hover:text-text"
+              className="inline-flex min-h-11 items-center hp-small text-text-muted hover:text-text"
             >
               {route.label}
             </Link>

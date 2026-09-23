@@ -1,0 +1,24 @@
+name: Launch monitoring
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/15 * * * *'
+permissions:
+  contents: read
+jobs:
+  health:
+    if: vars.LAUNCH_MONITORING_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: node scripts/monitor-launch.mjs
+        env:
+          MONITOR_APP_URL: ${{ vars.PRODUCTION_APP_URL }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}

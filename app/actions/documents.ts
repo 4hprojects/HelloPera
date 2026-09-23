@@ -32,6 +32,8 @@ export async function uploadDocumentAction(
   const { user } = await requireUser();
 
   const file = formData.get('file');
+  if (file instanceof File && file.size > 8 * 1024 * 1024)
+    return { error: 'The file limit is 8 MB. Choose a smaller file.' };
   if (!(file instanceof File) || file.size === 0) {
     return { error: 'Choose a file to upload.' };
   }

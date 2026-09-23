@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { PageHeader } from '@/components/ui/page-header';
 import { Card, CardLabel, SectionCard } from '@/components/ui/card';
+import { Cell, DataTable } from '@/components/admin/data-table';
 import { requireAdmin } from '@/lib/auth/guards';
 import { getNotificationOverview } from '@/services/admin.service';
 
@@ -63,6 +64,22 @@ export default async function AdminNotificationsPage() {
           )}
         </SectionCard>
       ))}
+
+      <h2 className="hp-h3 mb-2 mt-6 text-text">Recent delivery failures</h2>
+      <DataTable
+        headers={['Notification', 'Type', 'Channel', 'Created']}
+        rowCount={overview.recentFailures.length}
+        empty="No recent delivery failures."
+      >
+        {overview.recentFailures.map((failure) => (
+          <tr key={failure.id}>
+            <Cell>{failure.id.slice(0, 8)}</Cell>
+            <Cell>{failure.type.replace(/_/g, ' ')}</Cell>
+            <Cell>{failure.channel.replace(/_/g, ' ')}</Cell>
+            <Cell>{new Date(failure.createdAt).toLocaleString()}</Cell>
+          </tr>
+        ))}
+      </DataTable>
     </div>
   );
 }

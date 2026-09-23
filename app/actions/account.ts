@@ -1,5 +1,11 @@
 'use server';
 
+import { enforceRateLimit, RateLimitError } from '@/services/rate-limit.service';
+import { randomBytes } from 'node:crypto';
+import { cookies } from 'next/headers';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { appUrl } from '@/lib/env';
+import { DELETION_COOKIE, deletionTokenHash } from '@/lib/auth/deletion-token';
 import { redirect } from 'next/navigation';
 import { requireUser } from '@/lib/auth/guards';
 import { createClient } from '@/lib/supabase/server';
@@ -24,6 +30,12 @@ export async function deleteAccountAction(
 ): Promise<ActionState> {
   const { user } = await requireUser();
 
+  try {
+    await enforceRateLimit('login', `deletion:${user.id}`);
+  } catch (error) {
+    if (error instanceof RateLimitError) return { error: error.userMessage };
+    throw error;
+  }
   const password = String(formData.get('password') ?? '');
   const confirmation = String(formData.get('confirmation') ?? '').trim();
 
@@ -33,45 +45,36 @@ export async function deleteAccountAction(
     };
   }
 
-  if (!password) {
-    return { fieldErrors: { password: 'Enter your password to continue.' } };
-  }
-
-  const email = user.email;
-  if (!email) {
-    // An OAuth-only account has no password to re-check. Refusing is the
-    // honest answer rather than deleting on a weaker check than everyone else
-    // gets; a Google-account deletion path needs its own re-auth and belongs
-    // with the work that can test it.
-    return {
-      error:
-        'Accounts created with Google cannot be deleted here yet. Please contact support.',
-    };
-  }
-
-  // §70 — recent authentication. Re-checking the password immediately before
-  // an irreversible action is what stops an unattended session from being
-  // enough to destroy someone's records.
   const supabase = await createClient();
-  const { error: reauthError } = await supabase.auth.signInWithPassword({
-    email,
-    password,
-  });
-
-  if (reauthError) {
-    log.warn('account deletion: re-authentication failed');
-    return { fieldErrors: { password: 'That password is not correct.' } };
+  const cookieStore = await cookies();
+  const token = cookieStore.get(DELETION_COOKIE)?.value;
+  const useGoogle = user.app_metadata?.provider === 'google';
+  let challengeHash: string | null = null;
+  if (useGoogle) {
+    if (!token) return { error: 'Verify with Google before confirming deletion.' };
+    challengeHash = deletionTokenHash(token);
+  } else {
+    if (!password || !user.email)
+      return { fieldErrors: { password: 'Enter your password to continue.' } };
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: user.email,
+      password,
+    });
+    if (error || data.user?.id !== user.id)
+      return { fieldErrors: { password: 'That password is not correct.' } };
   }
 
   try {
-    await deleteAccount(user.id, email);
+    await deleteAccount(user.id, challengeHash);
+    cookieStore.delete(DELETION_COOKIE);
   } catch (error) {
     if (error instanceof AccountDeletionError) return { error: error.message };
     log.error('account deletion failed', {
       m: error instanceof Error ? error.message : 'unknown',
     });
     return {
-      error: 'We could not delete your account. Nothing was removed — please try again.',
+      error:
+        'Deletion did not finish. Some files may already be removed. Retry deletion to finish.',
     };
   }
 
@@ -81,4 +84,38 @@ export async function deleteAccountAction(
   await supabase.auth.signOut();
 
   redirect('/?deleted=1');
+}
+
+/** A fresh provider round-trip, bound to this browser and this exact account. */
+export async function startGoogleDeletionAction(): Promise<void> {
+  const { user } = await requireUser();
+  await enforceRateLimit('login', `deletion:${user.id}`);
+  const token = randomBytes(32).toString('hex');
+  const { error } = await createAdminClient()
+    .from('deletion_challenges')
+    .insert({
+      token_hash: deletionTokenHash(token),
+      user_id: user.id,
+      expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
+    });
+  if (error) throw new Error('Identity verification could not start. Please try again.');
+  const cookieStore = await cookies();
+  cookieStore.set(DELETION_COOKIE, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 600,
+  });
+  const supabase = await createClient();
+  const { data, error: oauthError } = await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: {
+      redirectTo: `${appUrl()}/auth/callback?next=/settings/delete&deletion=1`,
+      queryParams: { prompt: 'select_account', max_age: '0' },
+    },
+  });
+  if (oauthError || !data.url)
+    throw new Error('Google verification could not start. Please try again.');
+  redirect(data.url);
 }

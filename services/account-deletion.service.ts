@@ -4,62 +4,14 @@ import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { BUCKET } from '@/services/storage.service';
 import { getBillingProvider } from '@/lib/billing/provider';
-import { recordAuditEvent } from '@/lib/auth/audit';
 import { log } from '@/lib/log';
 
 /**
- * Account deletion — master plan §54a gate item, PHASE-14 §69 to §72.
- *
- * The gate exists because Phase 10 publishes a privacy policy describing
- * deletion, and a policy describing something that does not work is worse than
- * having no policy at all.
- *
- * ## What actually deletes what
- *
- * Every user-owned table carries `user_id … references auth.users (id) on
- * delete cascade`, so removing the auth user removes the financial data in one
- * atomic step — verified against the live schema rather than the doc, because
- * Phases 07–09 added six tables after `DATA-MODEL.md`'s cascade list was
- * written.
- *
- * ## The provider is not a table (PHASE-14 §70)
- *
- * "Billing subscription should be cancelled/handled first." Deleting the auth
- * user removes the `subscriptions` row, but the provider has never heard of
- * that and keeps charging the card — the person who deleted their account then
- * pays for a product they can no longer sign into. So the subscription is
- * cancelled at the provider BEFORE anything local is touched, and a failure
- * there stops the deletion rather than proceeding into that outcome.
- *
- * Two things do NOT cascade, both deliberately:
- *
- *   1. **Storage objects.** Postgres knows nothing about the storage bucket.
- *      They must be removed explicitly, and they must be removed FIRST — see
- *      the ordering note below.
- *   2. **`audit_logs` and `subscription_events`**, which are `on delete set
- *      null`. §72 wants a minimal operational record that a deletion happened,
- *      without retaining the financial data behind it. The rows survive with
- *      no user attached, which is the intended outcome rather than an
- *      oversight.
- *
- * ## Why storage goes first
- *
- * If the auth user is deleted first and the storage sweep then fails, the
- * `documents` rows naming those objects are already gone — leaving files in
- * the bucket that nothing references and nobody can find. Deleting storage
- * first means a failure leaves the account intact and the operation
- * retryable, which is the recoverable direction.
- *
- * ## Billing history is deleted, not retained (PHASE-14 §71, §72, §73)
- *
- * `billing_customers` and `billing_history` cascade from `auth.users` like
- * every other user-owned table. §71 allows a retention exception for
- * operational or legal records and §73 asks for an actual policy — but there
- * is no policy yet, and §72 is explicit that full financial data must not be
- * kept merely for convenience. Deleting is the choice that matches what the
- * privacy page currently promises. If accounting later requires retained
- * invoices, that becomes a deliberate migration plus a privacy-page change,
- * not a silently surviving table.
+ * Deletion is a resumable operation across billing, storage, and Auth.
+ * begin_account_deletion freezes new financial/storage writes before the sweep.
+ * Files are removed before Auth; an interrupted sweep leaves the user able to
+ * reauthenticate and retry. The Auth deletion trigger removes identifying audit
+ * history and leaves one anonymous event. No failure claims a distributed rollback.
  */
 
 export class AccountDeletionError extends Error {
@@ -92,7 +44,7 @@ async function listUserObjects(userId: string): Promise<string[]> {
     for (;;) {
       const { data, error } = await admin.storage
         .from(BUCKET)
-        .list(prefix, { limit: 100, offset });
+        .list(prefix, { limit: 100, offset, sortBy: { column: 'name', order: 'asc' } });
 
       if (error) {
         throw new AccountDeletionError(
@@ -133,12 +85,16 @@ async function cancelBillingAtProvider(userId: string): Promise<void> {
   if (!provider.isLive) return;
 
   const admin = createAdminClient();
-  const { data } = await admin
+  const { data, error: lookupError } = await admin
     .from('subscriptions')
     .select('status, provider_subscription_id')
     .eq('user_id', userId)
     .maybeSingle();
 
+  if (lookupError)
+    throw new AccountDeletionError(
+      'Your subscription could not be checked. Retry deletion later.',
+    );
   const id = data?.provider_subscription_id;
   if (!data || typeof id !== 'string' || !id) return;
 
@@ -164,20 +120,19 @@ async function cancelBillingAtProvider(userId: string): Promise<void> {
  * not check that, because it cannot — the password check belongs in the action
  * where the credentials are.
  */
-export async function deleteAccount(userId: string, email: string): Promise<void> {
+export async function deleteAccount(
+  userId: string,
+  challengeHash: string | null = null,
+): Promise<void> {
   const admin = createAdminClient();
-
-  // Recorded BEFORE the deletion, because `recordAuditEvent` writes
-  // `actor_user_id`, and after the cascade there is no user to attribute it
-  // to — the row would survive with a null actor and no record of whose
-  // account it was.
-  await recordAuditEvent({
-    eventType: 'account_deletion_requested',
-    actorUserId: userId,
-    entityType: 'auth',
-    metadata: { email },
+  const { error: beginError } = await admin.rpc('begin_account_deletion', {
+    p_user_id: userId,
+    p_challenge_hash: challengeHash,
   });
-
+  if (beginError)
+    throw new AccountDeletionError(
+      'Please verify your identity again before deleting your account.',
+    );
   // 1. The provider, before anything local (§70). Nothing has been destroyed
   //    at this point, so a failure here is fully recoverable — which is why it
   //    goes first rather than after the cascade that would hide the evidence.
@@ -193,17 +148,24 @@ export async function deleteAccount(userId: string, email: string): Promise<void
       const { error } = await admin.storage.from(BUCKET).remove(chunk);
       if (error) {
         throw new AccountDeletionError(
-          'We could not remove your stored files, so nothing was deleted. Please try again.',
+          'We could not remove your stored files, Deletion is incomplete; some files may already be removed. Your account is read-only. Retry deletion to finish.',
         );
       }
     }
   }
 
+  const { error: stageError } = await admin
+    .from('account_deletions')
+    .update({ stage: 'auth' })
+    .eq('user_id', userId);
+  if (stageError)
+    throw new AccountDeletionError('Deletion is incomplete. Retry deletion to finish.');
+
   // 3. The auth user. Every user-owned table cascades from here.
   const { error } = await admin.auth.admin.deleteUser(userId);
   if (error) {
     throw new AccountDeletionError(
-      'We could not delete your account. Nothing was removed — please try again.',
+      'Your files were removed, but account deletion is incomplete. Your account is read-only. Retry deletion to finish.',
     );
   }
 
@@ -226,9 +188,13 @@ export async function getDeletionSummary(): Promise<{
   const supabase = await createClient();
 
   const count = async (table: string): Promise<number> => {
-    const { count: n } = await supabase
+    const { count: n, error } = await supabase
       .from(table)
       .select('id', { count: 'exact', head: true });
+    if (error)
+      throw new AccountDeletionError(
+        'We could not count your records. Please try again.',
+      );
     return n ?? 0;
   };
 

@@ -97,39 +97,63 @@ const serviceRoleKey = z
   )
   .optional();
 
-const schema = z.object({
-  NEXT_PUBLIC_SUPABASE_URL: supabaseUrl,
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: supabaseAnonKey,
-  NEXT_PUBLIC_APP_NAME: z.string().min(1).default('HelloPera'),
-  NEXT_PUBLIC_APP_URL: z.string().url().default('http://localhost:3030'),
-  NEXT_PUBLIC_APP_URL_DEV: z.string().url().optional(),
-  // Supabase's current dashboard calls this the "secret key"; older projects
-  // and docs call it the service-role key. Accept either name so the value
-  // does not have to be duplicated under two keys.
-  SUPABASE_SECRET_KEY: serviceRoleKey,
-  SUPABASE_SERVICE_ROLE_KEY: serviceRoleKey,
+const schema = z
+  .object({
+    NEXT_PUBLIC_SUPABASE_URL: supabaseUrl,
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: supabaseAnonKey,
+    NEXT_PUBLIC_APP_NAME: z.string().min(1).default('HelloPera'),
+    NEXT_PUBLIC_APP_URL: z.string().url().default('http://localhost:3030'),
+    NEXT_PUBLIC_APP_URL_DEV: z.string().url().optional(),
+    // Supabase's current dashboard calls this the "secret key"; older projects
+    // and docs call it the service-role key. Accept either name so the value
+    // does not have to be duplicated under two keys.
+    SUPABASE_SECRET_KEY: serviceRoleKey,
+    SUPABASE_SERVICE_ROLE_KEY: serviceRoleKey,
 
-  // Web push (PHASE-08 §56, §57). All optional: push is an enhancement, and
-  // the rest of the app must start without it — an unconfigured deployment
-  // should lose push notifications, not fail to boot.
-  NEXT_PUBLIC_VAPID_PUBLIC_KEY: z.string().min(1).optional(),
-  VAPID_PRIVATE_KEY: z.string().min(1).optional(),
-  // A mailto: or https: URL identifying the sender, required by the Web Push
-  // spec so a push service can contact whoever is sending.
-  VAPID_SUBJECT: z.string().min(1).optional(),
+    // Web push (PHASE-08 §56, §57). All optional: push is an enhancement, and
+    // the rest of the app must start without it — an unconfigured deployment
+    // should lose push notifications, not fail to boot.
+    NEXT_PUBLIC_VAPID_PUBLIC_KEY: z.string().min(40).optional(),
+    VAPID_PRIVATE_KEY: z.string().min(40).optional(),
+    // A mailto: or https: URL identifying the sender, required by the Web Push
+    // spec so a push service can contact whoever is sending.
+    VAPID_SUBJECT: z
+      .string()
+      .refine((value) => value.startsWith('mailto:') || value.startsWith('https://'), {
+        message: 'VAPID_SUBJECT must be a mailto: or https: contact',
+      })
+      .optional(),
 
-  // AdSense (PHASE-10 §55, §57). Optional: ads are an enhancement and the
-  // product must run without them. The publisher id is public by design —
-  // it appears in the ad script on every page — so NEXT_PUBLIC_ is correct
-  // here rather than a leak.
-  NEXT_PUBLIC_ADSENSE_CLIENT_ID: z
-    .string()
-    .regex(
-      /^ca-pub-\d{16}$/,
-      'An AdSense client id looks like ca-pub- followed by 16 digits',
-    )
-    .optional(),
-});
+    // POST /api/scheduler fails closed without this. A minimum length keeps an
+    // accidentally human-memorable value from becoming the scheduler boundary.
+    SCHEDULER_SECRET: z.string().min(32).optional(),
+
+    // AdSense (PHASE-10 §55, §57). Optional: ads are an enhancement and the
+    // product must run without them. The publisher id is public by design —
+    // it appears in the ad script on every page — so NEXT_PUBLIC_ is correct
+    // here rather than a leak.
+    NEXT_PUBLIC_ADSENSE_CLIENT_ID: z
+      .string()
+      .regex(
+        /^ca-pub-\d{16}$/,
+        'An AdSense client id looks like ca-pub- followed by 16 digits',
+      )
+      .optional(),
+  })
+  .superRefine((value, ctx) => {
+    const vapid = [
+      value.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
+      value.VAPID_PRIVATE_KEY,
+      value.VAPID_SUBJECT,
+    ];
+    if (vapid.some(Boolean) && !vapid.every(Boolean)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['NEXT_PUBLIC_VAPID_PUBLIC_KEY'],
+        message: 'All three VAPID values must be configured together',
+      });
+    }
+  });
 
 export type Env = z.infer<typeof schema>;
 
@@ -147,6 +171,7 @@ function load(): Env {
     NEXT_PUBLIC_VAPID_PUBLIC_KEY: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
     VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY,
     VAPID_SUBJECT: process.env.VAPID_SUBJECT,
+    SCHEDULER_SECRET: process.env.SCHEDULER_SECRET,
     NEXT_PUBLIC_ADSENSE_CLIENT_ID: process.env.NEXT_PUBLIC_ADSENSE_CLIENT_ID,
   });
 
@@ -218,6 +243,10 @@ export function isPushConfigured(): boolean {
   return Boolean(
     env.NEXT_PUBLIC_VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY && env.VAPID_SUBJECT,
   );
+}
+
+export function isSchedulerConfigured(): boolean {
+  return Boolean(env.SCHEDULER_SECRET);
 }
 
 /**

@@ -34,10 +34,9 @@ export default async function NotificationsPage({
   const page = Math.max(1, Number(raw) || 1);
 
   await generateNotifications(user.id);
-  const { items, total } = await listNotifications(PAGE_SIZE, (page - 1) * PAGE_SIZE);
+  const { items, hasNext } = await listNotifications(PAGE_SIZE, (page - 1) * PAGE_SIZE);
 
   const unread = items.filter((n) => n.readAt === null).length;
-  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -58,7 +57,7 @@ export default async function NotificationsPage({
         <NotificationList items={items} />
       </SectionCard>
 
-      {pages > 1 ? (
+      {page > 1 || hasNext ? (
         <nav
           aria-label="Notification pages"
           className="mt-4 flex items-center justify-between"
@@ -73,10 +72,8 @@ export default async function NotificationsPage({
           ) : (
             <span />
           )}
-          <span className="hp-small text-text-muted">
-            Page {page} of {pages}
-          </span>
-          {page < pages ? (
+          <span className="hp-small text-text-muted">Page {page}</span>
+          {hasNext ? (
             <Link
               href={`/notifications?page=${page + 1}`}
               className={buttonClass('ghost', 'sm')}

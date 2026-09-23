@@ -34,7 +34,7 @@ const PILLARS = [
     icon: 'capture' as const,
     tone: 'primary' as const,
     title: 'Capture',
-    body: 'Photograph a receipt or screenshot a payment. HelloPera reads it and shows you what it found — nothing is recorded until you say so.',
+    body: 'Photograph a receipt or screenshot a payment and keep it in private storage. Enter the transaction yourself; automatic document reading is coming later.',
   },
   {
     icon: 'accounts' as const,
@@ -236,7 +236,7 @@ export default function HomePage() {
             ],
             [
               'Never guesses at a number',
-              'Extracted receipt details are a suggestion until you confirm them, and currencies are never converted.',
+              'Uploading a receipt never changes your balance, and currencies are never converted.',
             ],
             [
               'Never sells your records',

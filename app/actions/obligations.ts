@@ -13,7 +13,7 @@ import {
   recordPaymentSchema,
 } from '@/schemas/obligation.schema';
 import {
-  allocatePayment,
+  recordObligationPayment,
   AllocationError,
   cancelObligation,
   createBill,
@@ -21,7 +21,6 @@ import {
   createReceivable,
   type ObligationKind,
 } from '@/services/obligation.service';
-import { createTransaction, TransactionError } from '@/services/transaction.service';
 
 function fieldErrorsFrom(error: {
   issues: Array<{ path: PropertyKey[]; message: string }>;
@@ -73,7 +72,7 @@ export async function createBillAction(
   revalidatePath('/bills');
   revalidatePath('/dashboard');
   revalidatePath('/analytics');
-  redirect('/bills');
+  redirect('/bills?created=1');
 }
 
 export async function createReceivableAction(
@@ -110,7 +109,7 @@ export async function createReceivableAction(
   revalidatePath('/receivables');
   revalidatePath('/dashboard');
   revalidatePath('/analytics');
-  redirect('/receivables');
+  redirect('/receivables?created=1');
 }
 
 export async function createExpectedIncomeAction(
@@ -148,7 +147,7 @@ export async function createExpectedIncomeAction(
   revalidatePath('/expected-income');
   revalidatePath('/dashboard');
   revalidatePath('/analytics');
-  redirect('/expected-income');
+  redirect('/expected-income?created=1');
 }
 
 /**
@@ -163,7 +162,7 @@ export async function recordPaymentAction(
   _p: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const { user, profile } = await requireUser();
+  const { user } = await requireUser();
 
   // PHASE-14 §23 — the ledger freeze, enforced at the write.
   try {
@@ -174,6 +173,7 @@ export async function recordPaymentAction(
   }
 
   const parsed = recordPaymentSchema.safeParse({
+    requestId: formData.get('requestId'),
     obligationType: formData.get('obligationType'),
     obligationId: formData.get('obligationId'),
     mode: formData.get('mode') || 'new',
@@ -185,50 +185,15 @@ export async function recordPaymentAction(
   if (!parsed.success) return { fieldErrors: fieldErrorsFrom(parsed.error) };
 
   const input = parsed.data;
-  const currency = String(formData.get('currencyCode') ?? profile.default_currency);
-  let transactionId = input.transactionId ?? '';
-
-  if (input.mode === 'new') {
-    // A bill payment is an expense; collecting a receivable or expected
-    // income is income. The link never redefines the transaction type (§13).
-    const isInbound = input.obligationType !== 'bill';
-    try {
-      transactionId = await createTransaction(user.id, {
-        type: isInbound ? 'income' : 'expense',
-        amount: input.amount,
-        currencyCode: currency,
-        transactionDate: input.transactionDate!,
-        sourceAccountId: isInbound ? null : input.accountId!,
-        destinationAccountId: isInbound ? input.accountId! : null,
-        direction: null,
-        categoryId: null,
-        merchantName: '',
-        description: '',
-        notes: '',
-        refundOfTransactionId: null,
-      });
-    } catch (error) {
-      if (error instanceof TransactionError) return { error: error.message };
-      return { error: 'We could not record that transaction.' };
-    }
-  }
-
   try {
-    await allocatePayment({
-      userId: user.id,
-      kind: input.obligationType,
-      obligationId: input.obligationId,
-      transactionId,
-      amount: input.amount,
-    });
+    await recordObligationPayment(user.id, input);
   } catch (error) {
-    const detail = error instanceof AllocationError ? error.message : 'Please try again.';
-    if (input.mode === 'new') {
-      return {
-        error: `${detail} The transaction was recorded and your balance is correct — it just is not linked to this item.`,
-      };
-    }
-    return { error: detail };
+    return {
+      error:
+        error instanceof AllocationError
+          ? error.message
+          : 'Payment could not be recorded. Please retry with the same form.',
+    };
   }
 
   revalidatePath(ROUTES[input.obligationType]);
@@ -236,6 +201,8 @@ export async function recordPaymentAction(
   revalidatePath('/accounts');
   revalidatePath('/dashboard');
   revalidatePath('/analytics');
+  revalidatePath(`${ROUTES[input.obligationType]}/${input.obligationId}`);
+  revalidatePath('/forecast');
   return { success: 'Payment recorded.' };
 }
 
@@ -251,6 +218,8 @@ export async function cancelObligationAction(formData: FormData): Promise<void> 
 
   await cancelObligation(user.id, kind, id);
   revalidatePath(ROUTES[kind]);
+  revalidatePath(`${ROUTES[kind]}/${id}`);
+  revalidatePath('/forecast');
   revalidatePath('/dashboard');
   revalidatePath('/analytics');
 }

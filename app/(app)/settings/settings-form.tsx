@@ -35,6 +35,7 @@ export function SettingsForm({
         <FormField
           id="firstName"
           label="First name"
+          required
           defaultValue={firstName}
           autoComplete="given-name"
           error={state.fieldErrors?.firstName}
@@ -42,6 +43,7 @@ export function SettingsForm({
         <FormField
           id="lastName"
           label="Last name"
+          required
           defaultValue={lastName}
           autoComplete="family-name"
           error={state.fieldErrors?.lastName}

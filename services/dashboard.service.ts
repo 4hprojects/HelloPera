@@ -21,10 +21,13 @@ import { positionFor, summarisePositions } from '@/lib/analytics/position';
 import { endOfMonth, monthWindow } from '@/lib/analytics/series';
 import { daysBetween, todayInTimezone } from '@/lib/finance/obligation';
 import { analyticsClass } from '@/lib/finance/balance';
+import { addDays, projectDashboardBalance } from '@/lib/forecast/project';
+import { withServiceTiming } from '@/lib/performance/service-timing';
 import { listAccounts } from '@/services/account.service';
 import { listObligations, type Obligation } from '@/services/obligation.service';
 import { getRecentTransactions } from '@/services/transaction.service';
 import { fetchAnalyticsRows, resolveCategoryNames } from '@/services/analytics.service';
+import { getUpcomingExpectedEvents } from '@/services/expected-event.service';
 import type {
   CurrencySlice,
   DashboardData,
@@ -39,8 +42,10 @@ import type {
  * Composition only: every figure comes from a pure function in
  * `lib/analytics/`, so the arithmetic is tested and this file is just wiring.
  *
- * Seven reads in two waves — six in parallel, then one for the category names
- * the breakdowns turned out to need. Nothing here is cached: §45 says fresh
+ * Eight reads in two waves — seven in parallel, then one for the category names
+ * the breakdowns turned out to need. The first wave also supplies the 30-day
+ * projection, so it does not repeat account and obligation reads afterward.
+ * Nothing here is cached: §45 says fresh
  * server queries for MVP and §71 warns against holding private analytics, and
  * the page is dynamic anyway because `requireUser()` reads cookies.
  */
@@ -61,7 +66,17 @@ export type DashboardParams = {
   recentLimit?: number;
 };
 
-export async function getDashboardData({
+export function getDashboardData(params: DashboardParams): Promise<DashboardData> {
+  return withServiceTiming('dashboard.load', () => buildDashboardData(params), {
+    fields: { trend_months: params.trendMonths ?? 6 },
+    resultFields: (data) => ({
+      account_count: data.accountTotal,
+      recent_count: data.recent.length,
+    }),
+  });
+}
+
+async function buildDashboardData({
   timezone,
   preferredCurrency,
   trendMonths = 6,
@@ -76,19 +91,22 @@ export async function getDashboardData({
   // transaction dated later this month has already moved the balance shown
   // beside it, so excluding it would make the two disagree.
   const windowTo = endOfMonth(today);
+  const projectionTo = addDays(today, 30);
 
-  const [accounts, rows, recentRows, bills, receivables, expected] = await Promise.all([
-    // Archived included so historical rows can still resolve an account name
-    // (§73); the balances widget filters them out for display (§47).
-    listAccounts({ includeArchived: true }),
-    fetchAnalyticsRows({ from: windowFrom, to: windowTo }),
-    getRecentTransactions(recentLimit),
-    listObligations('bill', today, { onlyOpen: true }),
-    listObligations('receivable', today, { onlyOpen: true }),
-    // Not onlyOpen: §51's "received" figure needs the rows that have been
-    // paid. Bounded by the window so it cannot grow without limit.
-    listObligations('expected_income', today, { from: windowFrom }),
-  ]);
+  const [accounts, rows, recentRows, bills, receivables, expected, expectedEvents] =
+    await Promise.all([
+      // Archived included so historical rows can still resolve an account name
+      // (§73); the balances widget filters them out for display (§47).
+      listAccounts({ includeArchived: true }),
+      fetchAnalyticsRows({ from: windowFrom, to: windowTo }),
+      getRecentTransactions(recentLimit),
+      listObligations('bill', today, { onlyOpen: true }),
+      listObligations('receivable', today, { onlyOpen: true }),
+      // Not onlyOpen: §51's "received" figure needs the rows that have been
+      // paid. Bounded by the window so it cannot grow without limit.
+      listObligations('expected_income', today, { from: windowFrom }),
+      getUpcomingExpectedEvents(today, projectionTo),
+    ]);
 
   const accountName = new Map(accounts.map((a) => [a.id, a.name]));
 
@@ -165,6 +183,15 @@ export async function getDashboardData({
     id ? (accountName.get(id) ?? 'Closed account') : 'No account',
   );
 
+  const projected = projectDashboardBalance({
+    today,
+    currency: primarySlice.currency,
+    accounts,
+    bills,
+    expectedIncome: expected,
+    events: expectedEvents,
+  });
+
   return {
     today,
     month,
@@ -212,6 +239,7 @@ export async function getDashboardData({
         .slice(0, 4),
       today,
     ),
+    projected,
     isEmpty: accounts.filter((a) => !a.is_archived).length === 0,
   };
 }

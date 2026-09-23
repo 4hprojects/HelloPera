@@ -3,7 +3,10 @@ import { PageHeader } from '@/components/ui/page-header';
 import { Card, CardLabel } from '@/components/ui/card';
 import { Cell, DataTable, StatusText } from '@/components/admin/data-table';
 import { requireAdmin } from '@/lib/auth/guards';
+import { getBillingProvider } from '@/lib/billing/provider';
+import { isPushConfigured } from '@/lib/env';
 import { listJobRuns } from '@/services/admin.service';
+import { getSystemHealth } from '@/services/system-health.service';
 
 export const metadata: Metadata = { title: 'System · Admin' };
 
@@ -21,19 +24,25 @@ export const metadata: Metadata = { title: 'System · Admin' };
  */
 export default async function AdminSystemPage() {
   await requireAdmin();
-  const runs = await listJobRuns();
+  const [runs, health] = await Promise.all([listJobRuns(), getSystemHealth()]);
+  const billing = getBillingProvider();
 
   const providers = [
-    ['Database', true, 'Supabase Postgres'],
-    ['Storage', true, 'Supabase Storage'],
-    [
-      'OCR and AI',
-      Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN),
-      'ANTHROPIC_API_KEY',
-    ],
-    ['Push', Boolean(process.env.VAPID_PRIVATE_KEY), 'VAPID keys'],
-    ['Scheduler', Boolean(process.env.SCHEDULER_SECRET), 'SCHEDULER_SECRET'],
-    ['Billing', false, 'No provider adapter yet'],
+    ...health,
+    {
+      key: 'push',
+      label: 'Push',
+      status: isPushConfigured() ? 'operational' : 'not_configured',
+      detail: isPushConfigured() ? 'VAPID keys are configured' : 'VAPID keys are missing',
+      durationMs: null,
+    },
+    {
+      key: 'billing',
+      label: 'Billing',
+      status: billing.isLive ? 'operational' : 'not_configured',
+      detail: billing.isLive ? billing.name : 'No provider adapter configured',
+      durationMs: null,
+    },
   ] as const;
 
   return (
@@ -41,13 +50,16 @@ export default async function AdminSystemPage() {
       <PageHeader title="System" description="Providers and scheduled jobs." />
 
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-3">
-        {providers.map(([name, configured, hint]) => (
-          <Card key={name}>
-            <CardLabel>{name}</CardLabel>
+        {providers.map((provider) => (
+          <Card key={provider.key}>
+            <CardLabel>{provider.label}</CardLabel>
             <p className="mt-1.5">
-              <StatusText value={configured ? 'operational' : 'not configured'} />
+              <StatusText value={provider.status} />
             </p>
-            <p className="hp-small mt-1 text-text-muted">{hint}</p>
+            <p className="hp-small mt-1 text-text-muted">
+              {provider.detail}
+              {provider.durationMs === null ? '' : `, ${provider.durationMs}ms`}
+            </p>
           </Card>
         ))}
       </div>

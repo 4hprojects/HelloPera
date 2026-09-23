@@ -17,7 +17,7 @@ export const metadata: Metadata = { title: 'Delete account' };
  * telling them they will lose 412 transactions is not.
  */
 export default async function DeleteAccountPage() {
-  await requireUser();
+  const { user } = await requireUser();
   const summary = await getDeletionSummary();
 
   const lines: Array<[number, string, string]> = [
@@ -57,8 +57,9 @@ export default async function DeleteAccountPage() {
         </ul>
 
         <p className="hp-body mt-4 text-text-muted">
-          Your uploaded files are deleted from storage at the same time. This cannot be
-          undone, and HelloPera keeps no copy you can ask for later.
+          Your uploaded files are deleted from storage as part of deletion. If
+          interrupted, retry to complete deletion. This cannot be undone, and HelloPera
+          keeps no copy you can ask for later.
         </p>
 
         {/*
@@ -89,7 +90,7 @@ export default async function DeleteAccountPage() {
 
       <Card>
         <h2 className="hp-h3 mb-3 text-text">Confirm</h2>
-        <DeleteAccountForm />
+        <DeleteAccountForm google={user.app_metadata?.provider === 'google'} />
       </Card>
     </div>
   );

@@ -1,37 +1,48 @@
 import Link from 'next/link';
-import { CaptureIcon, PlusIcon, TransferIcon } from '@/components/icons';
+import { BillsIcon, CaptureIcon, ExpenseIcon, IncomeIcon } from '@/components/icons';
+import { cn } from '@/lib/utils/cn';
 
 /**
- * The three circular shortcuts from the showcase's phone mock: Send/Transfer,
- * Add Transaction, Capture Receipt.
- *
- * Shown on touch widths only — on desktop the same actions are one click away
- * in the rail, and a row of large circles there is decoration, not navigation.
+ * The four records people most often need to capture quickly. Expense leads
+ * because it is the daily path; the other actions stay visually quieter.
  */
 const ACTIONS = [
   {
-    label: 'Send / Transfer',
-    href: '/transactions/new?type=transfer',
-    Icon: TransferIcon,
+    label: 'Add expense',
+    href: '/transactions/new?type=expense',
+    Icon: ExpenseIcon,
+    primary: true,
   },
-  { label: 'Add transaction', href: '/transactions/new', Icon: PlusIcon },
-  { label: 'Capture receipt', href: '/documents', Icon: CaptureIcon },
+  {
+    label: 'Add income',
+    href: '/transactions/new?type=income',
+    Icon: IncomeIcon,
+    primary: false,
+  },
+  { label: 'Upload receipt', href: '/documents', Icon: CaptureIcon, primary: false },
+  { label: 'Add bill', href: '/bills/new', Icon: BillsIcon, primary: false },
 ] as const;
 
 export function QuickActions() {
   return (
-    <nav aria-label="Quick actions" className="lg:hidden">
-      <ul className="grid grid-cols-3 gap-3">
-        {ACTIONS.map(({ label, href, Icon }) => (
+    <nav
+      aria-label="Quick actions"
+      className="rounded-[var(--radius-hp)] bg-surface p-2 shadow-sm"
+    >
+      <ul className="grid grid-cols-2 gap-1 sm:grid-cols-4">
+        {ACTIONS.map(({ label, href, Icon, primary }) => (
           <li key={href}>
             <Link
               href={href}
-              className="flex h-full flex-col items-center gap-2 rounded-2xl border border-border bg-surface px-2 py-4 text-center"
+              className={cn(
+                'flex min-h-12 items-center justify-center gap-2 rounded-[var(--radius-hp)] px-3 py-2 text-sm font-semibold transition-colors',
+                primary
+                  ? 'bg-primary-fill text-on-primary hover:opacity-90'
+                  : 'text-text hover:bg-surface-muted',
+              )}
             >
-              <span className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-primary-fill text-on-primary">
-                <Icon size={20} />
-              </span>
-              <span className="text-xs font-medium leading-tight text-text">{label}</span>
+              <Icon size={20} />
+              <span>{label}</span>
             </Link>
           </li>
         ))}

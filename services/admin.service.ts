@@ -587,6 +587,12 @@ export type AdminNotificationOverview = {
   byType: Array<{ value: string; count: number }>;
   byChannel: Array<{ value: string; count: number }>;
   push: { active: number; failing: number };
+  recentFailures: Array<{
+    id: string;
+    type: string;
+    channel: string;
+    createdAt: string;
+  }>;
 };
 
 /**
@@ -605,11 +611,16 @@ export async function getNotificationOverview(): Promise<AdminNotificationOvervi
     byType: [],
     byChannel: [],
     push: { active: 0, failing: 0 },
+    recentFailures: [],
   };
 
   return safely('notification overview', empty, async () => {
     const [notifications, subscriptions] = await Promise.all([
-      admin.from('notifications').select('delivery_status, type, channel').limit(1000),
+      admin
+        .from('notifications')
+        .select('id, delivery_status, type, channel, created_at')
+        .order('created_at', { ascending: false })
+        .limit(1000),
       admin.from('push_subscriptions').select('is_active, failure_count'),
     ]);
 
@@ -626,6 +637,15 @@ export async function getNotificationOverview(): Promise<AdminNotificationOvervi
         // and knowing how many there are is how you notice the channel rotting.
         failing: subs.filter((s) => Number(s.failure_count ?? 0) > 0).length,
       },
+      recentFailures: rows
+        .filter((row) => row.delivery_status === 'failed')
+        .slice(0, 20)
+        .map((row) => ({
+          id: String(row.id),
+          type: String(row.type),
+          channel: String(row.channel),
+          createdAt: String(row.created_at),
+        })),
     };
   });
 }

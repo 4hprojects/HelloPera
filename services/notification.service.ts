@@ -6,6 +6,8 @@ import { fromDatabase, formatMoney } from '@/lib/money';
 import { log } from '@/lib/log';
 import { renderNotification } from '@/lib/notifications/copy';
 import { notificationHref } from '@/lib/notifications/links';
+import { takeLookaheadPage } from '@/lib/pagination/lookahead';
+import { withServiceTiming } from '@/lib/performance/service-timing';
 import type { NotificationType } from '@/lib/notifications/rules';
 import type {
   DeliveryStatus,
@@ -83,20 +85,33 @@ function toNotification(row: Row): Notification {
 export async function listNotifications(
   limit = 30,
   offset = 0,
-): Promise<{ items: Notification[]; total: number }> {
-  const supabase = await createClient();
-  const { data, error, count } = await supabase
-    .from('notifications')
-    .select(SELECT, { count: 'exact' })
-    .order('read_at', { ascending: true, nullsFirst: true })
-    .order('created_at', { ascending: false })
-    .range(offset, offset + limit - 1);
+): Promise<{ items: Notification[]; hasNext: boolean }> {
+  return withServiceTiming(
+    'notifications.list',
+    async () => {
+      const supabase = await createClient();
+      const { data, error } = await supabase
+        .from('notifications')
+        .select(SELECT)
+        .order('read_at', { ascending: true, nullsFirst: true })
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit);
 
-  if (error) throw new Error(`Could not load notifications: ${error.code}`);
-  return {
-    items: (data ?? []).map((r) => toNotification(r as Row)),
-    total: count ?? 0,
-  };
+      if (error) throw new Error(`Could not load notifications: ${error.code}`);
+      const page = takeLookaheadPage(data ?? [], limit);
+      return {
+        items: page.items.map((row) => toNotification(row as Row)),
+        hasNext: page.hasNext,
+      };
+    },
+    {
+      fields: { offset, page_size: limit },
+      resultFields: (result) => ({
+        row_count: result.items.length,
+        has_next: result.hasNext,
+      }),
+    },
+  );
 }
 
 /** §20 — the badge. Counts only, so it stays cheap on every page load. */

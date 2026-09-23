@@ -363,7 +363,7 @@ async function transactionIntent(
       amount: t.amount,
       date: t.transaction_date,
     })),
-    truncated: truncated || result.total > rows.length,
+    truncated: truncated || result.hasNext || mine.length > rows.length,
     empty: mine.length === 0,
     href: `/transactions?${params.toString()}`,
     hrefLabel: 'Open transactions',

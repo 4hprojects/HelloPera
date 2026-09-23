@@ -9,21 +9,34 @@ const valid = {
   confirmPassword: 'a-long-enough-passphrase',
 };
 
-describe('registerSchema — names are optional', () => {
+describe('registerSchema — names are required', () => {
   it('accepts both names', () => {
     const r = registerSchema.safeParse(valid);
     expect(r.success).toBe(true);
   });
 
-  it('accepts a signup with no name at all', () => {
-    // The whole point: the name is only used to say hello.
+  it('rejects a signup with no name at all', () => {
     const r = registerSchema.safeParse({ ...valid, firstName: '', lastName: '' });
-    expect(r.success).toBe(true);
+    expect(r.success).toBe(false);
   });
 
-  it('accepts a first name with no surname', () => {
+  it('rejects a missing first name, naming the field', () => {
+    const r = registerSchema.safeParse({ ...valid, firstName: '' });
+    expect(!r.success && r.error.issues.map((i) => i.path[0])).toEqual(['firstName']);
+  });
+
+  it('rejects a missing last name, naming the field', () => {
     const r = registerSchema.safeParse({ ...valid, lastName: '' });
-    expect(r.success).toBe(true);
+    expect(!r.success && r.error.issues.map((i) => i.path[0])).toEqual(['lastName']);
+  });
+
+  it('rejects a name that is only whitespace', () => {
+    expect(registerSchema.safeParse({ ...valid, firstName: '   ' }).success).toBe(false);
+  });
+
+  it('rejects names that are absent from the form data entirely', () => {
+    const { firstName: _f, lastName: _l, ...rest } = valid;
+    expect(registerSchema.safeParse(rest).success).toBe(false);
   });
 
   it('keeps a multi-word surname intact', () => {
@@ -62,7 +75,7 @@ describe('registerSchema — names are optional', () => {
   });
 });
 
-describe('updateProfileSchema — the settings bug this fixes', () => {
+describe('updateProfileSchema', () => {
   const settings = {
     firstName: 'Juan',
     lastName: 'Dela Cruz',
@@ -70,12 +83,13 @@ describe('updateProfileSchema — the settings bug this fixes', () => {
     defaultCurrency: 'php',
   };
 
-  it('lets a user with no name save their settings', () => {
-    // Previously fullName was REQUIRED here while optional at registration,
-    // so anyone who signed up without a name could not change their timezone
-    // or currency — the form rejected its own blank name field first.
-    const r = updateProfileSchema.safeParse({ ...settings, firstName: '', lastName: '' });
-    expect(r.success).toBe(true);
+  it('requires both names, as registration does', () => {
+    expect(updateProfileSchema.safeParse({ ...settings, firstName: '' }).success).toBe(
+      false,
+    );
+    expect(updateProfileSchema.safeParse({ ...settings, lastName: '' }).success).toBe(
+      false,
+    );
   });
 
   it('accepts a normal update', () => {
@@ -100,8 +114,8 @@ describe('updateProfileSchema — the settings bug this fixes', () => {
   });
 
   it('agrees with registerSchema on what a name may be', () => {
-    // Two schemas disagreeing about the same field is exactly how the bug
-    // above happened.
+    // Two schemas disagreeing about the same field is how a user once ended up
+    // unable to save their settings.
     for (const name of ['', 'Juan', '  Ana  ', 'x'.repeat(40)]) {
       expect(
         updateProfileSchema.safeParse({ ...settings, firstName: name }).success,

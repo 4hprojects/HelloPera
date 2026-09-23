@@ -1,6 +1,14 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { recordAuditEvent } from '@/lib/auth/audit';
+import { createAdminClient } from '@/lib/supabase/admin';
+import {
+  DELETION_COOKIE,
+  deletionTokenHash,
+  validDeletionChallenge,
+  freshOAuthExchange,
+} from '@/lib/auth/deletion-token';
+import { appUrl } from '@/lib/env';
 import { log } from '@/lib/log';
 
 /**
@@ -10,27 +18,10 @@ import { log } from '@/lib/log';
  * Runs server-side so the code-for-session exchange happens where the cookie
  * can actually be written.
  */
-/**
- * Resolve the externally visible origin.
- *
- * `new URL(request.url).origin` is the address the container was reached on —
- * behind HelloDeploy's nginx that is the internal bind address, so redirects
- * built from it send users to something like http://0.0.0.0:3000. Prefer the
- * forwarded headers the proxy sets, then the configured app URL.
- */
-function resolveOrigin(request: NextRequest): string {
-  const forwardedHost = request.headers.get('x-forwarded-host');
-  const host = forwardedHost ?? request.headers.get('host');
-  if (host) {
-    const proto = request.headers.get('x-forwarded-proto') ?? 'https';
-    return `${proto}://${host}`;
-  }
-  return process.env.NEXT_PUBLIC_APP_URL ?? new URL(request.url).origin;
-}
-
+// Use the configured canonical origin; forwarded headers are not redirect authority.
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
-  const origin = resolveOrigin(request);
+  const origin = appUrl();
   const code = searchParams.get('code');
   const next = searchParams.get('next') ?? '/dashboard';
   const errorParam = searchParams.get('error');
@@ -38,7 +29,10 @@ export async function GET(request: NextRequest) {
 
   // Only same-origin relative paths. An open redirect here would be handed a
   // valid session, which makes it considerably worse than the usual case.
-  const safeNext = next.startsWith('/') && !next.startsWith('//') ? next : '/dashboard';
+  const safeNext =
+    next.startsWith('/') && !next.startsWith('//') && !next.includes('\\')
+      ? next
+      : '/dashboard';
 
   if (errorParam) {
     log.warn('auth callback returned an error', { error: errorParam });
@@ -61,6 +55,33 @@ export async function GET(request: NextRequest) {
   if (error || !data.user) {
     log.warn('code exchange failed', { code: error?.code ?? 'unknown' });
     return NextResponse.redirect(`${origin}/auth/error?reason=exchange_failed`);
+  }
+
+  if (searchParams.get('deletion') === '1') {
+    const token = request.cookies.get(DELETION_COOKIE)?.value;
+    const admin = createAdminClient();
+    const hash = token ? deletionTokenHash(token) : '';
+    const { data: challenge, error: challengeError } = await admin
+      .from('deletion_challenges')
+      .select('user_id, created_at, expires_at, consumed_at')
+      .eq('token_hash', hash)
+      .maybeSingle();
+    if (
+      challengeError ||
+      !validDeletionChallenge(challenge, data.user.id) ||
+      data.user.app_metadata?.provider !== 'google' ||
+      !freshOAuthExchange(data.session?.access_token, challenge?.created_at ?? '')
+    ) {
+      return NextResponse.redirect(`${origin}/settings/delete?verification=failed`);
+    }
+    const { error: approvalError } = await admin
+      .from('deletion_challenges')
+      .update({ approved_at: new Date().toISOString() })
+      .eq('token_hash', hash)
+      .is('consumed_at', null);
+    if (approvalError)
+      return NextResponse.redirect(`${origin}/settings/delete?verification=failed`);
+    return NextResponse.redirect(`${origin}/settings/delete?verification=complete`);
   }
 
   // Status gate before any authenticated page renders.

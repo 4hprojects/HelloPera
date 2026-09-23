@@ -25,6 +25,13 @@ export type MonetizationOverview = {
   /** Aggregate only — how much metered work happened, by nobody in particular. */
   usageThisPeriod: Array<{ feature: string; users: number; total: number }>;
   unprocessedEvents: number;
+  failedEvents: number;
+  recentWebhookFailures: Array<{
+    id: string;
+    provider: string;
+    eventType: string;
+    createdAt: string;
+  }>;
 };
 
 export async function getMonetizationOverview(
@@ -38,6 +45,8 @@ export async function getMonetizationOverview(
     flags: [],
     usageThisPeriod: [],
     unprocessedEvents: 0,
+    failedEvents: 0,
+    recentWebhookFailures: [],
   };
 
   try {
@@ -51,8 +60,10 @@ export async function getMonetizationOverview(
         .eq('period_start', periodStart),
       admin
         .from('subscription_events')
-        .select('id', { count: 'exact', head: true })
-        .eq('processing_status', 'pending'),
+        .select('id, provider, event_type, processing_status, created_at')
+        .in('processing_status', ['pending', 'failed'])
+        .order('created_at', { ascending: false })
+        .limit(1000),
     ]);
 
     const subRows = (subs.data ?? []) as Row[];
@@ -92,7 +103,21 @@ export async function getMonetizationOverview(
       usageThisPeriod: [...usageAgg.entries()]
         .map(([feature, v]) => ({ feature, users: v.users.size, total: v.total }))
         .sort((a, b) => b.total - a.total),
-      unprocessedEvents: events.count ?? 0,
+      unprocessedEvents: (events.data ?? []).filter(
+        (event) => (event as Row).processing_status === 'pending',
+      ).length,
+      failedEvents: (events.data ?? []).filter(
+        (event) => (event as Row).processing_status === 'failed',
+      ).length,
+      recentWebhookFailures: ((events.data ?? []) as Row[])
+        .filter((event) => event.processing_status === 'failed')
+        .slice(0, 20)
+        .map((event) => ({
+          id: String(event.id),
+          provider: String(event.provider),
+          eventType: String(event.event_type),
+          createdAt: String(event.created_at),
+        })),
     };
   } catch (error) {
     log.error('admin: monetization overview failed', {

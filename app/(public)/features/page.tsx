@@ -10,49 +10,47 @@ export const metadata: Metadata = {
 };
 
 /**
- * Phase 10 §14: do not promise functionality that does not exist. Each item
- * carries the phase that delivers it, so this page cannot quietly drift into
- * marketing ahead of the build.
+ * Phase 10 §14: do not promise functionality that does not exist. Availability describes the free launch rather than internal development phases.
  */
 const features = [
   {
     title: 'Accounts and manual entry',
-    phase: '02',
+    availability: 'Available',
     body: 'Cash, bank, e-wallets, credit cards and loans, with transfers that never count as income or expense.',
   },
   {
     title: 'Bills and receivables',
-    phase: '03',
+    availability: 'Available',
     body: 'Track what you owe and what others owe you, including partial payments.',
   },
   {
     title: 'Document capture',
-    phase: '04',
+    availability: 'Available',
     body: 'Upload receipts and statements to private storage, optimised automatically.',
   },
   {
     title: 'OCR extraction',
-    phase: '05',
-    body: 'Read amounts and due dates from documents — always with your review before anything is recorded.',
+    availability: 'Coming later',
+    body: 'Automatic document reading is not enabled for the free launch. You can store documents and enter transactions manually.',
   },
   {
     title: 'Dashboard and analytics',
-    phase: '06',
+    availability: 'Available',
     body: 'Balances, cash flow and spending by category and account.',
   },
   {
     title: 'Recurring and forecasting',
-    phase: '07',
+    availability: 'Available',
     body: 'Model regular income and bills, and project your balance forward.',
   },
   {
     title: 'Reminders',
-    phase: '08',
-    body: 'Know before a bill is due, when a receivable is late, and if your balance is projected to fall short.',
+    availability: 'In-app',
+    body: 'Check reminders inside HelloPera for bills, late receivables, and projected shortfalls. Device push is not enabled at launch.',
   },
   {
     title: 'Your data, yours',
-    phase: '10',
+    availability: 'Available',
     body: 'Export everything as CSV or JSON at any time, and delete your account and its files for good.',
   },
 ];
@@ -62,14 +60,14 @@ export default function FeaturesPage() {
     <div className="mx-auto max-w-5xl px-4 py-12">
       <PageHeader
         title="Features"
-        description="HelloPera is built in phases. Each item below shows the phase that delivers it."
+        description="Start with manual tracking, private documents, and in-app reminders. Document reading and device push will be introduced separately."
       />
       <div className="grid gap-4 sm:grid-cols-2">
         {features.map((f) => (
           <Card key={f.title}>
             <div className="flex items-start justify-between gap-3">
               <CardTitle>{f.title}</CardTitle>
-              <Badge tone="info">Phase {f.phase}</Badge>
+              <Badge tone="info">{f.availability}</Badge>
             </div>
             <p className="hp-body mt-2 text-text-muted">{f.body}</p>
           </Card>

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { BUCKET } from '@/services/storage.service';
 import { log } from '@/lib/log';
+import { requestLogFields } from '@/lib/log/request-id';
 
 /**
  * Readiness — PHASE-14 §29, §30, §32.
@@ -32,7 +33,11 @@ export const dynamic = 'force-dynamic';
 const TIMEOUT_MS = 3000;
 
 /** A hung dependency must fail the check, not hang the probe. */
-async function within<T>(label: string, work: PromiseLike<T>): Promise<boolean> {
+async function within<T>(
+  label: string,
+  work: PromiseLike<T>,
+  requestFields: { request_id?: string },
+): Promise<boolean> {
   try {
     await Promise.race([
       work,
@@ -43,6 +48,7 @@ async function within<T>(label: string, work: PromiseLike<T>): Promise<boolean> 
     return true;
   } catch (error) {
     log.error('readiness: dependency unhealthy', {
+      ...requestFields,
       dependency: label,
       m: error instanceof Error ? error.message : 'unknown',
     });
@@ -50,9 +56,10 @@ async function within<T>(label: string, work: PromiseLike<T>): Promise<boolean> 
   }
 }
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(request: Request): Promise<NextResponse> {
   let database = false;
   let storage = false;
+  const requestFields = requestLogFields(request.headers);
 
   try {
     const admin = createAdminClient();
@@ -68,6 +75,7 @@ export async function GET(): Promise<NextResponse> {
           if (error) throw new Error(error.code);
           return true;
         }),
+      requestFields,
     );
 
     storage = await within(
@@ -79,10 +87,12 @@ export async function GET(): Promise<NextResponse> {
           if (error) throw new Error(error.message);
           return true;
         }),
+      requestFields,
     );
   } catch (error) {
     // A missing service-role key lands here. Not ready, and loud in the log.
     log.error('readiness: could not build a client', {
+      ...requestFields,
       m: error instanceof Error ? error.message : 'unknown',
     });
   }

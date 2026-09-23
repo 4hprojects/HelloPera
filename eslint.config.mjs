@@ -6,7 +6,16 @@ import nextTypescript from 'eslint-config-next/typescript';
  * FlatCompat shim is needed.
  */
 const config = [
-  { ignores: ['.next/**', 'node_modules/**', 'next-env.d.ts', 'public/**'] },
+  {
+    ignores: [
+      '.next/**',
+      'node_modules/**',
+      'next-env.d.ts',
+      'public/**',
+      'playwright-report/**',
+      'test-results/**',
+    ],
+  },
   ...coreWebVitals,
   ...nextTypescript,
   {

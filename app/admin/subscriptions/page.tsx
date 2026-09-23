@@ -2,6 +2,8 @@ import type { Metadata } from 'next';
 import { Card, CardLabel, SectionCard } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { Badge } from '@/components/ui/badge';
+import { Cell, DataTable } from '@/components/admin/data-table';
+import { flagInfo } from '@/lib/admin/flag-catalog';
 import { requireAdmin } from '@/lib/auth/guards';
 import { currentPeriod } from '@/lib/monetization/periods';
 import { getMonetizationOverview } from '@/services/admin-monetization.service';
@@ -38,7 +40,7 @@ export default async function AdminSubscriptionsPage() {
         description="Operational counts and configuration. No user financial data is shown here, by design."
       />
 
-      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Card>
           <CardLabel>Subscriptions</CardLabel>
           <p className="hp-amount hp-amount-lg mt-1.5 text-text">{totalSubs}</p>
@@ -47,6 +49,12 @@ export default async function AdminSubscriptionsPage() {
           <CardLabel>Unprocessed events</CardLabel>
           <p className="hp-amount hp-amount-lg mt-1.5 text-text">
             {overview.unprocessedEvents}
+          </p>
+        </Card>
+        <Card>
+          <CardLabel>Failed webhooks</CardLabel>
+          <p className="hp-amount hp-amount-lg mt-1.5 text-text">
+            {overview.failedEvents}
           </p>
         </Card>
         <Card>
@@ -85,11 +93,11 @@ export default async function AdminSubscriptionsPage() {
           </ul>
         </SectionCard>
 
-        <SectionCard title="Feature flags">
+        <SectionCard title="Feature switches">
           <ul className="divide-y divide-border">
             {overview.flags.map((f) => (
               <li key={f.key} className="flex items-center justify-between gap-3 py-2.5">
-                <span className="hp-body font-mono text-sm text-text">{f.key}</span>
+                <span className="hp-body text-text">{flagInfo(f.key).title}</span>
                 <Badge tone={f.enabled ? 'success' : 'neutral'}>
                   {f.enabled ? 'On' : 'Off'}
                 </Badge>
@@ -97,8 +105,8 @@ export default async function AdminSubscriptionsPage() {
             ))}
           </ul>
           <p className="hp-small mt-3 text-text-muted">
-            Flags and entitlements are migration-driven for now (§45) — one edit here
-            would change every user on a plan at once.
+            Change these under Feature switches. What each plan includes is still set in
+            the database (§45) — one edit here would change every user on a plan at once.
           </p>
         </SectionCard>
 
@@ -134,6 +142,22 @@ export default async function AdminSubscriptionsPage() {
           )}
         </SectionCard>
       </div>
+
+      <h2 className="hp-h3 mb-2 mt-6 text-text">Recent webhook failures</h2>
+      <DataTable
+        headers={['Event', 'Provider', 'Type', 'Received']}
+        rowCount={overview.recentWebhookFailures.length}
+        empty="No failed billing webhooks."
+      >
+        {overview.recentWebhookFailures.map((event) => (
+          <tr key={event.id}>
+            <Cell>{event.id.slice(0, 8)}</Cell>
+            <Cell>{event.provider}</Cell>
+            <Cell>{event.eventType.replace(/_/g, ' ')}</Cell>
+            <Cell>{new Date(event.createdAt).toLocaleString()}</Cell>
+          </tr>
+        ))}
+      </DataTable>
     </div>
   );
 }

@@ -1,19 +1,5 @@
-/**
- * PHASE-14 §43, §44 — security headers.
- *
- * `docs/CSP-NOTES.md` records why a Content-Security-Policy has been deferred
- * three times and carries the header to ship. The two blockers it names are
- * still real — AdSense origins cannot be verified without an account, and
- * nothing has run behind the production domain — so what ships here is
- * **report-only**, which is what that note prescribes. Going straight to
- * enforcement on a live site is how a CSP silently breaks a page in a browser
- * nobody tested.
- *
- * Report-only is not a token gesture: violations are visible in every
- * visitor's console from the first deploy, which is the data needed to turn
- * enforcement on with confidence. Flipping the key to
- * `Content-Security-Policy` is then a one-word change, and it is on the launch
- * checklist beside the domain.
+/** Launch CSP is enforced and covered by public browser checks.
+ * Re-test third-party origins before enabling any provider-backed feature.
  */
 
 /**
@@ -65,6 +51,7 @@ const nextConfig = {
   // See docs/PLATFORM-HELLODEPLOY.md note A — a bare standalone output is
   // sufficient for Sharp; no extra tracing config is required.
   output: 'standalone',
+  experimental: { serverActions: { bodySizeLimit: '9mb' } },
 
   async headers() {
     return [
@@ -88,9 +75,8 @@ const nextConfig = {
             value: 'max-age=63072000; includeSubDomains; preload',
           },
           {
-            // Report-only until the domain and AdSense are settled — see the
-            // note at the top of this file and docs/CSP-NOTES.md.
-            key: 'Content-Security-Policy-Report-Only',
+            // Enforced for the free launch; see docs/CSP-NOTES.md.
+            key: 'Content-Security-Policy',
             value: CSP,
           },
           {

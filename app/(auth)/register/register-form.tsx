@@ -27,7 +27,7 @@ export function RegisterForm({ cancelled = false }: { cancelled?: boolean }) {
 
       <GoogleButton label="Continue with Google" />
 
-      <div className="my-5 flex items-center gap-3" aria-hidden="true">
+      <div className="my-3 flex items-center gap-3" aria-hidden="true">
         <span className="h-px flex-1 bg-border" />
         <span className="hp-small text-text-muted">or</span>
         <span className="h-px flex-1 bg-border" />
@@ -35,35 +35,25 @@ export function RegisterForm({ cancelled = false }: { cancelled?: boolean }) {
 
       <form action={action} noValidate>
         {/*
-          Two boxes, stacked at 320px and side by side above `sm`. Forcing two
-          text inputs into one row on a narrow phone leaves each about 120px
-          wide, which is not enough to read what you typed.
+          Email leads because it is the one identifier the account cannot exist
+          without — it is what you sign in with. Every field is required, so none
+          is marked as such.
+
+          The names share a row from `sm` up; the password fields do not, because
+          "Confirm password" plus its Show toggle does not fit in half of a
+          384px card. Gaps use `mb-1` because the reserved message slot under
+          every field already supplies most of the space.
         */}
-        <div className="grid grid-cols-1 gap-x-3 sm:grid-cols-2">
-          <FormField
-            id="firstName"
-            label="First name"
-            autoComplete="given-name"
-            error={state.fieldErrors?.firstName}
-          />
-          <FormField
-            id="lastName"
-            label="Last name"
-            autoComplete="family-name"
-            error={state.fieldErrors?.lastName}
-          />
-        </div>
-        <p className="hp-small mb-4 -mt-2 text-text-muted">
-          Optional — we only use it to say hello.
-        </p>
         <FormField
           id="email"
           label="Email"
           type="email"
           autoComplete="email"
           required
+          wrapClassName="mb-1"
           error={state.fieldErrors?.email}
         />
+
         <PasswordField
           id="password"
           label="Password"
@@ -71,6 +61,13 @@ export function RegisterForm({ cancelled = false }: { cancelled?: boolean }) {
           required
           showStrength
           onChange={setPassword}
+          /*
+            Stated as the rule actually is. The schema requires length and
+            nothing else, on purpose — so this does not imply a complexity
+            requirement the server would not enforce.
+          */
+          hint={`At least ${MIN_LENGTH} characters.`}
+          wrapClassName="mb-1"
           error={state.fieldErrors?.password}
         />
         <PasswordField
@@ -79,24 +76,35 @@ export function RegisterForm({ cancelled = false }: { cancelled?: boolean }) {
           autoComplete="new-password"
           required
           matchAgainst={password}
+          wrapClassName="mb-1"
           error={state.fieldErrors?.confirmPassword}
         />
 
-        <p className="hp-small mb-4 text-text-muted">
-          {/*
-            Stated as the rule actually is. The schema requires length and
-            nothing else, on purpose — so this does not imply a complexity
-            requirement the server would not enforce.
-          */}
-          At least {MIN_LENGTH} characters. A short phrase works well.
-        </p>
+        <div className="grid grid-cols-1 gap-x-3 sm:grid-cols-2">
+          <FormField
+            id="firstName"
+            label="First name"
+            required
+            autoComplete="given-name"
+            wrapClassName="mb-1"
+            error={state.fieldErrors?.firstName}
+          />
+          <FormField
+            id="lastName"
+            label="Last name"
+            required
+            autoComplete="family-name"
+            wrapClassName="mb-1"
+            error={state.fieldErrors?.lastName}
+          />
+        </div>
 
-        <Button type="submit" disabled={pending} className="w-full" size="lg">
+        <Button type="submit" disabled={pending} className="mt-2 w-full" size="lg">
           {pending ? 'Creating account…' : 'Create account'}
         </Button>
       </form>
 
-      <p className="hp-small mt-4 text-text-muted">
+      <p className="hp-small mt-3 text-text-muted">
         HelloPera never asks for bank credentials, e-wallet passwords, or government IDs.
       </p>
     </>

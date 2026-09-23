@@ -83,7 +83,7 @@ async function seedUser(label: string, amount: number): Promise<Seeded> {
   const { error: txError } = await admin!.from('transactions').insert({
     user_id: userId,
     type: 'expense',
-    direction: 'out',
+    direction: 'decrease',
     amount,
     currency_code: 'PHP',
     transaction_date: '2026-06-15',

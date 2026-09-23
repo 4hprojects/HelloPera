@@ -26,7 +26,6 @@ import { EmptyState } from '@/components/ui/states';
 import { requireUser } from '@/lib/auth/guards';
 import { parseDashboardParams } from '@/schemas/analytics.schema';
 import { getDashboardData } from '@/services/dashboard.service';
-import { getProjectedBalance } from '@/services/forecast.service';
 
 export const metadata: Metadata = { title: 'Dashboard' };
 
@@ -57,12 +56,6 @@ export default async function DashboardPage({
     preferredCurrency: profile.default_currency,
     trendMonths: trend,
   });
-
-  // §52 — one lightweight number, fetched separately so the dashboard does not
-  // pay for a timeline it will not draw. Null when the user holds no liquid
-  // account in their default currency, in which case there is nothing to
-  // project and the card is simply not shown.
-  const projected = await getProjectedBalance(data.today, data.primary.currency);
 
   // Read directly now. This used to be `full_name.split(' ')[0]`, which
   // greeted "Ma. Cristina Reyes" as "Ma." — the reason the name was split into
@@ -113,8 +106,11 @@ export default async function DashboardPage({
             <CashFlowSummary slice={primary} />
           </div>
 
-          {projected ? (
-            <ForecastCard opening={projected.opening} closing={projected.closing} />
+          {data.projected ? (
+            <ForecastCard
+              opening={data.projected.opening}
+              closing={data.projected.closing}
+            />
           ) : null}
 
           <MonthlyTrendChart

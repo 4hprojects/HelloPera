@@ -52,7 +52,7 @@
 
   /* text — first ratio is on --hp-background, second on its own tint */
   --hp-text: #132238; /* 14.93  |  7.74 on ink */
-  --hp-text-muted: #647080; /*  4.70 */
+  --hp-text-muted: #5f6b7b; /* AA on both background and muted surfaces */
   --hp-primary-text: #107a66; /*  4.91  |  4.58 */
   --hp-success-text: #217a4b; /*  4.97  |  4.68 */
   --hp-warning-text: #96600f; /*  4.93  |  4.62 */

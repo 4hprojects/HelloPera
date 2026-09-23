@@ -6,6 +6,7 @@ import { Card, CardTitle } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { ThemeToggle } from '@/components/ui/theme-toggle';
 import { requireUser } from '@/lib/auth/guards';
+import { adminEntry } from '@/lib/constants/navigation';
 import { SettingsForm } from './settings-form';
 
 export const metadata: Metadata = { title: 'Settings' };
@@ -16,6 +17,25 @@ export default async function SettingsPage() {
   return (
     <div className="mx-auto max-w-2xl">
       <PageHeader title="Settings" description="Your account and preferences." />
+
+      {/*
+        Phones have no sidebar, and "More" lands here, so this is their way into
+        the admin area. Admins only; the route itself is guarded separately.
+      */}
+      {profile.role === 'admin' ? (
+        <Card className="mb-4">
+          <CardTitle>Admin</CardTitle>
+          <p className="hp-body mt-1 text-text-muted">
+            Users, feature flags, usage, jobs and the audit log.
+          </p>
+          <Link
+            href={adminEntry.href}
+            className={`${buttonClass('secondary', 'sm')} mt-3 inline-flex`}
+          >
+            Open the admin area
+          </Link>
+        </Card>
+      ) : null}
 
       <Card className="mb-4">
         <CardTitle>Profile</CardTitle>

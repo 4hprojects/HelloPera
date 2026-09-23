@@ -1,3 +1,4 @@
+import { isFlagEnabled } from '@/services/plan.service';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
@@ -24,6 +25,7 @@ export default async function ReviewPage({
 }) {
   const { profile } = await requireUser();
   const { id } = await params;
+  const ocrEnabled = await isFlagEnabled('ocr_enabled');
 
   const doc = await getDocument(id);
   if (!doc) notFound();
@@ -80,7 +82,21 @@ export default async function ReviewPage({
         </Card>
 
         <div>
-          {!extraction ? (
+          {!ocrEnabled && !extraction ? (
+            <Card>
+              <h2 className="hp-h3">Stored privately</h2>
+              <p className="hp-body mt-2">
+                Document reading is not enabled. Your file is saved; record its details
+                manually when you are ready.
+              </p>
+              <Link
+                className="inline-flex min-h-11 items-center text-primary-text underline"
+                href="/transactions/new"
+              >
+                Add a transaction
+              </Link>
+            </Card>
+          ) : !extraction ? (
             <Card>
               <p className="hp-h3 text-text">Not read yet</p>
               <p className="hp-body mb-4 mt-1 text-text-muted">
@@ -103,7 +119,7 @@ export default async function ReviewPage({
                 The extracted details were discarded. The document is still in your
                 library.
               </p>
-              <RunExtraction documentId={doc.id} label="Read it again" />
+              {ocrEnabled && <RunExtraction documentId={doc.id} label="Read it again" />}
             </Card>
           ) : (
             <>

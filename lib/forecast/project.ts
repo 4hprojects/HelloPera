@@ -1,5 +1,15 @@
-import { add, isNegative, money, negate, subtract, zero, type Money } from '@/lib/money';
+import {
+  add,
+  isNegative,
+  money,
+  negate,
+  subtract,
+  sum,
+  zero,
+  type Money,
+} from '@/lib/money';
 import { daysBetween } from '@/lib/finance/obligation';
+import { isLiquid, type AccountNature, type AccountType } from '@/lib/finance/types';
 import type {
   Confidence,
   CurrencyForecast,
@@ -144,6 +154,110 @@ export function projectBalance(params: {
     shortfall,
     timeline: events,
   };
+}
+
+/** Build the dashboard's 30-day figure from rows its main load already owns. */
+export function projectDashboardBalance(params: {
+  today: string;
+  currency: string;
+  accounts: ReadonlyArray<{
+    type: AccountType;
+    nature: AccountNature;
+    currency_code: string;
+    balance: Money;
+    is_archived?: boolean;
+  }>;
+  bills: ReadonlyArray<{
+    id: string;
+    name: string;
+    date: string | null;
+    currency: string;
+    remaining: Money;
+  }>;
+  expectedIncome: ReadonlyArray<{
+    id: string;
+    name: string;
+    date: string | null;
+    currency: string;
+    remaining: Money;
+    lifecycle: string;
+  }>;
+  events: ReadonlyArray<{
+    id: string;
+    name: string;
+    scheduledDate: string;
+    eventType: string;
+    amount: Money;
+    status?: string;
+    includeInForecast?: boolean;
+  }>;
+}): { opening: Money; closing: Money } | null {
+  const { today, currency } = params;
+  const liquid = params.accounts.filter(
+    (account) =>
+      !account.is_archived &&
+      isLiquid(account.type, account.nature) &&
+      account.currency_code === currency,
+  );
+  if (liquid.length === 0) return null;
+
+  const opening = sum(
+    liquid.map((account) => account.balance),
+    currency,
+  );
+  const events: ForecastEvent[] = [
+    ...params.bills
+      .filter((bill) => bill.currency === currency && bill.date)
+      .map((bill) => ({
+        id: `bill:${bill.id}`,
+        date: bill.date!,
+        kind: 'bill' as const,
+        label: bill.name,
+        amount: bill.remaining,
+        direction: 'out' as const,
+        confidence: confidenceFor('bill'),
+        href: null,
+      })),
+    ...params.expectedIncome
+      .filter(
+        (income) =>
+          income.currency === currency &&
+          income.date &&
+          (income.lifecycle === 'open' || income.lifecycle === 'partially_paid'),
+      )
+      .map((income) => ({
+        id: `expected_income:${income.id}`,
+        date: income.date!,
+        kind: 'expected_income' as const,
+        label: income.name,
+        amount: income.remaining,
+        direction: 'in' as const,
+        confidence: confidenceFor('expected_income'),
+        href: null,
+      })),
+    ...params.events
+      .filter((event) => event.amount.currency === currency && includesEvent(event))
+      .map((event) => ({
+        id: `event:${event.id}`,
+        date: event.scheduledDate,
+        kind: 'expected_event' as const,
+        label: event.name,
+        amount: event.amount,
+        direction: (event.eventType === 'income' ? 'in' : 'out') as 'in' | 'out',
+        confidence: confidenceFor('expected_event'),
+        href: null,
+      })),
+  ];
+
+  const projection = projectBalance({
+    currency,
+    openingBalance: opening,
+    today,
+    horizon: 30,
+    events,
+  });
+
+  return { opening, closing: projection.closingBalance };
 }
 
 /** §44 — what weight an event's source earns it. */

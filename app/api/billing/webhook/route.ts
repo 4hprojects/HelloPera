@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getBillingProvider } from '@/lib/billing/provider';
 import { processWebhookEvent } from '@/services/billing-webhook.service';
 import { log } from '@/lib/log';
+import { requestLogFields } from '@/lib/log/request-id';
 import {
   clientIp,
   enforceRateLimit,
@@ -45,6 +46,7 @@ export const runtime = 'nodejs';
 
 export async function POST(request: Request): Promise<NextResponse> {
   const provider = getBillingProvider();
+  const requestFields = requestLogFields(request.headers);
 
   /**
    * PHASE-14 §38 — a ceiling on abuse, not a throttle on traffic.
@@ -81,6 +83,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     event = await provider.handleWebhook(rawBody, headers);
   } catch (error) {
     log.error('billing webhook: verification threw', {
+      ...requestFields,
       m: error instanceof Error ? error.message : 'unknown',
     });
     return NextResponse.json({ error: 'Invalid signature.' }, { status: 401 });
@@ -91,7 +94,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     // The response is identical in both cases on purpose — telling an
     // unauthenticated caller which one it was tells them whether the endpoint
     // is live and worth probing.
-    log.warn('billing webhook: rejected unverified event');
+    log.warn('billing webhook: rejected unverified event', requestFields);
     return NextResponse.json({ error: 'Invalid signature.' }, { status: 401 });
   }
 
@@ -100,6 +103,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json(outcome);
   } catch (error) {
     log.error('billing webhook: processing failed', {
+      ...requestFields,
       m: error instanceof Error ? error.message : 'unknown',
     });
     // 500 so the provider redelivers. The event row is marked `failed`, which
