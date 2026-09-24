@@ -80,20 +80,16 @@ npm run format        # Prettier write
 npm run format:check  # Prettier check
 ```
 
-### Continuous integration
+### Continuous integration and deployment
 
-GitHub Actions uses the Node version in `.nvmrc`. Every push and pull request
-runs type checking, linting, unit tests, and a production build. The build uses
-non-secret placeholder Supabase values; this verifies that compiling the app
-does not depend on privileged production credentials.
+PRs run the quality checks without production credentials. Pushes to `main` then
+migrate, deploy and test an isolated staging release at the exact commit SHA.
+Production requires a manual promotion of a successful staging release.
 
-The live integration job is separate because it creates temporary users and
-storage objects in a real Supabase project. It runs only after pushes to
-`main`, or when started manually, so credentials are never exposed to pull
-request code. Configure the isolated staging secrets listed in
-[LAUNCH-IMPLEMENTATION.md](docs/LAUNCH-IMPLEMENTATION.md). The release integration
-job fails when credentials are missing. `TEST_SUPABASE_PROJECT_REF` must match the
-configured test project. Never run these fixture-creating tests against production.
+Start with **[the deployment runbook](docs/DEPLOYMENT.md)** for the HelloDeploy
+upgrade, project settings, GitHub environments, secrets, domains, auth and rollback.
+**[The readiness record](docs/LAUNCH-IMPLEMENTATION.md)** lists unverified external
+launch gates. Local tests do not establish production readiness.
 
 ---
 

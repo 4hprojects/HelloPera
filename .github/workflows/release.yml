@@ -1,0 +1,135 @@
+name: Release
+on:
+  workflow_call:
+    inputs:
+      sha:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Full SHA with successful staging evidence
+        required: true
+        type: string
+      staging_run_id:
+        description: Successful main CI run containing staging evidence
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && 'production' || 'staging' }}
+  cancel-in-progress: false
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: ${{ github.event_name == 'workflow_dispatch' && 'production' || 'staging' }}
+    env:
+      RELEASE_SHA: ${{ inputs.sha }}
+      RELEASE_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && 'production' || 'staging' }}
+      LAUNCH_GATES_CONFIRMED: ${{ vars.LAUNCH_GATES_CONFIRMED }}
+      STAGING_RUN_ID: ${{ inputs.staging_run_id }}
+      HELLODEPLOY_HOOK_URL: ${{ secrets.HELLODEPLOY_HOOK_URL }}
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      APP_URL: ${{ vars.APP_URL }}
+      NEXT_PUBLIC_APP_URL: ${{ vars.APP_URL }}
+      E2E_BASE_URL: ${{ vars.APP_URL }}
+      TEST_SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      PRODUCTION_SUPABASE_PROJECT_REF: ${{ vars.PRODUCTION_SUPABASE_PROJECT_REF }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Check release inputs
+        shell: bash
+        run: |
+          [[ "$RELEASE_SHA" =~ ^[a-f0-9]{40}$ ]] || exit 1
+          if [[ "$RELEASE_ENVIRONMENT" == "production" && "$LAUNCH_GATES_CONFIRMED" != "true" ]]; then
+            echo "::error::Confirm external launch gates before production promotion."
+            exit 1
+          fi
+          if [[ "$RELEASE_ENVIRONMENT" == "production" ]]; then
+            [[ "$STAGING_RUN_ID" =~ ^[0-9]+$ ]] || exit 1
+          fi
+          for key in HELLODEPLOY_HOOK_URL NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY SUPABASE_SECRET_KEY DATABASE_URL APP_URL TEST_SUPABASE_PROJECT_REF PRODUCTION_SUPABASE_PROJECT_REF; do
+            [[ -n "${!key}" ]] || { echo "::error::Missing $key"; exit 1; }
+          done
+      - name: Download staging evidence
+        if: env.RELEASE_ENVIRONMENT == 'production'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download "$STAGING_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "staging-release-$RELEASE_SHA" --dir promotion-evidence
+      - name: Verify promotion evidence
+        if: env.RELEASE_ENVIRONMENT == 'production'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/verify-promotion.mjs
+      - name: Check out verified release
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
+          persist-credentials: false
+          clean: false
+      - name: Verify release checkout
+        run: test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+      - name: Verify staged migration contents
+        if: env.RELEASE_ENVIRONMENT == 'production'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/verify-promotion.mjs --migrations
+      - run: npm ci
+      - name: Verify target identity before migrations
+        run: node scripts/verify-release-target.mjs
+      - name: Verify HelloDeploy compatibility and configuration
+        run: node scripts/release.mjs preflight
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Apply release migrations
+        run: npm run db:migrate && npm run db:verify
+      - name: Deploy exact commit and await activation
+        run: node scripts/release.mjs deploy
+      - name: Verify release before staging fixtures
+        run: node scripts/release.mjs verify
+      - name: Live staging integration
+        if: env.RELEASE_ENVIRONMENT == 'staging'
+        run: npm run test:integration
+      - name: Install browser
+        if: env.RELEASE_ENVIRONMENT == 'staging'
+        run: npx playwright install --with-deps chromium
+      - name: Staging browser checks
+        if: env.RELEASE_ENVIRONMENT == 'staging'
+        run: npm run test:e2e:staging
+      - name: Operational checks
+        run: npm run ops:check
+      - name: Verify release after tests
+        env:
+          RELEASE_TESTS_PASSED: 'true'
+        run: node scripts/release.mjs verify
+      - name: Save successful release evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_ENVIRONMENT }}-release-${{ inputs.sha }}
+          path: release-evidence/
+          retention-days: 90
+          overwrite: true
+      - name: Save browser diagnostics
+        if: failure() && env.RELEASE_ENVIRONMENT == 'staging'
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-browser-${{ github.run_id }}
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+          overwrite: true

@@ -1,3 +1,5 @@
+// @ts-expect-error Shared operational ESM guard.
+import { assertStagingIdentity } from '../scripts/staging-identity.mjs';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { randomUUID } from 'node:crypto';
@@ -6,6 +8,7 @@ let userId: string;
 let accountId: string;
 let billId: string;
 beforeAll(async () => {
+  assertStagingIdentity(process.env);
   if (!process.env.TEST_SUPABASE_PROJECT_REF)
     throw new Error('An isolated test project must be explicitly configured.');
   admin = createClient(

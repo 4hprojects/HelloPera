@@ -63,6 +63,12 @@ export async function proxy(request: NextRequest) {
   };
 
   let response = nextResponse();
+  // Health probes must not depend on Auth availability or session cookies.
+  if (
+    request.nextUrl.pathname === '/api/health' ||
+    request.nextUrl.pathname === '/api/health/ready'
+  )
+    return response;
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
