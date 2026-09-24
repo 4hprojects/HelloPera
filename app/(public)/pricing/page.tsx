@@ -10,24 +10,10 @@ export const metadata: Metadata = {
   alternates: { canonical: `${appUrl()}/pricing` },
 };
 
-/**
- * /pricing — PHASE-10 §15, §36; PHASE-09 §36.
- *
- * Reads the real plan catalogue rather than a hardcoded list, so raising a
- * limit is a database change and this page cannot drift from what the product
- * actually enforces. Previously a `FREE_INCLUDES` array that nothing kept in
- * step with `plan_entitlements`.
- *
- * Read through the admin client (see the service) so the page stays **static**
- * and indexable — the session client reads cookies, which would make the whole
- * route dynamic and cost a database round trip on every crawl.
- *
- * §36 and PHASE-09 §36: no invented prices. Premium is described, and stated
- * as not yet purchasable, because it is not.
- */
+/** Free-launch pricing is informational: provider features are not purchasable. */
 
-/** Revalidate daily — plan entitlements change rarely, and never urgently. */
-export const revalidate = 86_400;
+/** Resolve the catalogue at request time; builds never need database credentials. */
+export const dynamic = 'force-dynamic';
 
 function line(label: string, value: string) {
   return (
@@ -60,10 +46,7 @@ export default async function PricingPage() {
         <ul className="mt-4 divide-y divide-border">
           {line('Accounts and transactions', 'Unlimited')}
           {line('Bills, receivables and expected income', 'Unlimited')}
-          {line(
-            'Document scans',
-            free ? `${free.entitlements.ocrMonthlyLimit} a month` : '30 a month',
-          )}
+          {line('Document scans', 'Coming soon — manual uploads available')}
           {line(
             'Forecast',
             free
@@ -89,7 +72,7 @@ export default async function PricingPage() {
 
         {premium ? (
           <ul className="mt-4 divide-y divide-border">
-            {line('Document scans', `${premium.entitlements.ocrMonthlyLimit} a month`)}
+            {line('Document scans', 'Coming soon')}
             {line('Forecast', `${premium.entitlements.forecastHorizonDays} days ahead`)}
             {line(
               'Document history',

@@ -5,20 +5,8 @@ import { log } from '@/lib/log';
 import { FREE_FALLBACK, resolveEntitlements } from '@/lib/monetization/entitlements';
 import type { Entitlements, PlanCode } from '@/lib/monetization/entitlements';
 
-/**
- * The public plan catalogue — PHASE-10 §15.
- *
- * Separate from `services/plan.service.ts` for one reason: **this must not read
- * cookies.**
- *
- * `listPublicPlans()` uses the RLS-scoped session client, which is correct
- * inside the authenticated app. On `/pricing` it would make the route dynamic,
- * costing a database round trip on every crawl and every visitor, for data
- * that is the same for everyone and changes about once a quarter.
- *
- * Plans and entitlements are public information — the pricing page exists to
- * publish them — so reading them with the admin client leaks nothing. Nothing
- * here touches a user row.
+/** Public catalogue read at request time, without session cookies or user data.
+ * Queries have strict deadlines so an unavailable database shows fallback copy.
  */
 
 type Row = Record<string, unknown>;
@@ -47,16 +35,26 @@ export async function listPublicPlanSummaries(): Promise<PlanSummary[]> {
       .select('id, code, name, description')
       .eq('is_active', true)
       .eq('is_public', true)
-      .order('price_amount', { ascending: true, nullsFirst: true });
+      .order('price_amount', { ascending: true, nullsFirst: true })
+      .limit(10)
+      .abortSignal(AbortSignal.timeout(3000));
 
     if (error) {
       log.error('pricing: plan read failed', { m: error.code });
       return [];
     }
 
+    if (!plans?.length) return [];
+
     const { data: entitlements } = await admin
       .from('plan_entitlements')
-      .select('plan_id, entitlement_key, value_json');
+      .select('plan_id, entitlement_key, value_json')
+      .in(
+        'plan_id',
+        (plans ?? []).map((plan) => plan.id),
+      )
+      .limit(200)
+      .abortSignal(AbortSignal.timeout(3000));
 
     const byPlan = new Map<
       string,

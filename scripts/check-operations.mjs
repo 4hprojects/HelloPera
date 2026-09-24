@@ -85,6 +85,23 @@ if (!process.env.DATABASE_URL) {
       "select coalesce(jsonb_object_agg(key, enabled), '{}'::jsonb)::text from public.feature_flags",
     ),
   );
+  if (process.env.RELEASE_ENVIRONMENT) {
+    const deferred = [
+      'push_enabled',
+      'ocr_enabled',
+      'ai_enabled',
+      'billing_enabled',
+      'premium_enabled',
+      'ads_enabled_global',
+    ];
+    const enabled = deferred.filter((key) => flags[key] !== false);
+    if (enabled.length)
+      fail(
+        'Free launch scope',
+        `Deferred flags must remain disabled: ${enabled.join(', ')}`,
+      );
+    else pass('Free launch scope', 'All provider features are disabled.');
+  }
   const pushConfigured = Boolean(
     process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY &&
     process.env.VAPID_PRIVATE_KEY &&
@@ -140,10 +157,6 @@ manual(
   'Confirm a real backup was restored into a non-production project.',
 );
 manual('Production email', 'Confirm custom SMTP with a real signup and password reset.');
-manual(
-  'Payment provider',
-  'Choose a provider and complete sandbox payment lifecycle tests.',
-);
 
 for (const result of results) {
   console.log(`${result.state.padEnd(6)} ${result.name}: ${result.detail}`);

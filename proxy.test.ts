@@ -50,6 +50,17 @@ describe('proxy behavior', () => {
     vi.stubEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', 'test-anon-key');
   });
 
+  it.each(['/api/health', '/api/health/ready'])(
+    'health bypasses Auth at %s',
+    async (path) => {
+      getUser.mockRejectedValueOnce(new Error('Auth unavailable'));
+      await proxy(new NextRequest(`https://hellopera.test${path}`));
+      expect(createServerClient).not.toHaveBeenCalled();
+      getUser.mockReset();
+      getUser.mockResolvedValue({ data: { user: null }, error: null });
+    },
+  );
+
   it('validates the current user to refresh the session', async () => {
     const response = await proxy(
       new NextRequest('https://hellopera.test/dashboard', {

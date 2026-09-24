@@ -44,3 +44,10 @@ describe('provider environment validation', () => {
     );
   });
 });
+
+it('rejects a secret key in browser configuration', async () => {
+  await expect(
+    loadEnv({ NEXT_PUBLIC_SUPABASE_ANON_KEY: 'sb_secret_private' }),
+  ).rejects.toThrow('NEXT_PUBLIC_SUPABASE_ANON_KEY');
+  vi.unstubAllEnvs();
+});

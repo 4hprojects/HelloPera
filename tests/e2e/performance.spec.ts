@@ -1,3 +1,5 @@
+// @ts-expect-error Shared operational ESM guard.
+import { assertStagingIdentity } from '../../scripts/staging-identity.mjs';
 import { test, expect } from '@playwright/test';
 import { createClient } from '@supabase/supabase-js';
 import { randomUUID } from 'node:crypto';
@@ -16,6 +18,7 @@ test('representative private-route performance', async ({ page }, info) => {
     documents: large ? 2000 : 500,
     notifications: large ? 5000 : 1000,
   };
+  assertStagingIdentity(process.env);
   const admin = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SECRET_KEY!,
