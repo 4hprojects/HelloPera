@@ -43,9 +43,11 @@ and deletion. Environment secrets await confirmed Supabase identities and deploy
 
 Remote HelloDeploy main was 118 commits ahead of the original local checkout.
 The companion changes were reconciled in a separate worktree against
-`e732476551f8900ad7f496d7dc6cf250361cd1d3`; the original checkout remains intact.
-Open platform PRs #45 (build PATH) and #47 (public build variables) overlap the build
-lane and must be coordinated before merge. Neither is assumed to be on the live host.
+`0ff887222b32d0298315f03dd9c6d99d00f5ed7c`; the original checkout remains intact.
+Platform PRs #45–#48 merged during verification and are incorporated into companion
+[PR #49](https://github.com/4hprojects/HelloDeploy/pull/49), in the separate
+`HelloDeploy-release` worktree. Build-variable overlap is resolved. This does not
+establish which version is on the live host.
 The HelloPera draft PR is [#1](https://github.com/4hprojects/HelloPera/pull/1);
 GitHub quality CI passed at `8579cc5` on 25 September.
 
@@ -77,11 +79,11 @@ is not a free-launch blocker while its feature remains disabled.
 | Public browser checks | 9 passed on the final standalone build, including pricing |
 | Browser bundle secret sentinel scan | No match in `.next/static` |
 | Workflow validation | actionlint 1.7.7 passed |
-| HelloDeploy current-main suite | 1,000 passed with four test workers, zero skipped |
+| HelloDeploy current-main suite | 1,022 passed with four test workers, zero skipped |
 | HelloDeploy lint / formatting / development configuration | Passed on current-main reconciliation |
 | Migration status / operations (read-only) | All 28 recorded; cron/admin/deferred flags passed |
 
-The default parallel HelloDeploy test run had 999 passes and one unchanged
+Before integrating the newer startup fixes, the default parallel HelloDeploy test run had 999 passes and one unchanged
 fatal-process test exceeding its five-second subprocess timeout. All five process
 tests passed in isolation; the full suite passed with four workers. The timeout
 was not weakened.
