@@ -42,10 +42,12 @@ up-to-date CI quality check, including for administrators, and rejects force pus
 and deletion. Environment secrets await confirmed Supabase identities and deploy hooks.
 
 Remote HelloDeploy main was 118 commits ahead of the original local checkout.
-The companion changes are being reconciled in a separate worktree against
+The companion changes were reconciled in a separate worktree against
 `e732476551f8900ad7f496d7dc6cf250361cd1d3`; the original checkout remains intact.
 Open platform PRs #45 (build PATH) and #47 (public build variables) overlap the build
 lane and must be coordinated before merge. Neither is assumed to be on the live host.
+The HelloPera draft PR is [#1](https://github.com/4hprojects/HelloPera/pull/1);
+GitHub quality CI passed at `8579cc5` on 25 September.
 
 ## External gates still open
 
@@ -75,9 +77,14 @@ is not a free-launch blocker while its feature remains disabled.
 | Public browser checks | 9 passed on the final standalone build, including pricing |
 | Browser bundle secret sentinel scan | No match in `.next/static` |
 | Workflow validation | actionlint 1.7.7 passed |
-| Original HelloDeploy checkout suite | 658 passed, zero skipped; superseded by current-main reconciliation |
-| HelloDeploy lint / formatting / local configuration | Passed |
+| HelloDeploy current-main suite | 1,000 passed with four test workers, zero skipped |
+| HelloDeploy lint / formatting / development configuration | Passed on current-main reconciliation |
 | Migration status / operations (read-only) | All 28 recorded; cron/admin/deferred flags passed |
+
+The default parallel HelloDeploy test run had 999 passes and one unchanged
+fatal-process test exceeding its five-second subprocess timeout. All five process
+tests passed in isolation; the full suite passed with four workers. The timeout
+was not weakened.
 
 Release CLI regression tests include platform compatibility, wrong target,
 identity mismatch, failed deployment, timeout and no duplicate POST after a lost
