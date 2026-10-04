@@ -35,25 +35,26 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const effective = await getEffectivePlan(user.id).catch(() => null);
   const planLabel = effective ? `${effective.plan.name} plan` : 'Free plan';
 
+  const navItems = profile.role === 'admin' ? [...appNav, adminEntry] : appNav;
+  const navUser = {
+    name: profile.full_name,
+    email: profile.email ?? '',
+    plan: planLabel,
+    href: '/settings/plan',
+  };
+  const logout = (
+    <LogoutButton className="h-10 w-full rounded-[var(--radius-hp)] text-sm font-medium text-nav-muted hover:bg-nav-raised hover:text-nav-text" />
+  );
+
   return (
     <div className="flex min-h-dvh">
-      <Sidebar
-        items={profile.role === 'admin' ? [...appNav, adminEntry] : appNav}
-        user={{
-          name: profile.full_name,
-          email: profile.email ?? '',
-          plan: planLabel,
-          href: '/settings/plan',
-        }}
-        footer={
-          <LogoutButton className="h-10 w-full rounded-[var(--radius-hp)] text-sm font-medium text-nav-muted hover:bg-nav-raised hover:text-nav-text" />
-        }
-      />
+      <Sidebar items={navItems} user={navUser} footer={logout} />
 
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar
           user={{ name: profile.full_name, email: profile.email ?? '' }}
           unreadCount={unread}
+          nav={{ items: navItems, user: navUser, footer: logout }}
         />
         <main id="main" className="flex-1 px-4 pb-24 pt-5 sm:px-6 lg:pb-10">
           {deletion && (

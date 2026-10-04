@@ -219,6 +219,14 @@ export function MoreIcon(p: IconProps) {
   );
 }
 
+export function MenuIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M4 7h16M4 12h16M4 17h16" />
+    </Svg>
+  );
+}
+
 export function CloseIcon(p: IconProps) {
   return (
     <Svg {...p}>

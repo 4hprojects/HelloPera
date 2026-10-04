@@ -4,6 +4,8 @@ import { TextField } from '@/components/ui/field';
 import { AppLogo } from '@/components/brand/app-logo';
 import { Avatar } from '@/components/ui/avatar';
 import { ThemeToggle } from '@/components/ui/theme-toggle';
+import { NavDrawer } from '@/components/navigation/nav-drawer';
+import type { NavItem } from '@/lib/constants/navigation';
 
 /**
  * Application top bar — search, notifications, account.
@@ -19,8 +21,15 @@ import { ThemeToggle } from '@/components/ui/theme-toggle';
 export function TopBar({
   user,
   unreadCount = 0,
+  nav,
 }: {
   user: { name: string | null; email: string };
+  /** Drawer contents for widths below `lg`, where the sidebar is hidden. */
+  nav: {
+    items: NavItem[];
+    user: { name: string | null; email: string; plan: string; href: string };
+    footer: React.ReactNode;
+  };
   /**
    * Unread notifications — PHASE-08 §20.
    *
@@ -37,6 +46,8 @@ export function TopBar({
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-background/85 backdrop-blur">
       <div className="flex h-16 items-center gap-3 px-4 sm:px-6">
+        <NavDrawer items={nav.items} user={nav.user} footer={nav.footer} />
+
         {/* The rail carries the wordmark on desktop; on mobile it is hidden,
             so the bar carries it instead. */}
         <Link href="/dashboard" className="inline-flex rounded lg:hidden">
