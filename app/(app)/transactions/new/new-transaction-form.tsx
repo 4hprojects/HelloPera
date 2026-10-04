@@ -32,13 +32,13 @@ const PICKABLE: Array<{ value: TransactionType; label: string; hint: string }> =
 export function NewTransactionForm({
   accounts,
   categories,
-  defaultCurrency,
+  defaultDate,
   initialType,
   requestId,
 }: {
   accounts: AccountOption[];
   categories: CategoryOption[];
-  defaultCurrency: string;
+  defaultDate: string;
   initialType: string;
   requestId: string;
 }) {
@@ -49,7 +49,28 @@ export function NewTransactionForm({
   );
 
   const needs = ACCOUNT_REQUIREMENTS[type];
-  const today = new Date().toISOString().slice(0, 10);
+  const [sourceId, setSourceId] = useState(accounts[0]?.id ?? '');
+  const [destinationId, setDestinationId] = useState('');
+
+  const source = accounts.find((a) => a.id === sourceId);
+  // A transfer can only land in another account of the same currency.
+  const destinationOptions =
+    type === 'transfer'
+      ? accounts.filter((a) => a.id !== sourceId && a.currency === source?.currency)
+      : accounts;
+  const destination =
+    destinationOptions.find((a) => a.id === destinationId) ?? destinationOptions[0];
+  const currency = needs.source ? source?.currency : destination?.currency;
+
+  function changeSource(id: string) {
+    setSourceId(id);
+    // Drop a destination that no longer fits the new source's currency.
+    const next = accounts.find((a) => a.id === id);
+    const current = accounts.find((a) => a.id === destinationId);
+    if (type === 'transfer' && current && current.currency !== next?.currency) {
+      setDestinationId('');
+    }
+  }
 
   const relevantCategories = categories.filter((c) =>
     type === 'income'
@@ -113,6 +134,8 @@ export function NewTransactionForm({
           id="sourceAccountId"
           label={sourceLabel}
           required
+          value={sourceId}
+          onChange={(e) => changeSource(e.target.value)}
           error={state.fieldErrors?.sourceAccountId}
           wrapClassName="mb-4"
         >
@@ -129,15 +152,24 @@ export function NewTransactionForm({
           id="destinationAccountId"
           label={type === 'transfer' ? 'To account' : 'Received into'}
           required
+          value={destination?.id ?? ''}
+          onChange={(e) => setDestinationId(e.target.value)}
           error={state.fieldErrors?.destinationAccountId}
           wrapClassName="mb-4"
         >
-          {accounts.map((a) => (
+          {destinationOptions.map((a) => (
             <option key={a.id} value={a.id}>
               {a.name} ({a.currency})
             </option>
           ))}
         </SelectField>
+      ) : null}
+
+      {type === 'transfer' && destinationOptions.length === 0 ? (
+        <FormAlert tone="error">
+          You need a second {source?.currency} account to transfer between. Transfers
+          cannot cross currencies.
+        </FormAlert>
       ) : null}
 
       {needs.direction ? (
@@ -179,7 +211,7 @@ export function NewTransactionForm({
         id="transactionDate"
         label="Date"
         type="date"
-        defaultValue={today}
+        defaultValue={defaultDate}
         required
         error={state.fieldErrors?.transactionDate}
       />
@@ -198,7 +230,12 @@ export function NewTransactionForm({
         />
       )}
 
-      <input type="hidden" name="currencyCode" value={defaultCurrency} />
+      {currency ? (
+        <p className="hp-small mb-4 text-text-muted">
+          Recorded in {currency}, the currency of the selected account.
+        </p>
+      ) : null}
+      <input type="hidden" name="currencyCode" value={currency ?? ''} />
 
       <Button type="submit" disabled={pending} size="lg" className="mt-2 w-full">
         {pending ? 'Saving…' : 'Save transaction'}

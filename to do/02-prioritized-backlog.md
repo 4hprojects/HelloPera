@@ -16,7 +16,7 @@ Audit: 1 October 2026. These are **future tasks**, not changes performed by the 
 | [HP-008](#hp-008) | P1       | 1     | in progress | Complete authorization and privilege regression coverage          |
 | [HP-025](#hp-025) | P1       | 1     | in progress | Make the financial freeze comprehensive and explicit              |
 | [HP-026](#hp-026) | P1       | 1     | in progress | Make privileged administrative changes durably auditable          |
-| [HP-009](#hp-009) | P1       | 2     | open     | Verify complete core journeys and fix currency selection          |
+| [HP-009](#hp-009) | P1       | 2     | in progress | Verify complete core journeys and fix currency selection          |
 | [HP-011](#hp-011) | P1       | 2     | open     | Prove export and resumable deletion on hosted storage             |
 | [HP-012](#hp-012) | P1       | 3     | open     | Establish realistic performance and capacity baselines            |
 | [HP-013](#hp-013) | P1       | 3     | open     | Make admin metrics complete and failures visible                  |
@@ -207,7 +207,7 @@ P0: none demonstrated. P1 items are free-launch gates; P2 items may be scheduled
 
 ## HP-009 — Verify complete core journeys and fix currency selection
 
-**Priority:** P1 · **Phase:** 2 · **Status:** open · **Evidence:** confirmed form mismatch; private browser experience unverified
+**Priority:** P1 · **Phase:** 2 · **Status:** in progress · **Evidence:** confirmed form mismatch; private browser experience unverified
 **Area:** Product flows/accessibility · **Responsible role:** Frontend + QA · **Estimate:** L
 **Dependencies:** HP-002–HP-008 as relevant; HP-016 staging setup
 
