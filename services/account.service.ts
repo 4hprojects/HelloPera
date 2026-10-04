@@ -104,6 +104,71 @@ export async function createAccount(
   return data as string;
 }
 
+/** Loan account + details + recurring bill rule, atomically, via one RPC. */
+export async function createLoanAccount(
+  userId: string,
+  input: CreateAccountInput,
+): Promise<string> {
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc('create_loan_account_idempotent', {
+    p_user_id: userId,
+    p_request_id: input.requestId,
+    p_name: input.name,
+    p_currency_code: input.currencyCode,
+    p_opening_balance: input.openingBalance,
+    p_lender: input.institutionName,
+    p_payment_amount: input.paymentAmount,
+    p_payment_frequency: input.paymentFrequency,
+    p_next_due_date: input.nextDueDate,
+    p_principal: input.principal ?? null,
+    p_start_date: input.loanStartDate ?? null,
+    p_interest_rate_apr: input.interestRateApr ?? null,
+    p_term_months: input.termMonths ?? null,
+    p_create_reminder: input.createReminder,
+  });
+  if (error) throw new Error(error.message);
+  return data as string;
+}
+
+export type LoanDetails = {
+  accountId: string;
+  principal: Money | null;
+  paymentAmount: Money;
+  paymentFrequency: string;
+  nextDueDate: string;
+  interestRateApr: string | null;
+  termMonths: number | null;
+};
+
+/** Loan details keyed by account id, for the accounts list. */
+export async function listLoanDetails(
+  accounts: readonly Account[],
+): Promise<Map<string, LoanDetails>> {
+  const loans = accounts.filter((a) => a.type === 'loan');
+  const out = new Map<string, LoanDetails>();
+  if (loans.length === 0) return out;
+  const currency = new Map(loans.map((a) => [a.id, a.currency_code]));
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from('loan_details_exact')
+    .select('*')
+    .in('account_id', [...currency.keys()]);
+  if (error) throw new Error(`Could not load loan details: ${error.code}`);
+  for (const r of data ?? []) {
+    const cur = currency.get(r.account_id) ?? 'PHP';
+    out.set(r.account_id, {
+      accountId: r.account_id,
+      principal: r.principal ? fromDatabase(r.principal, cur) : null,
+      paymentAmount: fromDatabase(r.payment_amount, cur),
+      paymentFrequency: r.payment_frequency,
+      nextDueDate: r.next_due_date,
+      interestRateApr: r.interest_rate_apr,
+      termMonths: r.term_months,
+    });
+  }
+  return out;
+}
+
 export async function archiveAccount(userId: string, id: string, archived: boolean) {
   const admin = createAdminClient();
   const { error } = await admin

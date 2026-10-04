@@ -10,7 +10,12 @@ import {
   createTransactionSchema,
   voidTransactionSchema,
 } from '@/schemas/finance.schema';
-import { archiveAccount, createAccount, getAccount } from '@/services/account.service';
+import {
+  archiveAccount,
+  createAccount,
+  createLoanAccount,
+  getAccount,
+} from '@/services/account.service';
 import { deriveTransactionCurrency } from '@/lib/finance/currency';
 import {
   createTransaction,
@@ -53,11 +58,20 @@ export async function createAccountAction(
     currencyCode: formData.get('currencyCode') || 'PHP',
     openingBalance: formData.get('openingBalance') || '0',
     institutionName: formData.get('institutionName') ?? '',
+    paymentAmount: formData.get('paymentAmount') ?? '',
+    paymentFrequency: formData.get('paymentFrequency') ?? '',
+    nextDueDate: formData.get('nextDueDate') ?? '',
+    principal: formData.get('principal') ?? '',
+    loanStartDate: formData.get('loanStartDate') ?? '',
+    interestRateApr: formData.get('interestRateApr') ?? '',
+    termMonths: formData.get('termMonths') ?? '',
+    createReminder: formData.get('createReminder') === 'on',
   });
   if (!parsed.success) return { fieldErrors: fieldErrorsFrom(parsed.error) };
 
   try {
-    await createAccount(user.id, parsed.data);
+    if (parsed.data.type === 'loan') await createLoanAccount(user.id, parsed.data);
+    else await createAccount(user.id, parsed.data);
   } catch (error) {
     log.error('account create failed', {
       message: error instanceof Error ? error.message : 'unknown',
@@ -68,6 +82,7 @@ export async function createAccountAction(
   revalidatePath('/accounts');
   revalidatePath('/dashboard');
   revalidatePath('/analytics');
+  if (parsed.data.type === 'loan') revalidatePath('/bills');
   redirect('/accounts?created=1');
 }
 

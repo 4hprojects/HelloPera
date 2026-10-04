@@ -11,6 +11,14 @@ import { ACCOUNT_TYPES, DEFAULT_NATURE, type AccountType } from '@/lib/finance/t
 
 const initial: ActionState = {};
 
+const FREQUENCY_LABELS = {
+  weekly: 'Weekly',
+  biweekly: 'Every 2 weeks',
+  monthly: 'Monthly',
+  quarterly: 'Every 3 months',
+  yearly: 'Yearly',
+} as const;
+
 const TYPE_LABELS: Record<AccountType, string> = {
   cash: 'Cash',
   bank: 'Bank',
@@ -36,6 +44,7 @@ export function NewAccountForm({
   // `other` has no sensible default, so the user must choose (§9).
   const nature = type === 'other' ? null : DEFAULT_NATURE[type];
   const isLiability = nature === 'liability';
+  const isLoan = type === 'loan';
 
   return (
     <form action={action} noValidate>
@@ -78,7 +87,8 @@ export function NewAccountForm({
       />
       <FormField
         id="institutionName"
-        label="Bank or provider (optional)"
+        label={isLoan ? 'Lender' : 'Bank or provider (optional)'}
+        required={isLoan}
         error={state.fieldErrors?.institutionName}
       />
 
@@ -103,10 +113,80 @@ export function NewAccountForm({
         error={state.fieldErrors?.openingBalance}
       />
       <p className="hp-small mb-5 text-text-muted">
-        {isLiability
+        {isLoan
+          ? 'The remaining balance you owe today. Recorded as an opening entry you can see in your history.'
+          : isLiability
           ? 'How much you owe on this account today. Recorded as an opening entry you can see in your history.'
           : 'How much is in this account today. Recorded as an opening entry you can see in your history.'}
       </p>
+
+      {isLoan ? (
+        <fieldset className="mb-5">
+          <legend className="mb-3 font-medium text-text">Payment schedule</legend>
+          <FormField
+            id="paymentAmount"
+            label="Amount due per payment"
+            inputMode="decimal"
+            required
+            error={state.fieldErrors?.paymentAmount}
+          />
+          <FormField
+            id="nextDueDate"
+            label="Next due date"
+            type="date"
+            required
+            error={state.fieldErrors?.nextDueDate}
+          />
+          <SelectField
+            id="paymentFrequency"
+            label="How often you pay"
+            defaultValue="monthly"
+            wrapClassName="mb-4"
+          >
+            {Object.entries(FREQUENCY_LABELS).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </SelectField>
+          {state.fieldErrors?.paymentFrequency ? (
+            <p className="hp-small mb-3 text-danger-text">{state.fieldErrors.paymentFrequency}</p>
+          ) : null}
+          <label className="mb-5 flex min-h-11 items-center gap-3 text-text">
+            <input type="checkbox" name="createReminder" defaultChecked className="size-5" />
+            Remind me of this payment (adds a recurring bill)
+          </label>
+
+          <legend className="mb-3 font-medium text-text">More about the loan (optional)</legend>
+          <FormField
+            id="principal"
+            label="Original loan amount"
+            inputMode="decimal"
+            error={state.fieldErrors?.principal}
+          />
+          <FormField
+            id="loanStartDate"
+            label="Loan start date"
+            type="date"
+            error={state.fieldErrors?.loanStartDate}
+          />
+          <FormField
+            id="interestRateApr"
+            label="Interest rate (% per year)"
+            inputMode="decimal"
+            error={state.fieldErrors?.interestRateApr}
+          />
+          <FormField
+            id="termMonths"
+            label="Term (months)"
+            inputMode="numeric"
+            error={state.fieldErrors?.termMonths}
+          />
+          <p className="hp-small text-text-muted">
+            Interest and term are for your reference. HelloPera does not calculate interest.
+          </p>
+        </fieldset>
+      ) : null}
 
       <Button type="submit" disabled={pending} size="lg" className="w-full">
         {pending ? 'Creating…' : 'Create account'}

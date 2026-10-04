@@ -35,6 +35,18 @@ test('account → income → bill → partial payment → void → archive', asy
     await page.getByLabel('Account name').fill('Launch wallet');
     await page.getByRole('button', { name: /add account|create account/i }).click();
     await page.waitForURL('**/accounts?*');
+    await page.goto('/accounts/new');
+    await page.getByLabel('Account type').selectOption('loan');
+    await page.getByLabel('Account name').fill('Launch loan');
+    await page.getByLabel('Lender').fill('Test Bank');
+    await page.getByLabel('Amount currently owed').fill('5000');
+    await page.getByLabel('Amount due per payment').fill('450');
+    await page.locator('[name="nextDueDate"]').fill('2026-11-01');
+    await page.locator('[name="principal"]').fill('6000');
+    await page.getByRole('button', { name: /add account|create account/i }).click();
+    await page.waitForURL('**/accounts?*');
+    await expect(page.getByText('Launch loan', { exact: true })).toBeVisible();
+    await expect(page.getByText(/Next payment/)).toContainText('2026-11-01');
     await page.goto('/transactions/new?type=income');
     await page.getByLabel('Amount', { exact: true }).fill('1000');
     await page
@@ -61,7 +73,7 @@ test('account → income → bill → partial payment → void → archive', asy
     await page.getByRole('button', { name: 'Confirm void' }).first().click();
     await expect(page.getByText('Voided', { exact: true }).first()).toBeVisible();
     await page.goto('/accounts');
-    await page.getByText('Archive account', { exact: true }).click();
+    await page.getByText('Archive account', { exact: true }).first().click(); // wallet is created first
     await page.getByRole('button', { name: 'Confirm archive' }).click();
     await expect(
       page.getByText('Launch wallet (archived)', { exact: true }),

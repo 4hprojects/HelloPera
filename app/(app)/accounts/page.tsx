@@ -8,7 +8,7 @@ import { Card, CardLabel } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { EmptyState } from '@/components/ui/states';
 import { requireUser } from '@/lib/auth/guards';
-import { listAccounts, summarise } from '@/services/account.service';
+import { listAccounts, listLoanDetails, summarise } from '@/services/account.service';
 import { buttonClass } from '@/components/ui/button';
 import { SuccessNextSteps } from '@/components/ui/success-next-steps';
 
@@ -26,6 +26,15 @@ const TYPE_LABELS: Record<string, string> = {
   other: 'Other',
 };
 
+/** Whole-percent paid off, from exact minor units. Null when there is no principal. */
+function loanProgress(owed: bigint, principal: bigint | undefined): number | null {
+  if (!principal || principal <= 0n) return null;
+  const paid = principal - owed;
+  if (paid <= 0n) return 0;
+  if (paid >= principal) return 100;
+  return Number((paid * 100n) / principal);
+}
+
 export default async function AccountsPage({
   searchParams,
 }: {
@@ -35,6 +44,7 @@ export default async function AccountsPage({
   const { created } = await searchParams;
   const accounts = await listAccounts();
   const totals = summarise(accounts);
+  const loans = await listLoanDetails(accounts);
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -107,6 +117,36 @@ export default async function AccountsPage({
                     {TYPE_LABELS[account.type] ?? account.type}
                     {account.institution_name ? ` · ${account.institution_name}` : ''}
                   </p>
+                  {loans.get(account.id) ? (
+                    <p className="hp-small text-text-muted">
+                      Next payment{' '}
+                      <Amount value={loans.get(account.id)!.paymentAmount} size="sm" />{' '}
+                      due {loans.get(account.id)!.nextDueDate}
+                    </p>
+                  ) : null}
+                  {loanProgress(
+                    account.balance.minor,
+                    loans.get(account.id)?.principal?.minor,
+                  ) !== null ? (
+                    <div
+                      role="progressbar"
+                      aria-label="Loan paid off"
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={loanProgress(
+                        account.balance.minor,
+                        loans.get(account.id)?.principal?.minor,
+                      )!}
+                      className="mt-1.5 h-1.5 w-40 overflow-hidden rounded-full bg-tint-ink"
+                    >
+                      <div
+                        className="h-full bg-primary"
+                        style={{
+                          width: `${loanProgress(account.balance.minor, loans.get(account.id)?.principal?.minor)}%`,
+                        }}
+                      />
+                    </div>
+                  ) : null}
                 </div>
                 <div className="flex shrink-0 items-center gap-3">
                   <Badge tone={account.nature === 'liability' ? 'warning' : 'neutral'}>

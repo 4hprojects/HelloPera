@@ -2,9 +2,11 @@ import { z } from 'zod';
 import {
   ACCOUNT_NATURES,
   ACCOUNT_TYPES,
+  DEFAULT_NATURE,
   DIRECTIONS,
   TRANSACTION_TYPES,
 } from '@/lib/finance/types';
+import { parseDecimal } from '@/lib/money';
 import { isoDate, positiveAmount, signedAmount } from '@/schemas/primitives';
 
 /**
@@ -20,6 +22,28 @@ const currencyCode = z
   .length(3, 'Use a 3-letter currency code')
   .transform((v) => v.toUpperCase());
 
+export const LOAN_FREQUENCIES = ['weekly', 'biweekly', 'monthly', 'quarterly', 'yearly'] as const;
+
+/** Blank form fields arrive as ''; treat them as absent. */
+const blankToUndefined = (v: unknown) => (v === '' || v === null ? undefined : v);
+
+const loanFields = {
+  paymentAmount: z.preprocess(blankToUndefined, positiveAmount.optional()),
+  paymentFrequency: z.preprocess(blankToUndefined, z.enum(LOAN_FREQUENCIES).optional()),
+  nextDueDate: z.preprocess(blankToUndefined, isoDate.optional()),
+  principal: z.preprocess(blankToUndefined, positiveAmount.optional()),
+  loanStartDate: z.preprocess(blankToUndefined, isoDate.optional()),
+  interestRateApr: z.preprocess(
+    blankToUndefined,
+    z.coerce.number().min(0, 'Use 0 to 100').max(100, 'Use 0 to 100').optional(),
+  ),
+  termMonths: z.preprocess(
+    blankToUndefined,
+    z.coerce.number().int('Use whole months').min(1, 'Use 1 to 600').max(600, 'Use 1 to 600').optional(),
+  ),
+  createReminder: z.boolean().default(true),
+};
+
 export const createAccountSchema = z
   .object({
     requestId: z.string().uuid('Reload this page before creating the account.'),
@@ -29,15 +53,62 @@ export const createAccountSchema = z
     currencyCode: currencyCode.default('PHP'),
     openingBalance: signedAmount.default('0'),
     institutionName: z.string().trim().max(80).optional().or(z.literal('')),
+    ...loanFields,
   })
-  .refine(
-    (data) => data.type !== 'other' || ACCOUNT_NATURES.includes(data.nature),
-    // §9: `other` has no sensible default nature, so it must be chosen.
-    {
-      message: 'Choose whether this account is an asset or a liability',
-      path: ['nature'],
-    },
-  );
+  .superRefine((data, ctx) => {
+    // §9: `other` has no sensible default nature, so it must be chosen. Every
+    // other type has one, and the client does not get to override it.
+    if (data.type !== 'other' && data.nature !== DEFAULT_NATURE[data.type]) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `A ${data.type.replace('_', ' ')} account is ${DEFAULT_NATURE[data.type]}`,
+        path: ['nature'],
+      });
+    }
+
+    const loanOnly = [
+      'paymentAmount',
+      'paymentFrequency',
+      'nextDueDate',
+      'principal',
+      'loanStartDate',
+      'interestRateApr',
+      'termMonths',
+    ] as const;
+
+    if (data.type !== 'loan') {
+      for (const key of loanOnly) {
+        if (data[key] !== undefined) {
+          ctx.addIssue({ code: 'custom', message: 'Only loans have this field', path: [key] });
+        }
+      }
+      return;
+    }
+
+    const need = (ok: boolean, message: string, path: string) => {
+      if (!ok) ctx.addIssue({ code: 'custom', message, path: [path] });
+    };
+    need(!!data.institutionName, 'Enter the lender', 'institutionName');
+    need(
+      parseDecimal(data.openingBalance) > 0n,
+      'Enter the amount you currently owe',
+      'openingBalance',
+    );
+    need(!!data.paymentAmount, 'Enter the amount due per payment', 'paymentAmount');
+    need(!!data.paymentFrequency, 'Choose how often you pay', 'paymentFrequency');
+    need(!!data.nextDueDate, 'Enter the next due date', 'nextDueDate');
+    if (
+      data.principal &&
+      parseDecimal(data.openingBalance) > 0n &&
+      parseDecimal(data.principal) < parseDecimal(data.openingBalance)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Original amount cannot be less than what you owe now',
+        path: ['principal'],
+      });
+    }
+  });
 
 export const updateAccountSchema = z.object({
   id: z.string().uuid(),

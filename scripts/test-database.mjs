@@ -556,6 +556,42 @@ try {
     );
   }
   {
+    const u = randomUUID();
+    await db.query("insert into auth.users(id,email) values($1,'loan@example.test')", [u]);
+    const req = randomUUID();
+    const mk = (r, owed = 5000, remind = true) =>
+      db.query(
+        "select public.create_loan_account_idempotent($1,$2,'Car loan','PHP',$3,'BDO',450,'monthly','2026-11-01',6000,'2026-01-01',7.5,24,$4)",
+        [u, r, owed, remind],
+      );
+    const id = Object.values((await mk(req)).rows[0])[0];
+    assert.equal(Object.values((await mk(req)).rows[0])[0], id, 'replay returns same loan');
+    assert.equal(
+      await scalar("select count(*)::int from public.accounts where user_id=$1 and type='loan'", [u]),
+      1,
+    );
+    assert.equal(
+      await scalar("select nature||':'||current_balance::text from public.accounts where id=$1", [id]),
+      'liability:5000.00',
+    );
+    assert.equal(
+      await scalar(
+        "select count(*)::int from public.recurring_rules r join public.loan_details d on d.recurring_rule_id=r.id where d.account_id=$1 and r.rule_type='bill' and r.amount=450 and r.next_occurrence_date='2026-11-01'",
+        [id],
+      ),
+      1,
+    );
+    await assert.rejects(mk(req, 4000), /REQUEST_ALREADY_USED/);
+    await assert.rejects(mk(randomUUID(), 7000), /LOAN_PRINCIPAL_BELOW_BALANCE/);
+    await assert.rejects(mk(randomUUID(), 0), /LOAN_BALANCE_REQUIRED/);
+    const noRule = Object.values((await mk(randomUUID(), 100, false)).rows[0])[0];
+    assert.equal(
+      await scalar("select recurring_rule_id is null from public.loan_details where account_id=$1", [noRule]),
+      true,
+    );
+    console.log('PASS: loan creation is atomic, idempotent, and validated');
+  }
+  {
     // Browser roles may only read: no write privilege on any public table or
     // view, and no execute on service-only functions.
     const writable = (
