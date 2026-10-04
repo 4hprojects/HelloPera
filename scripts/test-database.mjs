@@ -425,6 +425,89 @@ try {
       'PASS: admin change + audit are atomic; self-target, non-admin and direct access refused',
     );
   }
+  {
+    await db.query("select set_config('request.jwt.claim.sub','',false)");
+    const u = randomUUID();
+    const v = randomUUID();
+    await db.query(
+      "insert into auth.users(id,email) values($1,'pc@example.test'),($2,'pd@example.test')",
+      [u, v],
+    );
+    const acct = await scalar(
+      "select public.create_account($1,'Cand','cash','asset','PHP',100000)",
+      [u],
+    );
+    const vAcct = await scalar(
+      "select public.create_account($1,'Other','cash','asset','PHP',100000)",
+      [v],
+    );
+    await db.query(
+      "select public.create_transaction($1,'expense',10,'PHP',('2026-01-01'::date + i)::date,$2,null,null,null,null,'Row '||i) from generate_series(1,120) i",
+      [u, acct],
+    );
+    await db.query(
+      "select public.create_transaction($1,'expense',10,'PHP','2026-06-01',$2,null,null,null,null,'Foreign')",
+      [v, vAcct],
+    );
+    const bill = await scalar(
+      "insert into public.bills(user_id,provider_name,amount,currency_code,due_date) values($1,'Cand bill',500,'PHP','2026-09-23') returning id",
+      [u],
+    );
+    const oldest = await scalar(
+      "select id from public.transactions where user_id=$1 and description='Row 1'",
+      [u],
+    );
+    const newest = await scalar(
+      "select id from public.transactions where user_id=$1 and description='Row 120'",
+      [u],
+    );
+    // Partly allocate the oldest, fully allocate the newest.
+    await db.query(
+      "select public.record_obligation_payment($1,$2,'bill',$3,4,null,'2026-09-23',$4)",
+      [u, randomUUID(), bill, oldest],
+    );
+    await db.query(
+      "select public.record_obligation_payment($1,$2,'bill',$3,10,null,'2026-09-23',$4)",
+      [u, randomUUID(), bill, newest],
+    );
+
+    await db.exec('set role authenticated');
+    await db.query("select set_config('request.jwt.claim.sub',$1,false)", [u]);
+    const page = async (args) =>
+      (
+        await db.query(
+          'select * from public.list_payment_candidates($1,$2,$3,$4,$5,$6)',
+          args,
+        )
+      ).rows;
+    let seen = [];
+    let cursor = [null, null];
+    for (;;) {
+      const rows = await page(['expense', 'PHP', null, cursor[0], cursor[1], 50]);
+      seen.push(...rows);
+      if (rows.length < 50) break;
+      const last = rows[rows.length - 1];
+      cursor = [last.transaction_date, last.id];
+    }
+    assert.equal(seen.length, 119, 'all but the fully allocated transaction, past 100');
+    assert.ok(!seen.some((r) => r.id === newest), 'fully allocated hidden');
+    assert.ok(
+      seen.some((r) => r.id === oldest && r.remaining === '6.00'),
+      'older than 100 selectable with remaining',
+    );
+    assert.ok(!seen.some((r) => r.description === 'Foreign'), 'other users never leak');
+    assert.equal(
+      (await page(['expense', 'PHP', 'row 7%', null, null, 50])).length,
+      0,
+      'wildcards are literal',
+    );
+    assert.equal((await page(['expense', 'PHP', 'Row 11', null, null, 50])).length, 11);
+    assert.equal((await page(['income', 'PHP', null, null, null, 50])).length, 0);
+    await db.exec('reset role');
+    console.log(
+      'PASS: payment candidates paginate past 100, hide allocated, show remaining, stay private',
+    );
+  }
 } finally {
   await db.close();
 }

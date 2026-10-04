@@ -24,7 +24,7 @@ Audit: 1 October 2026. These are **future tasks**, not changes performed by the 
 | [HP-017](#hp-017) | P1       | 4     | blocked  | Verify signup closure, email, OAuth and public production routing |
 | [HP-018](#hp-018) | P1       | 4     | blocked  | Complete a database and document restore drill                    |
 | [HP-019](#hp-019) | P1       | 4     | blocked  | Establish monitoring, scheduler and support ownership             |
-| [HP-010](#hp-010) | P2       | 2     | open     | Improve document and payment recovery UX                          |
+| [HP-010](#hp-010) | P2       | 2     | in progress | Improve document and payment recovery UX                          |
 | [HP-014](#hp-014) | P2       | 3     | open     | Reconcile docs and streamline maintainability                     |
 | [HP-015](#hp-015) | P2       | 3     | open     | Review headers and rate-limit deployment assumptions              |
 | [HP-024](#hp-024) | P2       | 3     | open     | Broaden public-site and PWA quality coverage                      |
@@ -228,7 +228,7 @@ P0: none demonstrated. P1 items are free-launch gates; P2 items may be scheduled
 
 ## HP-010 — Improve document and payment recovery UX
 
-**Priority:** P2 · **Phase:** 2 · **Status:** open · **Evidence:** confirmed bounded picker/reload behavior; upload recovery UX unverified
+**Priority:** P2 · **Phase:** 2 · **Status:** in progress · **Evidence:** confirmed bounded picker/reload behavior; upload recovery UX unverified
 **Area:** Documents/payments · **Responsible role:** Frontend + backend · **Estimate:** M
 **Dependencies:** HP-003, HP-009
 

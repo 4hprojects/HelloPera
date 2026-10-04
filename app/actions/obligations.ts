@@ -19,7 +19,9 @@ import {
   createBill,
   createExpectedIncome,
   createReceivable,
+  listPaymentCandidates,
   type ObligationKind,
+  type PaymentCandidate,
 } from '@/services/obligation.service';
 
 function fieldErrorsFrom(error: {
@@ -222,4 +224,27 @@ export async function cancelObligationAction(formData: FormData): Promise<void> 
   revalidatePath('/forecast');
   revalidatePath('/dashboard');
   revalidatePath('/analytics');
+}
+
+/** Read-only page of linkable transactions for the payment picker. */
+export async function searchPaymentCandidatesAction(input: {
+  kind: ObligationKind;
+  currency: string;
+  search?: string;
+  cursor?: string | null;
+}): Promise<{ items: PaymentCandidate[]; next: string | null; error?: string }> {
+  await requireUser();
+  if (!['bill', 'receivable', 'expected_income'].includes(input.kind)) {
+    return { items: [], next: null, error: 'Unknown item type.' };
+  }
+  try {
+    return await listPaymentCandidates({
+      kind: input.kind,
+      currency: String(input.currency).slice(0, 3).toUpperCase(),
+      search: input.search,
+      cursor: input.cursor,
+    });
+  } catch {
+    return { items: [], next: null, error: 'Transactions could not be loaded.' };
+  }
 }
