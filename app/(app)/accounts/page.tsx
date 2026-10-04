@@ -1,16 +1,23 @@
-import { archiveAccountAction } from '@/app/actions/finance';
-import { Button } from '@/components/ui/button';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Amount } from '@/components/finance/amount';
-import { Badge } from '@/components/ui/badge';
+import { AccountCard, type AccountCardModel } from '@/components/finance/account-card';
 import { Card, CardLabel } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { EmptyState } from '@/components/ui/states';
 import { requireUser } from '@/lib/auth/guards';
-import { listAccounts, listLoanDetails, summarise } from '@/services/account.service';
+import {
+  listAccounts,
+  listBankDetails,
+  listLoanDetails,
+  summarise,
+  type Account,
+} from '@/services/account.service';
 import { buttonClass } from '@/components/ui/button';
 import { SuccessNextSteps } from '@/components/ui/success-next-steps';
+import { BANK_KIND_LABELS, type BankKind } from '@/lib/finance/banks';
+import { groupAccountsByNature } from '@/lib/finance/account-groups';
+import { toDecimalString } from '@/lib/money';
 
 export const metadata: Metadata = { title: 'Accounts' };
 
@@ -26,25 +33,78 @@ const TYPE_LABELS: Record<string, string> = {
   other: 'Other',
 };
 
-/** Whole-percent paid off, from exact minor units. Null when there is no principal. */
-function loanProgress(owed: bigint, principal: bigint | undefined): number | null {
-  if (!principal || principal <= 0n) return null;
-  const paid = principal - owed;
-  if (paid <= 0n) return 0;
-  if (paid >= principal) return 100;
-  return Number((paid * 100n) / principal);
-}
-
 export default async function AccountsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ created?: string }>;
+  searchParams: Promise<{ created?: string; archived?: string }>;
 }) {
   await requireUser();
-  const { created } = await searchParams;
-  const accounts = await listAccounts();
-  const totals = summarise(accounts);
-  const loans = await listLoanDetails(accounts);
+  const { created, archived } = await searchParams;
+  const showArchived = archived === '1';
+
+  const accounts = await listAccounts({ includeArchived: showArchived });
+  const [loans, banks] = await Promise.all([
+    listLoanDetails(accounts),
+    listBankDetails(accounts),
+  ]);
+  // Totals describe what you have now: archived accounts never count, even
+  // while they are listed below.
+  const totals = summarise(accounts.filter((a) => !a.is_archived));
+  const { owned, owed } = groupAccountsByNature(accounts);
+
+  const toCard = (account: Account): AccountCardModel => {
+    const loan = loans.get(account.id);
+    const bank = banks.get(account.id);
+    const kind = bank?.kind ? BANK_KIND_LABELS[bank.kind as BankKind] : null;
+    const subtitle = [
+      TYPE_LABELS[account.type] ?? account.type,
+      account.institution_name,
+      kind,
+    ]
+      .filter(Boolean)
+      .join(' · ')
+      .concat(bank?.last4 ? ` ••${bank.last4}` : '');
+
+    return {
+      id: account.id,
+      name: account.name,
+      subtitle,
+      nature: account.nature,
+      balance: account.balance,
+      archived: account.is_archived,
+      loan: loan
+        ? {
+            nextPayment: loan.paymentAmount,
+            nextDueDate: loan.nextDueDate,
+            principal: loan.principal,
+          }
+        : null,
+      edit: {
+        id: account.id,
+        name: account.name,
+        isLoan: account.type === 'loan',
+        isBank: account.type === 'bank',
+        isArchived: account.is_archived,
+        bank: bank ?? null,
+        institutionName: account.institution_name,
+        loan: loan
+          ? {
+              paymentAmount: toDecimalString(loan.paymentAmount.minor),
+              paymentFrequency: loan.paymentFrequency,
+              nextDueDate: loan.nextDueDate,
+              principal: loan.principal ? toDecimalString(loan.principal.minor) : null,
+              interestRateApr: loan.interestRateApr,
+              termMonths: loan.termMonths,
+            }
+          : null,
+      },
+    };
+  };
+
+  const sections = [
+    { key: 'owned', title: 'Money you own', items: owned },
+    { key: 'owed', title: 'Money you owe', items: owed },
+  ].filter((s) => s.items.length > 0);
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -52,9 +112,17 @@ export default async function AccountsPage({
         title="Accounts"
         description="Transactions are the source of truth; balances are derived from them."
         actions={
-          <Link href="/accounts/new" className={buttonClass('primary', 'sm')}>
-            Add account
-          </Link>
+          <>
+            <Link
+              href={showArchived ? '/accounts' : '/accounts?archived=1'}
+              className={buttonClass('ghost', 'sm')}
+            >
+              {showArchived ? 'Hide archived' : 'Show archived'}
+            </Link>
+            <Link href="/accounts/new" className={buttonClass('primary', 'sm')}>
+              Add account
+            </Link>
+          </>
         }
       />
 
@@ -72,30 +140,35 @@ export default async function AccountsPage({
 
       {/* One block per currency. HelloPera never sums across currencies. */}
       {totals.map((t) => (
-        <div key={t.currency} className="mb-4 grid grid-cols-3 gap-3">
-          <Card>
-            <CardLabel>Assets ({t.currency})</CardLabel>
-            <Amount value={t.assets} size="lg" className="mt-1.5 block" />
-          </Card>
-          <Card>
-            <CardLabel>Liabilities ({t.currency})</CardLabel>
-            <Amount
-              value={t.liabilities}
-              tone="liability"
-              size="lg"
-              className="mt-1.5 block"
-            />
-          </Card>
-          <Card>
-            <CardLabel>Net position ({t.currency})</CardLabel>
-            <Amount value={t.net} size="lg" className="mt-1.5 block" />
-          </Card>
-        </div>
+        <section key={t.currency} className="mb-5" aria-label={`${t.currency} totals`}>
+          <h2 className="hp-small mb-2 font-semibold uppercase tracking-wide text-text-muted">
+            {t.currency}
+          </h2>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <Card>
+              <CardLabel>Assets</CardLabel>
+              <Amount value={t.assets} size="lg" className="mt-1.5 block" />
+            </Card>
+            <Card>
+              <CardLabel>Liabilities</CardLabel>
+              <Amount
+                value={t.liabilities}
+                tone="liability"
+                size="lg"
+                className="mt-1.5 block"
+              />
+            </Card>
+            <Card>
+              <CardLabel>Net position</CardLabel>
+              <Amount value={t.net} size="lg" className="mt-1.5 block" />
+            </Card>
+          </div>
+        </section>
       ))}
 
       {accounts.length === 0 ? (
         <EmptyState
-          title="No accounts yet"
+          title={showArchived ? 'No accounts at all' : 'No accounts yet'}
           description="Add your cash, bank, GCash or credit card to start tracking."
           action={
             <Link href="/accounts/new" className={buttonClass('primary', 'md')}>
@@ -104,83 +177,27 @@ export default async function AccountsPage({
           }
         />
       ) : (
-        <ul className="space-y-2">
-          {accounts.map((account) => (
-            <li key={account.id}>
-              <Card className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="truncate font-medium text-text">
-                    {account.name}
-                    {account.is_archived ? ' (archived)' : ''}
-                  </p>
-                  <p className="hp-small text-text-muted">
-                    {TYPE_LABELS[account.type] ?? account.type}
-                    {account.institution_name ? ` · ${account.institution_name}` : ''}
-                  </p>
-                  {loans.get(account.id) ? (
-                    <p className="hp-small text-text-muted">
-                      Next payment{' '}
-                      <Amount value={loans.get(account.id)!.paymentAmount} size="sm" />{' '}
-                      due {loans.get(account.id)!.nextDueDate}
-                    </p>
-                  ) : null}
-                  {loanProgress(
-                    account.balance.minor,
-                    loans.get(account.id)?.principal?.minor,
-                  ) !== null ? (
-                    <div
-                      role="progressbar"
-                      aria-label="Loan paid off"
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                      aria-valuenow={loanProgress(
-                        account.balance.minor,
-                        loans.get(account.id)?.principal?.minor,
-                      )!}
-                      className="mt-1.5 h-1.5 w-40 overflow-hidden rounded-full bg-tint-ink"
-                    >
-                      <div
-                        className="h-full bg-primary"
-                        style={{
-                          width: `${loanProgress(account.balance.minor, loans.get(account.id)?.principal?.minor)}%`,
-                        }}
-                      />
-                    </div>
-                  ) : null}
-                </div>
-                <div className="flex shrink-0 items-center gap-3">
-                  <Badge tone={account.nature === 'liability' ? 'warning' : 'neutral'}>
-                    {account.nature === 'liability' ? 'Owed' : 'Owned'}
-                  </Badge>
-                  <Amount
-                    value={account.balance}
-                    tone={account.nature === 'liability' ? 'liability' : 'neutral'}
-                  />
-                </div>
-              </Card>
-              <details className="mt-2">
-                <summary className="min-h-11 cursor-pointer py-3 text-primary-text">
-                  {account.is_archived ? 'Restore account' : 'Archive account'}
-                </summary>
-                <p className="hp-small mb-2">
-                  History is kept. Archived accounts cannot receive new transactions and
-                  are excluded from dashboard balances.
-                </p>
-                <form action={archiveAccountAction}>
-                  <input type="hidden" name="id" value={account.id} />
-                  <input
-                    type="hidden"
-                    name="archived"
-                    value={String(!account.is_archived)}
-                  />
-                  <Button type="submit" variant="secondary">
-                    {account.is_archived ? 'Confirm restore' : 'Confirm archive'}
-                  </Button>
-                </form>
-              </details>
-            </li>
-          ))}
-        </ul>
+        sections.map((section) => (
+          <section
+            key={section.key}
+            className="mb-6"
+            aria-labelledby={`${section.key}-h`}
+          >
+            <h2 id={`${section.key}-h`} className="hp-h3 mb-2 text-text">
+              {section.title}{' '}
+              <span className="hp-small font-normal text-text-muted">
+                ({section.items.length})
+              </span>
+            </h2>
+            <ul className="grid gap-3 md:grid-cols-2">
+              {section.items.map((account) => (
+                <li key={account.id}>
+                  <AccountCard account={toCard(account)} />
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))
       )}
     </div>
   );

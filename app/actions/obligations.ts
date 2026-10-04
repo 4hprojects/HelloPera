@@ -11,6 +11,9 @@ import {
   createExpectedIncomeSchema,
   createReceivableSchema,
   recordPaymentSchema,
+  updateBillSchema,
+  updateExpectedIncomeSchema,
+  updateReceivableSchema,
 } from '@/schemas/obligation.schema';
 import {
   recordObligationPayment,
@@ -20,6 +23,8 @@ import {
   createExpectedIncome,
   createReceivable,
   listPaymentCandidates,
+  ObligationEditError,
+  updateObligation,
   type ObligationKind,
   type PaymentCandidate,
 } from '@/services/obligation.service';
@@ -62,6 +67,9 @@ export async function createBillAction(
     dueDate: formData.get('dueDate'),
     categoryId: formData.get('categoryId') || null,
     notes: formData.get('notes') ?? '',
+    installmentAmount: formData.get('installmentAmount') ?? '',
+    installmentCount: formData.get('installmentCount') ?? '',
+    installmentsPrior: formData.get('installmentsPrior') ?? '',
   });
   if (!parsed.success) return { fieldErrors: fieldErrorsFrom(parsed.error) };
 
@@ -95,6 +103,7 @@ export async function createReceivableAction(
     description: formData.get('description') ?? '',
     amount: formData.get('amount'),
     currencyCode: formData.get('currencyCode') || 'PHP',
+    borrowedDate: formData.get('borrowedDate') || '',
     dueDate: formData.get('dueDate') || '',
     notes: formData.get('notes') ?? '',
   });
@@ -248,4 +257,103 @@ export async function searchPaymentCandidatesAction(input: {
   } catch {
     return { items: [], next: null, error: 'Transactions could not be loaded.' };
   }
+}
+
+export async function updateObligationAction(
+  _p: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const { user } = await requireUser();
+  try {
+    await assertWritesEnabled();
+  } catch (error) {
+    if (error instanceof WritesDisabledError) return { error: error.message };
+    throw error;
+  }
+
+  const kind = String(formData.get('kind') ?? '') as ObligationKind;
+  if (!(kind in ROUTES)) return { error: 'That item could not be edited.' };
+
+  const common = {
+    id: formData.get('id'),
+    description: formData.get('description') ?? '',
+    amount: formData.get('amount'),
+    notes: formData.get('notes') ?? '',
+  };
+  const categoryId = formData.get('categoryId') || null;
+
+  let input;
+  if (kind === 'bill') {
+    const parsed = updateBillSchema.safeParse({
+      ...common,
+      providerName: formData.get('name'),
+      dueDate: formData.get('date'),
+      categoryId,
+      installmentAmount: formData.get('installmentAmount') ?? '',
+      installmentCount: formData.get('installmentCount') ?? '',
+      installmentsPrior: formData.get('installmentsPrior') ?? '',
+    });
+    if (!parsed.success)
+      return { fieldErrors: remapFieldErrors(parsed.error, 'providerName', 'dueDate') };
+    input = { ...parsed.data, name: parsed.data.providerName, date: parsed.data.dueDate };
+  } else if (kind === 'receivable') {
+    const parsed = updateReceivableSchema.safeParse({
+      ...common,
+      partyName: formData.get('name'),
+      borrowedDate: formData.get('borrowedDate') ?? '',
+      dueDate: formData.get('date') ?? '',
+    });
+    if (!parsed.success)
+      return { fieldErrors: remapFieldErrors(parsed.error, 'partyName', 'dueDate') };
+    input = {
+      ...parsed.data,
+      name: parsed.data.partyName,
+      date: parsed.data.dueDate || '',
+    };
+  } else {
+    const parsed = updateExpectedIncomeSchema.safeParse({
+      ...common,
+      sourceName: formData.get('name'),
+      expectedDate: formData.get('date'),
+      categoryId,
+    });
+    if (!parsed.success)
+      return {
+        fieldErrors: remapFieldErrors(parsed.error, 'sourceName', 'expectedDate'),
+      };
+    input = {
+      ...parsed.data,
+      name: parsed.data.sourceName,
+      date: parsed.data.expectedDate,
+    };
+  }
+
+  try {
+    await updateObligation(user.id, kind, input);
+  } catch (error) {
+    if (error instanceof ObligationEditError) return { error: error.message };
+    log.error('obligation update failed', {
+      m: error instanceof Error ? error.message : '?',
+    });
+    return { error: 'We could not save these changes. Please try again.' };
+  }
+
+  revalidatePath(ROUTES[kind]);
+  revalidatePath(`${ROUTES[kind]}/${input.id}`);
+  revalidatePath('/forecast');
+  revalidatePath('/dashboard');
+  revalidatePath('/analytics');
+  return { success: 'Changes saved.' };
+}
+
+/** The edit form uses generic `name` / `date` inputs for all three kinds. */
+function remapFieldErrors(
+  error: { issues: Array<{ path: PropertyKey[]; message: string }> },
+  nameKey: string,
+  dateKey: string,
+) {
+  const out = fieldErrorsFrom(error);
+  if (out[nameKey]) out.name = out[nameKey];
+  if (out[dateKey]) out.date = out[dateKey];
+  return out;
 }

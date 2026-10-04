@@ -5,12 +5,14 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { fromDatabase, parseDecimal, toDecimalString, type Money } from '@/lib/money';
 import {
   displayStatus,
+  installmentProgress,
   remaining,
   type DisplayStatus,
   type LifecycleStatus,
 } from '@/lib/finance/obligation';
 import type {
   RecordPaymentInput,
+  UpdateObligationInput,
   CreateBillInput,
   CreateExpectedIncomeInput,
   CreateReceivableInput,
@@ -45,6 +47,13 @@ export type Obligation = {
   lifecycle: LifecycleStatus;
   display: DisplayStatus;
   notes: string | null;
+  categoryId: string | null;
+  /** Receivables only: when the money was lent. */
+  borrowedDate: string | null;
+  /** Bills only: monthly payment and number of months, when set. */
+  installment: { amount: Money; count: number; prior: number } | null;
+  /** Whole installments covered by recorded payments. */
+  paymentsMade: number;
   createdAt: string;
 };
 
@@ -108,6 +117,14 @@ function toObligation(kind: ObligationKind, today: string, row: Row): Obligation
   const applied = { minor: appliedMinor, currency };
   const lifecycle = row.status as LifecycleStatus;
   const date = dateOf(kind, row);
+  const installment =
+    row.installment_amount != null && row.installment_count != null
+      ? {
+          amount: fromDatabase(String(row.installment_amount), currency),
+          count: Number(row.installment_count),
+          prior: Number(row.installments_prior ?? 0),
+        }
+      : null;
 
   return {
     id: String(row.id),
@@ -128,6 +145,17 @@ function toObligation(kind: ObligationKind, today: string, row: Row): Obligation
       { missedInsteadOfOverdue: kind === 'expected_income' },
     ),
     notes: (row.notes as string) ?? null,
+    categoryId: (row.category_id as string) ?? null,
+    borrowedDate: (row.borrowed_date as string) ?? null,
+    installment,
+    paymentsMade: installment
+      ? installmentProgress(
+          applied,
+          installment.amount,
+          installment.count,
+          installment.prior,
+        )
+      : 0,
     createdAt: String(row.created_at),
   };
 }
@@ -148,6 +176,49 @@ export async function getObligation(
   return row ? toObligation(kind, today, row) : null;
 }
 
+export class ObligationEditError extends Error {}
+
+function obligationEditMessage(message: string): string {
+  if (message.includes('OBLIGATION_NOT_FOUND')) return 'That item no longer exists.';
+  if (message.includes('OBLIGATION_CANCELLED'))
+    return 'A cancelled item cannot be edited.';
+  if (message.includes('AMOUNT_BELOW_APPLIED')) {
+    return 'The amount cannot be less than what is already recorded against it.';
+  }
+  if (message.includes('CATEGORY_NOT_FOUND')) return 'That category is unavailable.';
+  if (message.includes('DATE_BEFORE_BORROWED')) {
+    return 'The expected date cannot be before the date borrowed.';
+  }
+  if (message.includes('INSTALLMENT_INVALID')) {
+    return 'Enter both a monthly payment (no more than the total) and 2 to 600 months. Payments already made cannot exceed the months.';
+  }
+  return 'We could not save these changes. Please try again.';
+}
+
+export async function updateObligation(
+  userId: string,
+  kind: ObligationKind,
+  input: UpdateObligationInput,
+) {
+  const admin = createAdminClient();
+  const { error } = await admin.rpc('update_obligation', {
+    p_user_id: userId,
+    p_kind: kind,
+    p_id: input.id,
+    p_name: input.name,
+    p_amount: input.amount,
+    p_date: input.date || null,
+    p_description: input.description || null,
+    p_notes: input.notes || null,
+    p_category_id: input.categoryId ?? null,
+    p_installment_amount: input.installmentAmount ?? null,
+    p_installment_count: input.installmentCount ?? null,
+    p_installments_prior: input.installmentsPrior ?? 0,
+    p_borrowed_date: input.borrowedDate || null,
+  });
+  if (error) throw new ObligationEditError(obligationEditMessage(error.message));
+}
+
 export async function createBill(
   userId: string,
   input: CreateBillInput,
@@ -164,6 +235,9 @@ export async function createBill(
       due_date: input.dueDate,
       category_id: input.categoryId ?? null,
       notes: input.notes || null,
+      installment_amount: input.installmentAmount ?? null,
+      installment_count: input.installmentCount ?? null,
+      installments_prior: input.installmentsPrior ?? 0,
     })
     .select('id')
     .single<{ id: string }>();
@@ -184,6 +258,7 @@ export async function createReceivable(
       description: input.description || null,
       amount: input.amount,
       currency_code: input.currencyCode,
+      borrowed_date: input.borrowedDate || null,
       due_date: input.dueDate || null,
       notes: input.notes || null,
     })

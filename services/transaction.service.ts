@@ -7,7 +7,11 @@ import { analyticsClass } from '@/lib/finance/balance';
 import { takeLookaheadPage } from '@/lib/pagination/lookahead';
 import { withServiceTiming } from '@/lib/performance/service-timing';
 import type { Direction, TransactionStatus, TransactionType } from '@/lib/finance/types';
-import type { CreateTransactionInput, TransactionFilter } from '@/schemas/finance.schema';
+import type {
+  CreateTransactionInput,
+  TransactionFilter,
+  UpdateTransactionInput,
+} from '@/schemas/finance.schema';
 
 export const PAGE_SIZE = 25;
 
@@ -129,6 +133,16 @@ function friendlyError(message: string): string {
   if (message.includes('CURRENCY_MISMATCH')) {
     return 'The accounts use different currencies. HelloPera does not convert between them.';
   }
+  if (message.includes('TRANSACTION_VOIDED'))
+    return 'A voided transaction cannot be edited.';
+  if (message.includes('TRANSACTION_NOT_EDITABLE')) {
+    return 'Opening balances cannot be edited. Adjust the account instead.';
+  }
+  if (message.includes('TRANSACTION_NOT_FOUND'))
+    return 'That transaction no longer exists.';
+  if (message.includes('TRANSACTION_LINKED')) {
+    return 'This transaction settles a bill or receivable, so its amount is locked. Void it and record a corrected one.';
+  }
   if (message.includes('CATEGORY_NOT_FOUND')) return 'That category is unavailable.';
   if (message.includes('AMOUNT_NOT_POSITIVE')) return 'Amount must be greater than zero.';
   if (message.includes('INCOME_REQUIRES_ASSET')) {
@@ -168,6 +182,21 @@ export async function createTransaction(
   });
   if (error) throw new TransactionError(friendlyError(error.message));
   return data as string;
+}
+
+export async function updateTransaction(userId: string, input: UpdateTransactionInput) {
+  const admin = createAdminClient();
+  const { error } = await admin.rpc('update_transaction', {
+    p_user_id: userId,
+    p_id: input.id,
+    p_amount: input.amount,
+    p_date: input.transactionDate,
+    p_category_id: input.categoryId ?? null,
+    p_merchant: input.merchantName || null,
+    p_description: input.description || null,
+    p_notes: input.notes || null,
+  });
+  if (error) throw new TransactionError(friendlyError(error.message));
 }
 
 export async function voidTransaction(userId: string, id: string, reason?: string) {

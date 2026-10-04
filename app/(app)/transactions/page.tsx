@@ -13,6 +13,9 @@ import {
   type TransactionFilter,
 } from '@/schemas/finance.schema';
 import { listAccounts } from '@/services/account.service';
+import { listCategories } from '@/services/category.service';
+import { EditTransaction } from '@/components/finance/edit-transaction';
+import { toDecimalString } from '@/lib/money';
 import { listTransactions } from '@/services/transaction.service';
 import { TRANSACTION_TYPES } from '@/lib/finance/types';
 import { buttonClass } from '@/components/ui/button';
@@ -52,9 +55,10 @@ export default async function TransactionsPage({
     filter.search,
   );
 
-  const [{ transactions, page, hasNext }, accounts] = await Promise.all([
+  const [{ transactions, page, hasNext }, accounts, categories] = await Promise.all([
     listTransactions(filter),
     listAccounts({ includeArchived: true }),
+    listCategories(),
   ]);
   const accountName = new Map(accounts.map((a) => [a.id, a.name]));
 
@@ -192,6 +196,27 @@ export default async function TransactionsPage({
                       />
                     </div>
                   </div>
+                  {!voided && tx.type !== 'opening_balance' ? (
+                    <div className="mt-3">
+                      <EditTransaction
+                        transaction={{
+                          id: tx.id,
+                          type: tx.type,
+                          amount: toDecimalString(tx.amount.minor),
+                          date: tx.transaction_date,
+                          categoryId: tx.category_id,
+                          merchantName: tx.merchant_name,
+                          description: tx.description,
+                          notes: tx.notes,
+                        }}
+                        categories={categories.map((c) => ({
+                          id: c.id,
+                          name: c.name,
+                          type: c.type,
+                        }))}
+                      />
+                    </div>
+                  ) : null}
                   {!voided && <VoidTransactionForm id={tx.id} />}
                 </Card>
               </li>

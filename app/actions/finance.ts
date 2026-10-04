@@ -8,18 +8,24 @@ import { assertWritesEnabled, WritesDisabledError } from '@/lib/ops/kill-switche
 import {
   createAccountSchema,
   createTransactionSchema,
+  updateAccountSchema,
+  updateTransactionSchema,
   voidTransactionSchema,
 } from '@/schemas/finance.schema';
 import {
   archiveAccount,
   createAccount,
   createLoanAccount,
+  AccountEditError,
+  deleteAccount,
   getAccount,
+  updateAccountDetails,
 } from '@/services/account.service';
 import { deriveTransactionCurrency } from '@/lib/finance/currency';
 import {
   createTransaction,
   TransactionError,
+  updateTransaction,
   voidTransaction,
 } from '@/services/transaction.service';
 import type { ActionState } from '@/app/actions/auth';
@@ -58,6 +64,8 @@ export async function createAccountAction(
     currencyCode: formData.get('currencyCode') || 'PHP',
     openingBalance: formData.get('openingBalance') || '0',
     institutionName: formData.get('institutionName') ?? '',
+    bankLast4: formData.get('bankLast4') ?? '',
+    bankKind: formData.get('bankKind') ?? '',
     paymentAmount: formData.get('paymentAmount') ?? '',
     paymentFrequency: formData.get('paymentFrequency') ?? '',
     nextDueDate: formData.get('nextDueDate') ?? '',
@@ -212,4 +220,132 @@ export async function voidTransactionAction(
   ])
     revalidatePath(route, 'layout');
   return { success: 'Transaction voided. It no longer affects your balances.' };
+}
+
+export async function deleteAccountAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const { user } = await requireUser();
+  try {
+    await assertWritesEnabled();
+  } catch (error) {
+    if (error instanceof WritesDisabledError) return { error: error.message };
+    throw error;
+  }
+
+  const id = String(formData.get('id') ?? '');
+  if (!id) return { error: 'That account could not be deleted.' };
+
+  try {
+    await deleteAccount(user.id, id);
+  } catch (error) {
+    if (error instanceof AccountEditError) return { error: error.message };
+    log.error('account delete failed', {
+      message: error instanceof Error ? error.message : 'unknown',
+    });
+    return { error: 'We could not delete this account. Please try again.' };
+  }
+
+  revalidatePath('/accounts');
+  revalidatePath('/dashboard');
+  revalidatePath('/analytics');
+  revalidatePath('/bills');
+  revalidatePath('/recurring', 'layout');
+  revalidatePath('/forecast');
+  return { success: 'Account deleted.' };
+}
+
+export async function updateAccountAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const { user } = await requireUser();
+  try {
+    await assertWritesEnabled();
+  } catch (error) {
+    if (error instanceof WritesDisabledError) return { error: error.message };
+    throw error;
+  }
+
+  const id = String(formData.get('id') ?? '');
+  // The type decides which fields apply, so read it from the row, not the form.
+  const account = id ? await getAccount(id) : null;
+  if (!account) return { error: 'That account no longer exists.' };
+
+  const parsed = updateAccountSchema.safeParse({
+    id,
+    type: account.type,
+    name: formData.get('name'),
+    institutionName: formData.get('institutionName') ?? '',
+    bankLast4: formData.get('bankLast4') ?? '',
+    bankKind: formData.get('bankKind') ?? '',
+    paymentAmount: formData.get('paymentAmount') ?? '',
+    paymentFrequency: formData.get('paymentFrequency') ?? '',
+    nextDueDate: formData.get('nextDueDate') ?? '',
+    principal: formData.get('principal') ?? '',
+    interestRateApr: formData.get('interestRateApr') ?? '',
+    termMonths: formData.get('termMonths') ?? '',
+  });
+  if (!parsed.success) return { fieldErrors: fieldErrorsFrom(parsed.error) };
+
+  try {
+    await updateAccountDetails(user.id, parsed.data);
+  } catch (error) {
+    if (error instanceof AccountEditError) return { error: error.message };
+    log.error('account update failed', {
+      message: error instanceof Error ? error.message : 'unknown',
+    });
+    return { error: 'We could not save these changes. Please try again.' };
+  }
+
+  revalidatePath('/accounts');
+  revalidatePath('/dashboard');
+  if (account.type === 'loan') {
+    revalidatePath('/bills');
+    revalidatePath('/recurring', 'layout');
+    revalidatePath('/forecast');
+  }
+  return { success: 'Account updated.' };
+}
+
+export async function updateTransactionAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const { user } = await requireUser();
+  try {
+    await assertWritesEnabled();
+  } catch (error) {
+    if (error instanceof WritesDisabledError) return { error: error.message };
+    throw error;
+  }
+
+  const parsed = updateTransactionSchema.safeParse({
+    id: formData.get('id'),
+    amount: formData.get('amount'),
+    transactionDate: formData.get('transactionDate'),
+    categoryId: formData.get('categoryId') || null,
+    merchantName: formData.get('merchantName') ?? '',
+    description: formData.get('description') ?? '',
+    notes: formData.get('notes') ?? '',
+  });
+  if (!parsed.success) return { fieldErrors: fieldErrorsFrom(parsed.error) };
+
+  try {
+    await updateTransaction(user.id, parsed.data);
+  } catch (error) {
+    if (error instanceof TransactionError) return { error: error.message };
+    log.error('transaction update failed', {
+      message: error instanceof Error ? error.message : 'unknown',
+    });
+    return { error: 'We could not save these changes. Please try again.' };
+  }
+
+  revalidatePath('/transactions');
+  revalidatePath('/accounts');
+  revalidatePath('/dashboard');
+  revalidatePath('/analytics');
+  revalidatePath('/forecast');
+  return { success: 'Transaction updated.' };
 }

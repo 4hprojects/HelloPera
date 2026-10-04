@@ -44,6 +44,27 @@ export function NewBillForm({
         error={state.fieldErrors?.dueDate}
       />
 
+      <FormField
+        id="installmentAmount"
+        label="Monthly payment (optional)"
+        inputMode="decimal"
+        hint="Paying in installments? Leave both blank for a one-time bill."
+        error={state.fieldErrors?.installmentAmount}
+      />
+      <FormField
+        id="installmentCount"
+        label="Number of months (optional)"
+        inputMode="numeric"
+        error={state.fieldErrors?.installmentCount}
+      />
+      <FormField
+        id="installmentsPrior"
+        label="Payments already made (optional)"
+        inputMode="numeric"
+        hint="Paid some before adding this bill? Then enter what you still owe as the amount."
+        error={state.fieldErrors?.installmentsPrior}
+      />
+
       <SelectField id="categoryId" label="Category" defaultValue="" wrapClassName="mb-4">
         <option value="">No category</option>
         {categories.map((c) => (

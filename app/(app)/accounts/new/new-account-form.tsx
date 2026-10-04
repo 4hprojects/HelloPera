@@ -1,12 +1,14 @@
 'use client';
 
-import { useActionState, useState } from 'react';
+import { startTransition, useActionState, useState } from 'react';
 import { createAccountAction } from '@/app/actions/finance';
 import type { ActionState } from '@/app/actions/auth';
 import { FormAlert } from '@/components/auth/form-alert';
 import { FormField } from '@/components/auth/form-field';
 import { Button } from '@/components/ui/button';
 import { SelectField } from '@/components/ui/field';
+import { BankFields, type BankValues } from '@/components/finance/bank-fields';
+import { suggestAccountName } from '@/lib/finance/banks';
 import { ACCOUNT_TYPES, DEFAULT_NATURE, type AccountType } from '@/lib/finance/types';
 
 const initial: ActionState = {};
@@ -40,14 +42,32 @@ export function NewAccountForm({
 }) {
   const [state, action, pending] = useActionState(createAccountAction, initial);
   const [type, setType] = useState<AccountType>('cash');
+  // The suggested name follows the bank fields until the person types their own.
+  const [name, setName] = useState('');
+  const [nameTouched, setNameTouched] = useState(false);
+  const suggest = (v: BankValues) => {
+    if (!nameTouched) setName(suggestAccountName(v.institution, v.kind, v.last4));
+  };
 
   // `other` has no sensible default, so the user must choose (§9).
   const nature = type === 'other' ? null : DEFAULT_NATURE[type];
   const isLiability = nature === 'liability';
   const isLoan = type === 'loan';
+  const isBank = type === 'bank';
 
   return (
-    <form action={action} noValidate>
+    <form
+      noValidate
+      // Dispatch the action by hand: with `<form action>` React resets the form
+      // after every submit, which snaps the controlled selects (type, bank,
+      // kind) back to their first option while their state still holds the
+      // old value, so a failed save looked like a different account.
+      onSubmit={(e) => {
+        e.preventDefault();
+        const data = new FormData(e.currentTarget);
+        startTransition(() => action(data));
+      }}
+    >
       <input type="hidden" name="requestId" value={requestId} />
       {state.error ? <FormAlert tone="error">{state.error}</FormAlert> : null}
 
@@ -79,18 +99,30 @@ export function NewAccountForm({
         </SelectField>
       )}
 
+      {/* Bank first: choosing it fills the name below. */}
+      {isBank ? (
+        <BankFields idPrefix="new" onChange={suggest} errors={state.fieldErrors} />
+      ) : null}
       <FormField
         id="name"
         label="Account name"
         required
+        value={name}
+        onChange={(e) => {
+          setName(e.target.value);
+          setNameTouched(true);
+        }}
+        hint="This is how the account appears when you pick it in transactions, bills and your dashboard."
         error={state.fieldErrors?.name}
       />
-      <FormField
-        id="institutionName"
-        label={isLoan ? 'Lender' : 'Bank or provider (optional)'}
-        required={isLoan}
-        error={state.fieldErrors?.institutionName}
-      />
+      {isBank ? null : (
+        <FormField
+          id="institutionName"
+          label={isLoan ? 'Lender' : 'Bank or provider (optional)'}
+          required={isLoan}
+          error={state.fieldErrors?.institutionName}
+        />
+      )}
 
       <SelectField
         id="currencyCode"
@@ -116,8 +148,8 @@ export function NewAccountForm({
         {isLoan
           ? 'The remaining balance you owe today. Recorded as an opening entry you can see in your history.'
           : isLiability
-          ? 'How much you owe on this account today. Recorded as an opening entry you can see in your history.'
-          : 'How much is in this account today. Recorded as an opening entry you can see in your history.'}
+            ? 'How much you owe on this account today. Recorded as an opening entry you can see in your history.'
+            : 'How much is in this account today. Recorded as an opening entry you can see in your history.'}
       </p>
 
       {isLoan ? (
@@ -150,14 +182,23 @@ export function NewAccountForm({
             ))}
           </SelectField>
           {state.fieldErrors?.paymentFrequency ? (
-            <p className="hp-small mb-3 text-danger-text">{state.fieldErrors.paymentFrequency}</p>
+            <p className="hp-small mb-3 text-danger-text">
+              {state.fieldErrors.paymentFrequency}
+            </p>
           ) : null}
           <label className="mb-5 flex min-h-11 items-center gap-3 text-text">
-            <input type="checkbox" name="createReminder" defaultChecked className="size-5" />
+            <input
+              type="checkbox"
+              name="createReminder"
+              defaultChecked
+              className="size-5"
+            />
             Remind me of this payment (adds a recurring bill)
           </label>
 
-          <legend className="mb-3 font-medium text-text">More about the loan (optional)</legend>
+          <legend className="mb-3 font-medium text-text">
+            More about the loan (optional)
+          </legend>
           <FormField
             id="principal"
             label="Original loan amount"
@@ -183,7 +224,8 @@ export function NewAccountForm({
             error={state.fieldErrors?.termMonths}
           />
           <p className="hp-small text-text-muted">
-            Interest and term are for your reference. HelloPera does not calculate interest.
+            Interest and term are for your reference. HelloPera does not calculate
+            interest.
           </p>
         </fieldset>
       ) : null}

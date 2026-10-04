@@ -11,7 +11,10 @@ export default async function NewAccountPage() {
   return (
     <div className="mx-auto max-w-lg">
       <PageHeader title="Add account" />
-      <NewAccountForm defaultCurrency={profile.default_currency} requestId={randomUUID()} />
+      <NewAccountForm
+        defaultCurrency={profile.default_currency}
+        requestId={randomUUID()}
+      />
     </div>
   );
 }

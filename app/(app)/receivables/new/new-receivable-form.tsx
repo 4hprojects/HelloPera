@@ -6,6 +6,7 @@ import type { ActionState } from '@/app/actions/auth';
 import { FormAlert } from '@/components/auth/form-alert';
 import { FormField } from '@/components/auth/form-field';
 import { Button } from '@/components/ui/button';
+import { TextareaField } from '@/components/ui/field';
 
 const initial: ActionState = {};
 
@@ -28,6 +29,13 @@ export function NewReceivableForm({ defaultCurrency }: { defaultCurrency: string
         error={state.fieldErrors?.amount}
       />
       <FormField
+        id="borrowedDate"
+        label="Date borrowed (optional)"
+        type="date"
+        hint="When the money went out."
+        error={state.fieldErrors?.borrowedDate}
+      />
+      <FormField
         id="dueDate"
         label="Expected by (optional)"
         type="date"
@@ -37,6 +45,12 @@ export function NewReceivableForm({ defaultCurrency }: { defaultCurrency: string
         id="description"
         label="What for? (optional)"
         error={state.fieldErrors?.description}
+      />
+      <TextareaField
+        id="notes"
+        label="Notes (optional)"
+        rows={4}
+        error={state.fieldErrors?.notes}
       />
       <input type="hidden" name="currencyCode" value={defaultCurrency} />
       <p className="hp-small mb-4 text-text-muted">

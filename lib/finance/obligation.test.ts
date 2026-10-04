@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   daysBetween,
   displayStatus,
+  installmentProgress,
   remaining,
   STATUS_LABELS,
   statusTone,
@@ -178,5 +179,31 @@ describe('statusTone', () => {
       expect(seen.has(key)).toBe(false);
       seen.set(key, status);
     }
+  });
+});
+
+describe('installmentProgress', () => {
+  const monthly = php(14524n);
+
+  it('counts only whole installments covered', () => {
+    expect(installmentProgress(php(0n), monthly, 6)).toBe(0);
+    expect(installmentProgress(php(14523n), monthly, 6)).toBe(0);
+    expect(installmentProgress(php(14524n), monthly, 6)).toBe(1);
+    expect(installmentProgress(php(25000n), monthly, 6)).toBe(1);
+    expect(installmentProgress(php(29048n), monthly, 6)).toBe(2);
+  });
+
+  it('never exceeds the number of installments', () => {
+    expect(installmentProgress(php(999999n), monthly, 6)).toBe(6);
+  });
+
+  it('adds installments paid before the bill was tracked', () => {
+    expect(installmentProgress(php(0n), monthly, 3, 1)).toBe(1);
+    expect(installmentProgress(php(14524n), monthly, 3, 1)).toBe(2);
+    expect(installmentProgress(php(999999n), monthly, 3, 1)).toBe(3);
+  });
+
+  it('is zero for a non-positive installment', () => {
+    expect(installmentProgress(php(100n), php(0n), 6)).toBe(0);
   });
 });

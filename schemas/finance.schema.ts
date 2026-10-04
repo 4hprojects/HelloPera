@@ -6,6 +6,7 @@ import {
   DIRECTIONS,
   TRANSACTION_TYPES,
 } from '@/lib/finance/types';
+import { BANK_KINDS } from '@/lib/finance/banks';
 import { parseDecimal } from '@/lib/money';
 import { isoDate, positiveAmount, signedAmount } from '@/schemas/primitives';
 
@@ -22,10 +23,29 @@ const currencyCode = z
   .length(3, 'Use a 3-letter currency code')
   .transform((v) => v.toUpperCase());
 
-export const LOAN_FREQUENCIES = ['weekly', 'biweekly', 'monthly', 'quarterly', 'yearly'] as const;
+export const LOAN_FREQUENCIES = [
+  'weekly',
+  'biweekly',
+  'monthly',
+  'quarterly',
+  'yearly',
+] as const;
 
 /** Blank form fields arrive as ''; treat them as absent. */
 const blankToUndefined = (v: unknown) => (v === '' || v === null ? undefined : v);
+
+/** Bank-only extras: last 4 digits (never the full number) and account kind. */
+const bankFields = {
+  bankLast4: z.preprocess(
+    blankToUndefined,
+    z
+      .string()
+      .trim()
+      .regex(/^\d{4}$/, 'Enter exactly 4 digits')
+      .optional(),
+  ),
+  bankKind: z.preprocess(blankToUndefined, z.enum(BANK_KINDS).optional()),
+};
 
 const loanFields = {
   paymentAmount: z.preprocess(blankToUndefined, positiveAmount.optional()),
@@ -39,7 +59,12 @@ const loanFields = {
   ),
   termMonths: z.preprocess(
     blankToUndefined,
-    z.coerce.number().int('Use whole months').min(1, 'Use 1 to 600').max(600, 'Use 1 to 600').optional(),
+    z.coerce
+      .number()
+      .int('Use whole months')
+      .min(1, 'Use 1 to 600')
+      .max(600, 'Use 1 to 600')
+      .optional(),
   ),
   createReminder: z.boolean().default(true),
 };
@@ -53,6 +78,7 @@ export const createAccountSchema = z
     currencyCode: currencyCode.default('PHP'),
     openingBalance: signedAmount.default('0'),
     institutionName: z.string().trim().max(80).optional().or(z.literal('')),
+    ...bankFields,
     ...loanFields,
   })
   .superRefine((data, ctx) => {
@@ -64,6 +90,18 @@ export const createAccountSchema = z
         message: `A ${data.type.replace('_', ' ')} account is ${DEFAULT_NATURE[data.type]}`,
         path: ['nature'],
       });
+    }
+
+    if (data.type !== 'bank') {
+      for (const key of ['bankLast4', 'bankKind'] as const) {
+        if (data[key] !== undefined) {
+          ctx.addIssue({
+            code: 'custom',
+            message: 'Only bank accounts have this field',
+            path: [key],
+          });
+        }
+      }
     }
 
     const loanOnly = [
@@ -79,7 +117,11 @@ export const createAccountSchema = z
     if (data.type !== 'loan') {
       for (const key of loanOnly) {
         if (data[key] !== undefined) {
-          ctx.addIssue({ code: 'custom', message: 'Only loans have this field', path: [key] });
+          ctx.addIssue({
+            code: 'custom',
+            message: 'Only loans have this field',
+            path: [key],
+          });
         }
       }
       return;
@@ -110,11 +152,52 @@ export const createAccountSchema = z
     }
   });
 
-export const updateAccountSchema = z.object({
+export const updateAccountSchema = z
+  .object({
+    id: z.string().uuid(),
+    type: z.enum(ACCOUNT_TYPES),
+    name: z.string().trim().min(1, 'Name your account').max(80),
+    institutionName: z.string().trim().max(80).optional().or(z.literal('')),
+    bankLast4: bankFields.bankLast4,
+    bankKind: bankFields.bankKind,
+    paymentAmount: loanFields.paymentAmount,
+    paymentFrequency: loanFields.paymentFrequency,
+    nextDueDate: loanFields.nextDueDate,
+    principal: loanFields.principal,
+    interestRateApr: loanFields.interestRateApr,
+    termMonths: loanFields.termMonths,
+  })
+  .superRefine((data, ctx) => {
+    if (data.type !== 'bank') {
+      for (const key of ['bankLast4', 'bankKind'] as const) {
+        if (data[key] !== undefined) {
+          ctx.addIssue({
+            code: 'custom',
+            message: 'Only bank accounts have this field',
+            path: [key],
+          });
+        }
+      }
+    }
+    if (data.type !== 'loan') return;
+    const need = (ok: boolean, message: string, path: string) => {
+      if (!ok) ctx.addIssue({ code: 'custom', message, path: [path] });
+    };
+    need(!!data.institutionName, 'Enter the lender', 'institutionName');
+    need(!!data.paymentAmount, 'Enter the amount due per payment', 'paymentAmount');
+    need(!!data.paymentFrequency, 'Choose how often you pay', 'paymentFrequency');
+    need(!!data.nextDueDate, 'Enter the next due date', 'nextDueDate');
+  });
+
+/** Amount is only honoured while the transaction settles no obligation. */
+export const updateTransactionSchema = z.object({
   id: z.string().uuid(),
-  name: z.string().trim().min(1).max(80),
-  institutionName: z.string().trim().max(80).optional().or(z.literal('')),
-  isArchived: z.boolean().optional(),
+  amount: positiveAmount,
+  transactionDate: isoDate,
+  categoryId: z.string().uuid().optional().nullable(),
+  merchantName: z.string().trim().max(120).optional().or(z.literal('')),
+  description: z.string().trim().max(200).optional().or(z.literal('')),
+  notes: z.string().trim().max(1000).optional().or(z.literal('')),
 });
 
 /**
@@ -213,4 +296,6 @@ export const transactionFilterSchema = z.object({
 
 export type CreateAccountInput = z.infer<typeof createAccountSchema>;
 export type CreateTransactionInput = z.infer<typeof createTransactionSchema>;
+export type UpdateAccountInput = z.infer<typeof updateAccountSchema>;
+export type UpdateTransactionInput = z.infer<typeof updateTransactionSchema>;
 export type TransactionFilter = z.infer<typeof transactionFilterSchema>;

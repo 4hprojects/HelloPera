@@ -5,7 +5,7 @@ import { summarisePositions } from '@/lib/analytics/position';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { fromDatabase, type Money } from '@/lib/money';
 import type { AccountNature, AccountType } from '@/lib/finance/types';
-import type { CreateAccountInput } from '@/schemas/finance.schema';
+import type { CreateAccountInput, UpdateAccountInput } from '@/schemas/finance.schema';
 
 export type AccountRow = {
   id: string;
@@ -101,7 +101,48 @@ export async function createAccount(
     p_institution_name: input.institutionName || null,
   });
   if (error) throw new Error(error.message);
-  return data as string;
+  const id = data as string;
+  if (input.type === 'bank' && (input.bankLast4 || input.bankKind)) {
+    // Idempotent: a replayed create returns the same id and rewrites the same row.
+    await upsertBankDetails(userId, id, input.bankLast4, input.bankKind);
+  }
+  return id;
+}
+
+export type BankDetails = { last4: string | null; kind: string | null };
+
+/** Bank extras keyed by account id, for the accounts list. */
+export async function listBankDetails(
+  accounts: readonly Account[],
+): Promise<Map<string, BankDetails>> {
+  const ids = accounts.filter((a) => a.type === 'bank').map((a) => a.id);
+  const out = new Map<string, BankDetails>();
+  if (ids.length === 0) return out;
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from('account_details')
+    .select('account_id,last4,kind')
+    .in('account_id', ids);
+  if (error) throw new Error(`Could not load bank details: ${error.code}`);
+  for (const r of data ?? []) out.set(r.account_id, { last4: r.last4, kind: r.kind });
+  return out;
+}
+
+/** Writes (or clears, when both are empty) the bank extras for a bank account. */
+export async function upsertBankDetails(
+  userId: string,
+  accountId: string,
+  last4?: string | null,
+  kind?: string | null,
+) {
+  const admin = createAdminClient();
+  const { error } = await admin.rpc('upsert_bank_details', {
+    p_user_id: userId,
+    p_account_id: accountId,
+    p_last4: last4 ?? null,
+    p_kind: kind ?? null,
+  });
+  if (error) throw new Error(error.message);
 }
 
 /** Loan account + details + recurring bill rule, atomically, via one RPC. */
@@ -177,4 +218,58 @@ export async function archiveAccount(userId: string, id: string, archived: boole
     .eq('id', id)
     .eq('user_id', userId); // ownership in the predicate, never from the form
   if (error) throw new Error(error.message);
+}
+
+export class AccountEditError extends Error {}
+
+/** Only an account with no real history can be deleted; otherwise archive it. */
+export async function deleteAccount(userId: string, id: string) {
+  const admin = createAdminClient();
+  const { error } = await admin.rpc('delete_account', { p_user_id: userId, p_id: id });
+  if (!error) return;
+  if (error.message.includes('ACCOUNT_HAS_HISTORY')) {
+    throw new AccountEditError(
+      'This account has transactions, so it cannot be deleted. Archive it instead to hide it and keep your history.',
+    );
+  }
+  if (error.message.includes('ACCOUNT_NOT_FOUND')) {
+    throw new AccountEditError('That account no longer exists.');
+  }
+  throw new Error(error.message);
+}
+
+function accountEditMessage(message: string): string {
+  if (message.includes('ACCOUNT_NOT_FOUND')) return 'That account no longer exists.';
+  if (message.includes('LOAN_LENDER_REQUIRED')) return 'Enter the lender.';
+  if (message.includes('LOAN_PAYMENT_REQUIRED'))
+    return 'Enter the payment amount, frequency and next due date.';
+  if (message.includes('LOAN_PRINCIPAL_BELOW_BALANCE')) {
+    return 'Original amount cannot be less than what you owe now.';
+  }
+  return 'We could not save these changes. Please try again.';
+}
+
+/** Name, lender and (for loans) the payment schedule. Balances are untouched. */
+export async function updateAccountDetails(userId: string, input: UpdateAccountInput) {
+  const admin = createAdminClient();
+  const { error } = await admin.rpc('update_account_details', {
+    p_user_id: userId,
+    p_id: input.id,
+    p_name: input.name,
+    p_institution_name: input.institutionName || null,
+    p_payment_amount: input.paymentAmount ?? null,
+    p_payment_frequency: input.paymentFrequency ?? null,
+    p_next_due_date: input.nextDueDate ?? null,
+    p_principal: input.principal ?? null,
+    p_interest_rate_apr: input.interestRateApr ?? null,
+    p_term_months: input.termMonths ?? null,
+  });
+  if (error) throw new AccountEditError(accountEditMessage(error.message));
+  if (input.type === 'bank') {
+    try {
+      await upsertBankDetails(userId, input.id, input.bankLast4, input.bankKind);
+    } catch {
+      throw new AccountEditError(accountEditMessage('bank details'));
+    }
+  }
 }

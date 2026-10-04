@@ -75,6 +75,22 @@ export type ObligationLike = {
   date: string | null;
 };
 
+/**
+ * How many installments the recorded payments cover — whole payments only, so
+ * ₱250 against a ₱145.24 monthly is 1 paid, not 1.7. Exact minor-unit math.
+ */
+export function installmentProgress(
+  applied: Money,
+  installment: Money,
+  count: number,
+  /** Installments paid before the bill was tracked here. */
+  prior = 0,
+): number {
+  if (installment.minor <= 0n) return Math.min(prior, count);
+  const made = applied.minor / installment.minor + BigInt(prior);
+  return Number(made > BigInt(count) ? BigInt(count) : made);
+}
+
 export function remaining(obligation: Pick<ObligationLike, 'amount' | 'applied'>): Money {
   return {
     minor: obligation.amount.minor - obligation.applied.minor,
