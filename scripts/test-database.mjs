@@ -508,6 +508,53 @@ try {
       'PASS: payment candidates paginate past 100, hide allocated, show remaining, stay private',
     );
   }
+  {
+    await db.query("select set_config('request.jwt.claim.sub','',false)");
+    const w = randomUUID();
+    await db.query("insert into auth.users(id,email) values($1,'agg@example.test')", [w]);
+    // Beyond the 1,000-row REST cap.
+    await db.query(
+      "insert into public.ai_usage_logs(user_id,provider,model,call_type,status,duration_ms) select $1,'p','m','intent',case when i%4=0 then 'failed' else 'succeeded' end,i from generate_series(1,1200) i",
+      [w],
+    );
+    await db.query(
+      "insert into public.notifications(user_id,type,channel,delivery_status,dedupe_key,title,message) select $1,'bill_overdue','in_app',case when i%3=0 then 'failed' else 'pending' end,'k'||i,'t','m' from generate_series(1,1500) i",
+      [w],
+    );
+    await db.query(
+      "insert into public.job_runs(job_type,status,started_at) values('x','failed',now()),('x','failed',now()-interval '3 days'),('x','succeeded',now())",
+    );
+    const counts = (
+      await db.query(
+        "select public.admin_overview_counts(now()-interval '1 day', now()-interval '1 day') r",
+      )
+    ).rows[0].r;
+    assert.equal(counts.ai_today, 1200);
+    assert.equal(counts.ai_failed, 300);
+    assert.equal(counts.notifications_pending, 1000);
+    assert.equal(counts.notifications_failed, 500);
+    assert.equal(counts.jobs_failed, 1, 'only failures inside the stated window');
+    const ai = (
+      await db.query("select public.admin_ai_aggregates(now()-interval '7 days') r")
+    ).rows[0].r;
+    assert.equal(ai.total, 1200);
+    assert.equal(ai.by_call_type[0].count, 1200);
+    const n = (await db.query('select public.admin_notification_aggregates() r')).rows[0]
+      .r;
+    assert.equal(
+      n.by_delivery_status.reduce((t, x) => t + x.count, 0),
+      1500,
+    );
+    await db.exec('set role authenticated');
+    await assert.rejects(
+      db.query('select public.admin_overview_counts(now(),now())'),
+      /permission denied/,
+    );
+    await db.exec('reset role');
+    console.log(
+      'PASS: admin aggregates are exact beyond 1,000 rows, windowed, and service-only',
+    );
+  }
 } finally {
   await db.close();
 }

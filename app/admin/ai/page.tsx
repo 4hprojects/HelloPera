@@ -5,6 +5,7 @@ import { Card, CardLabel, SectionCard } from '@/components/ui/card';
 import { Cell, DataTable, StatusText } from '@/components/admin/data-table';
 import { requireAdmin } from '@/lib/auth/guards';
 import { getAiOverview } from '@/services/admin.service';
+import { Unavailable } from '@/components/admin/unavailable';
 
 export const metadata: Metadata = { title: 'AI · Admin' };
 
@@ -22,7 +23,19 @@ export default async function AdminAiPage() {
   const configured = Boolean(
     process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN,
   );
-  const ai = await getAiOverview(configured);
+  const result = await getAiOverview(configured);
+  if (result.state === 'unavailable') {
+    return (
+      <div className="mx-auto max-w-5xl">
+        <PageHeader
+          title="AI operations"
+          description="Provider health over the last 7 days."
+        />
+        <Unavailable what="AI usage" reference={result.reference} />
+      </div>
+    );
+  }
+  const ai = result.data;
 
   return (
     <div className="mx-auto max-w-5xl">

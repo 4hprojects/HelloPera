@@ -2,6 +2,12 @@ import 'server-only';
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { log } from '@/lib/log';
+import {
+  available,
+  newReference,
+  unavailable,
+  type Availability,
+} from '@/lib/admin/availability';
 import { allGuides } from '@/lib/content/registry';
 import type { UserRole, UserStatus } from '@/types/auth';
 
@@ -42,18 +48,36 @@ async function safely<T>(label: string, fallback: T, run: () => Promise<T>): Pro
   }
 }
 
-function tally(
-  rows: readonly Row[],
-  key: string,
-): Array<{ value: string; count: number }> {
-  const counts = new Map<string, number>();
-  for (const row of rows) {
-    const value = String(row[key] ?? 'unknown');
-    counts.set(value, (counts.get(value) ?? 0) + 1);
+/**
+ * Like `safely`, but a failure is reported as unavailable with a reference that
+ * is also logged, never as an empty answer. Returned Supabase errors are thrown
+ * by the callers so they reach this wrapper.
+ */
+async function guarded<T>(
+  label: string,
+  run: () => Promise<T>,
+): Promise<Availability<T>> {
+  try {
+    return available(await run());
+  } catch (error) {
+    const reference = newReference();
+    log.error(`admin: ${label} failed`, {
+      ref: reference,
+      m: error instanceof Error ? error.message : 'unknown',
+    });
+    return unavailable(reference);
   }
-  return [...counts.entries()]
-    .map(([value, count]) => ({ value, count }))
-    .sort((a, b) => b.count - a.count);
+}
+
+function num(row: Row, key: string): number {
+  return Number(row[key] ?? 0);
+}
+
+function pairs(value: unknown): Array<{ value: string; count: number }> {
+  return ((value ?? []) as Row[]).map((r) => ({
+    value: String(r.value),
+    count: Number(r.count),
+  }));
 }
 
 // -----------------------------------------------------------------------------
@@ -66,65 +90,42 @@ export type AdminOverview = {
   ocr: { today: number; failed: number };
   ai: { today: number; failed: number };
   notifications: { pending: number; failed: number };
-  jobs: { lastRunAt: string | null; failedRecently: number };
+  /** Failures are counted over the stated window, not "recently". */
+  jobs: { lastRunAt: string | null; failedInWindow: number; windowHours: number };
 };
 
-export async function getAdminOverview(): Promise<AdminOverview> {
+const JOB_WINDOW_HOURS = 24;
+
+export async function getAdminOverview(): Promise<Availability<AdminOverview>> {
   const admin = createAdminClient();
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const now = Date.now();
 
-  const empty: AdminOverview = {
-    users: { total: 0, active: 0, suspended: 0, disabled: 0 },
-    admins: 0,
-    ocr: { today: 0, failed: 0 },
-    ai: { today: 0, failed: 0 },
-    notifications: { pending: 0, failed: 0 },
-    jobs: { lastRunAt: null, failedRecently: 0 },
-  };
-
-  return safely('overview', empty, async () => {
-    const [profiles, ocr, ai, notifications, jobs] = await Promise.all([
-      admin.from('profiles').select('status, role'),
-      admin.from('ocr_jobs').select('status').gte('created_at', since),
-      admin.from('ai_usage_logs').select('status').gte('created_at', since),
-      admin.from('notifications').select('delivery_status'),
-      admin
-        .from('job_runs')
-        .select('status, started_at')
-        .order('started_at', {
-          ascending: false,
-        })
-        .limit(50),
-    ]);
-
-    const people = (profiles.data ?? []) as Row[];
-    const jobRows = (jobs.data ?? []) as Row[];
-    const count = (rows: Row[], key: string, value: string) =>
-      rows.filter((r) => r[key] === value).length;
+  return guarded('overview', async () => {
+    const { data, error } = await admin.rpc('admin_overview_counts', {
+      p_since: new Date(now - 24 * 60 * 60 * 1000).toISOString(),
+      p_jobs_since: new Date(now - JOB_WINDOW_HOURS * 60 * 60 * 1000).toISOString(),
+    });
+    if (error) throw new Error(error.code ?? error.message);
+    const r = (data ?? {}) as Row;
 
     return {
       users: {
-        total: people.length,
-        active: count(people, 'status', 'active'),
-        suspended: count(people, 'status', 'suspended'),
-        disabled: count(people, 'status', 'disabled'),
+        total: num(r, 'users_total'),
+        active: num(r, 'users_active'),
+        suspended: num(r, 'users_suspended'),
+        disabled: num(r, 'users_disabled'),
       },
-      admins: count(people, 'role', 'admin'),
-      ocr: {
-        today: (ocr.data ?? []).length,
-        failed: count((ocr.data ?? []) as Row[], 'status', 'failed'),
-      },
-      ai: {
-        today: (ai.data ?? []).length,
-        failed: (ai.data ?? []).filter((r) => (r as Row).status !== 'succeeded').length,
-      },
+      admins: num(r, 'admins'),
+      ocr: { today: num(r, 'ocr_today'), failed: num(r, 'ocr_failed') },
+      ai: { today: num(r, 'ai_today'), failed: num(r, 'ai_failed') },
       notifications: {
-        pending: count((notifications.data ?? []) as Row[], 'delivery_status', 'pending'),
-        failed: count((notifications.data ?? []) as Row[], 'delivery_status', 'failed'),
+        pending: num(r, 'notifications_pending'),
+        failed: num(r, 'notifications_failed'),
       },
       jobs: {
-        lastRunAt: jobRows[0] ? str(jobRows[0].started_at) : null,
-        failedRecently: count(jobRows, 'status', 'failed'),
+        lastRunAt: str(r.jobs_last_run_at),
+        failedInWindow: num(r, 'jobs_failed'),
+        windowHours: JOB_WINDOW_HOURS,
       },
     };
   });
@@ -442,51 +443,44 @@ export function healthFrom(
   return 'operational';
 }
 
-export async function getAiOverview(configured: boolean): Promise<AdminAiOverview> {
+export async function getAiOverview(
+  configured: boolean,
+): Promise<Availability<AdminAiOverview>> {
   const admin = createAdminClient();
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-  const empty: AdminAiOverview = {
-    health: configured ? 'operational' : 'not_configured',
-    total: 0,
-    failed: 0,
-    medianDurationMs: null,
-    byIntent: [],
-    byCallType: [],
-    recentFailures: [],
-  };
+  return guarded('ai overview', async () => {
+    const [aggregates, failures] = await Promise.all([
+      admin.rpc('admin_ai_aggregates', { p_since: since }),
+      admin
+        .from('ai_usage_logs')
+        // §29 — id, user, intent, model, error code, duration. There is no prompt
+        // column in this table, which is how §94 of Phase 12 stays true here.
+        .select(
+          'id, user_id, intent, model, call_type, status, error_code, duration_ms, created_at',
+        )
+        .gte('created_at', since)
+        .neq('status', 'succeeded')
+        .order('created_at', { ascending: false })
+        .limit(20),
+    ]);
+    if (aggregates.error)
+      throw new Error(aggregates.error.code ?? aggregates.error.message);
+    if (failures.error) throw new Error(failures.error.code);
 
-  return safely('ai overview', empty, async () => {
-    const { data } = await admin
-      .from('ai_usage_logs')
-      // §29 — id, user, intent, model, error code, duration. There is no prompt
-      // column in this table, which is how §94 of Phase 12 stays true here.
-      .select(
-        'id, user_id, intent, model, call_type, status, error_code, duration_ms, created_at',
-      )
-      .gte('created_at', since)
-      .order('created_at', { ascending: false })
-      .limit(1000);
-
-    const rows = (data ?? []) as Row[];
-    const failed = rows.filter((r) => r.status !== 'succeeded');
-    const durations = rows
-      .map((r) => Number(r.duration_ms ?? 0))
-      .filter((n) => n > 0)
-      .sort((a, b) => a - b);
+    const a = (aggregates.data ?? {}) as Row;
+    const total = num(a, 'total');
+    const failed = num(a, 'failed');
 
     return {
-      health: healthFrom(rows.length, failed.length, configured),
-      total: rows.length,
-      failed: failed.length,
+      health: healthFrom(total, failed, configured),
+      total,
+      failed,
       medianDurationMs:
-        durations.length > 0 ? (durations[durations.length >> 1] ?? null) : null,
-      byIntent: tally(
-        rows.filter((r) => r.intent),
-        'intent',
-      ),
-      byCallType: tally(rows, 'call_type'),
-      recentFailures: failed.slice(0, 20).map((r) => ({
+        a.median_duration_ms === null ? null : num(a, 'median_duration_ms'),
+      byIntent: pairs(a.by_intent),
+      byCallType: pairs(a.by_call_type),
+      recentFailures: ((failures.data ?? []) as Row[]).map((r) => ({
         id: String(r.id),
         userId: String(r.user_id),
         intent: str(r.intent),
@@ -513,14 +507,15 @@ export type AdminJobRun = {
   errorCode: string | null;
 };
 
-export async function listJobRuns(limit = 50): Promise<AdminJobRun[]> {
+export async function listJobRuns(limit = 50): Promise<Availability<AdminJobRun[]>> {
   const admin = createAdminClient();
-  return safely<AdminJobRun[]>('job runs', [], async () => {
-    const { data } = await admin
+  return guarded('job runs', async () => {
+    const { data, error } = await admin
       .from('job_runs')
       .select('id, job_type, status, started_at, completed_at, duration_ms, error_code')
       .order('started_at', { ascending: false })
       .limit(limit);
+    if (error) throw new Error(error.code);
     return ((data ?? []) as Row[]).map((r) => ({
       id: String(r.id),
       jobType: String(r.job_type),
@@ -604,48 +599,42 @@ export type AdminNotificationOverview = {
  * question is whether delivery works, and that is answered entirely by
  * `delivery_status`, `type` and `channel`.
  */
-export async function getNotificationOverview(): Promise<AdminNotificationOverview> {
+export async function getNotificationOverview(): Promise<
+  Availability<AdminNotificationOverview>
+> {
   const admin = createAdminClient();
-  const empty: AdminNotificationOverview = {
-    byDeliveryStatus: [],
-    byType: [],
-    byChannel: [],
-    push: { active: 0, failing: 0 },
-    recentFailures: [],
-  };
 
-  return safely('notification overview', empty, async () => {
-    const [notifications, subscriptions] = await Promise.all([
+  return guarded('notification overview', async () => {
+    const [aggregates, failures] = await Promise.all([
+      admin.rpc('admin_notification_aggregates'),
       admin
         .from('notifications')
-        .select('id, delivery_status, type, channel, created_at')
+        .select('id, type, channel, created_at')
+        .eq('delivery_status', 'failed')
         .order('created_at', { ascending: false })
-        .limit(1000),
-      admin.from('push_subscriptions').select('is_active, failure_count'),
+        .limit(20),
     ]);
+    if (aggregates.error)
+      throw new Error(aggregates.error.code ?? aggregates.error.message);
+    if (failures.error) throw new Error(failures.error.code);
 
-    const rows = (notifications.data ?? []) as Row[];
-    const subs = (subscriptions.data ?? []) as Row[];
-
+    const a = (aggregates.data ?? {}) as Row;
     return {
-      byDeliveryStatus: tally(rows, 'delivery_status'),
-      byType: tally(rows, 'type'),
-      byChannel: tally(rows, 'channel'),
+      byDeliveryStatus: pairs(a.by_delivery_status),
+      byType: pairs(a.by_type),
+      byChannel: pairs(a.by_channel),
       push: {
-        active: subs.filter((s) => s.is_active === true).length,
+        active: num(a, 'push_active'),
         // §35 of Phase 08 — a subscription failing repeatedly is a dead device,
         // and knowing how many there are is how you notice the channel rotting.
-        failing: subs.filter((s) => Number(s.failure_count ?? 0) > 0).length,
+        failing: num(a, 'push_failing'),
       },
-      recentFailures: rows
-        .filter((row) => row.delivery_status === 'failed')
-        .slice(0, 20)
-        .map((row) => ({
-          id: String(row.id),
-          type: String(row.type),
-          channel: String(row.channel),
-          createdAt: String(row.created_at),
-        })),
+      recentFailures: ((failures.data ?? []) as Row[]).map((row) => ({
+        id: String(row.id),
+        type: String(row.type),
+        channel: String(row.channel),
+        createdAt: String(row.created_at),
+      })),
     };
   });
 }
@@ -724,9 +713,9 @@ export type IntegrityFinding = {
  */
 export async function listIntegrityFindings(
   userId?: string,
-): Promise<IntegrityFinding[]> {
+): Promise<Availability<IntegrityFinding[]>> {
   const admin = createAdminClient();
-  return safely<IntegrityFinding[]>('integrity findings', [], async () => {
+  return guarded('integrity findings', async () => {
     const { data, error } = await admin.rpc('check_financial_integrity', {
       p_user_id: userId ?? null,
     });

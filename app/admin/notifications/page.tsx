@@ -4,6 +4,7 @@ import { Card, CardLabel, SectionCard } from '@/components/ui/card';
 import { Cell, DataTable } from '@/components/admin/data-table';
 import { requireAdmin } from '@/lib/auth/guards';
 import { getNotificationOverview } from '@/services/admin.service';
+import { Unavailable } from '@/components/admin/unavailable';
 
 export const metadata: Metadata = { title: 'Notifications · Admin' };
 
@@ -16,7 +17,16 @@ export const metadata: Metadata = { title: 'Notifications · Admin' };
  */
 export default async function AdminNotificationsPage() {
   await requireAdmin();
-  const overview = await getNotificationOverview();
+  const result = await getNotificationOverview();
+  if (result.state === 'unavailable') {
+    return (
+      <div className="mx-auto max-w-3xl">
+        <PageHeader title="Notifications" description="Delivery state." />
+        <Unavailable what="Notification delivery state" reference={result.reference} />
+      </div>
+    );
+  }
+  const overview = result.data;
 
   return (
     <div className="mx-auto max-w-3xl">

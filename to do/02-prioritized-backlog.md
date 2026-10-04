@@ -19,7 +19,7 @@ Audit: 1 October 2026. These are **future tasks**, not changes performed by the 
 | [HP-009](#hp-009) | P1       | 2     | in progress | Verify complete core journeys and fix currency selection          |
 | [HP-011](#hp-011) | P1       | 2     | open     | Prove export and resumable deletion on hosted storage             |
 | [HP-012](#hp-012) | P1       | 3     | open     | Establish realistic performance and capacity baselines            |
-| [HP-013](#hp-013) | P1       | 3     | open     | Make admin metrics complete and failures visible                  |
+| [HP-013](#hp-013) | P1       | 3     | in progress | Make admin metrics complete and failures visible                  |
 | [HP-016](#hp-016) | P1       | 4     | blocked  | Provision isolated staging and verify the release platform        |
 | [HP-017](#hp-017) | P1       | 4     | blocked  | Verify signup closure, email, OAuth and public production routing |
 | [HP-018](#hp-018) | P1       | 4     | blocked  | Complete a database and document restore drill                    |
@@ -291,7 +291,7 @@ P0: none demonstrated. P1 items are free-launch gates; P2 items may be scheduled
 
 ## HP-013 — Make admin metrics complete and failures visible
 
-**Priority:** P1 · **Phase:** 3 · **Status:** open · **Evidence:** confirmed unpaginated aggregation and ignored error responses
+**Priority:** P1 · **Phase:** 3 · **Status:** in progress · **Evidence:** confirmed unpaginated aggregation and ignored error responses
 **Area:** Administration/observability · **Responsible role:** Backend + frontend · **Estimate:** M
 **Dependencies:** HP-008
 

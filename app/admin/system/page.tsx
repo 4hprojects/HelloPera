@@ -5,6 +5,7 @@ import { Cell, DataTable, StatusText } from '@/components/admin/data-table';
 import { requireAdmin } from '@/lib/auth/guards';
 import { getBillingProvider } from '@/lib/billing/provider';
 import { isPushConfigured } from '@/lib/env';
+import { Unavailable } from '@/components/admin/unavailable';
 import { listJobRuns } from '@/services/admin.service';
 import { getSystemHealth } from '@/services/system-health.service';
 
@@ -24,7 +25,7 @@ export const metadata: Metadata = { title: 'System · Admin' };
  */
 export default async function AdminSystemPage() {
   await requireAdmin();
-  const [runs, health] = await Promise.all([listJobRuns(), getSystemHealth()]);
+  const [runsResult, health] = await Promise.all([listJobRuns(), getSystemHealth()]);
   const billing = getBillingProvider();
 
   const providers = [
@@ -65,23 +66,27 @@ export default async function AdminSystemPage() {
       </div>
 
       <h2 className="hp-h3 mb-2 text-text">Recent job runs</h2>
-      <DataTable
-        headers={['Job', 'Status', 'Started', 'Duration', 'Error']}
-        rowCount={runs.length}
-        empty="No jobs have run. pg_cron may not be scheduled yet."
-      >
-        {runs.map((run) => (
-          <tr key={run.id}>
-            <Cell>{run.jobType}</Cell>
-            <Cell>
-              <StatusText value={run.status} />
-            </Cell>
-            <Cell>{new Date(run.startedAt).toLocaleString()}</Cell>
-            <Cell numeric>{run.durationMs === null ? '—' : `${run.durationMs}ms`}</Cell>
-            <Cell>{run.errorCode ?? '—'}</Cell>
-          </tr>
-        ))}
-      </DataTable>
+      {runsResult.state === 'unavailable' ? (
+        <Unavailable what="Job runs" reference={runsResult.reference} />
+      ) : (
+        <DataTable
+          headers={['Job', 'Status', 'Started', 'Duration', 'Error']}
+          rowCount={runsResult.data.length}
+          empty="No jobs have run. pg_cron may not be scheduled yet."
+        >
+          {runsResult.data.map((run) => (
+            <tr key={run.id}>
+              <Cell>{run.jobType}</Cell>
+              <Cell>
+                <StatusText value={run.status} />
+              </Cell>
+              <Cell>{new Date(run.startedAt).toLocaleString()}</Cell>
+              <Cell numeric>{run.durationMs === null ? '—' : `${run.durationMs}ms`}</Cell>
+              <Cell>{run.errorCode ?? '—'}</Cell>
+            </tr>
+          ))}
+        </DataTable>
+      )}
     </div>
   );
 }

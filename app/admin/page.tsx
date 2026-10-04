@@ -4,6 +4,7 @@ import { Card, CardLabel } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { requireAdmin } from '@/lib/auth/guards';
 import { getAdminOverview } from '@/services/admin.service';
+import { Unavailable } from '@/components/admin/unavailable';
 
 export const metadata: Metadata = { title: 'Admin' };
 
@@ -16,7 +17,16 @@ export const metadata: Metadata = { title: 'Admin' };
  */
 export default async function AdminPage() {
   await requireAdmin();
-  const overview = await getAdminOverview();
+  const result = await getAdminOverview();
+  if (result.state === 'unavailable') {
+    return (
+      <div className="mx-auto max-w-5xl">
+        <PageHeader title="HelloPera Admin" description="Operational state." />
+        <Unavailable what="The operational overview" reference={result.reference} />
+      </div>
+    );
+  }
+  const overview = result.data;
 
   const cards: Array<{ label: string; value: string; hint?: string; href?: string }> = [
     {
@@ -52,12 +62,14 @@ export default async function AdminPage() {
     {
       label: 'Jobs',
       value:
-        overview.jobs.failedRecently > 0
-          ? `${overview.jobs.failedRecently} failed`
+        overview.jobs.failedInWindow > 0
+          ? `${overview.jobs.failedInWindow} failed`
           : 'OK',
-      hint: overview.jobs.lastRunAt
-        ? `last ${new Date(overview.jobs.lastRunAt).toLocaleString()}`
-        : 'never run',
+      hint: `${overview.jobs.windowHours}h · ${
+        overview.jobs.lastRunAt
+          ? `last ${new Date(overview.jobs.lastRunAt).toLocaleString()}`
+          : 'never run'
+      }`,
       href: '/admin/system',
     },
   ];
