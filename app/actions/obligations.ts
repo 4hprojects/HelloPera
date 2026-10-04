@@ -155,10 +155,11 @@ export async function createExpectedIncomeAction(
 /**
  * Record a payment or collection.
  *
- * Two steps that must both succeed: the transaction, then the allocation. If
- * the allocation fails the transaction still stands — the money genuinely
- * moved, and deleting it would be worse than leaving it unlinked. The message
- * says exactly that, so the user is not left guessing.
+ * One atomic database call (`record_obligation_payment`): creating the
+ * transaction and allocating it either both happen or neither does. The form's
+ * request key makes a retry replay the original result instead of recording a
+ * second payment; "Record another payment" supplies a fresh key. Linking an
+ * existing transaction only adds the allocation and never changes a balance.
  */
 export async function recordPaymentAction(
   _p: ActionState,

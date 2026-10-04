@@ -149,8 +149,8 @@ function optional(value: string | null | undefined): string | null {
 
 /**
  * Adapter over `initialCursor` in lib/recurring/schedule.ts, where the rule and
- * its reasoning live so they can be unit-tested — anything under `services/`
- * imports `server-only` and cannot be reached from a test.
+ * its reasoning live so they can be unit-tested directly. (Service modules are
+ * also testable: `vitest.config.ts` aliases `server-only` to its empty stub.)
  */
 function initialCursor(
   input: {

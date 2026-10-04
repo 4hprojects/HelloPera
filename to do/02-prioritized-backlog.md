@@ -25,7 +25,7 @@ Audit: 1 October 2026. These are **future tasks**, not changes performed by the 
 | [HP-018](#hp-018) | P1       | 4     | blocked  | Complete a database and document restore drill                    |
 | [HP-019](#hp-019) | P1       | 4     | blocked  | Establish monitoring, scheduler and support ownership             |
 | [HP-010](#hp-010) | P2       | 2     | in progress | Improve document and payment recovery UX                          |
-| [HP-014](#hp-014) | P2       | 3     | open     | Reconcile docs and streamline maintainability                     |
+| [HP-014](#hp-014) | P2       | 3     | in progress | Reconcile docs and streamline maintainability                     |
 | [HP-015](#hp-015) | P2       | 3     | open     | Review headers and rate-limit deployment assumptions              |
 | [HP-024](#hp-024) | P2       | 3     | open     | Broaden public-site and PWA quality coverage                      |
 | [HP-020](#hp-020) | P3       | 5     | deferred | Qualify OCR and AI before provider activation                     |
@@ -312,7 +312,7 @@ P0: none demonstrated. P1 items are free-launch gates; P2 items may be scheduled
 
 ## HP-014 — Reconcile docs and streamline maintainability
 
-**Priority:** P2 · **Phase:** 3 · **Status:** open · **Evidence:** confirmed stale comments and runtime mismatch
+**Priority:** P2 · **Phase:** 3 · **Status:** in progress · **Evidence:** confirmed stale comments and runtime mismatch
 **Area:** Developer workflow · **Responsible role:** Maintainer · **Estimate:** M
 **Dependencies:** Relevant Phase 1 changes settled
 

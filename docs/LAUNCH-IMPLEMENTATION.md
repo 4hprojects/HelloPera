@@ -1,6 +1,6 @@
 # Deployment readiness record — 25 September 2026
 
-**Public launch: not yet verified.** This record supersedes historical phase status
+**Public launch: not yet verified.** Historical record; current task status and evidence are in [../to do/README.md](<../to do/README.md>). This record supersedes historical phase status
 and the previous checklist. Deployment steps and exact settings live in
 [DEPLOYMENT.md](DEPLOYMENT.md).
 
