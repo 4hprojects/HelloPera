@@ -83,6 +83,38 @@ export async function isFlagEnabled(key: string): Promise<boolean> {
   }
 }
 
+export class FeatureFlagReadError extends Error {
+  constructor(readonly key: string) {
+    super(`Required feature flag ${key} could not be read.`);
+    this.name = 'FeatureFlagReadError';
+  }
+}
+
+/** Read an operational safety flag without collapsing missing/error into OFF. */
+export async function readFlagStrict(key: string): Promise<boolean> {
+  try {
+    const admin = createAdminClient();
+    const { data, error } = await admin
+      .from('feature_flags')
+      .select('enabled')
+      .eq('key', key)
+      .maybeSingle();
+
+    if (error || !data || typeof (data as Row).enabled !== 'boolean') {
+      log.error('flags: required read failed', { key, m: error?.code ?? 'missing' });
+      throw new FeatureFlagReadError(key);
+    }
+    return (data as Row).enabled === true;
+  } catch (error) {
+    if (error instanceof FeatureFlagReadError) throw error;
+    log.error('flags: required read threw', {
+      key,
+      m: error instanceof Error ? error.message : 'unknown',
+    });
+    throw new FeatureFlagReadError(key);
+  }
+}
+
 /**
  * §12 — the effective plan for a user.
  *
@@ -151,8 +183,8 @@ export async function getEffectivePlan(_userId: string): Promise<EffectivePlan> 
     const planId = paid ? String(sub!.plan_id) : null;
 
     const { data: planRow } = planId
-      ? await supabase.from('plans').select('*').eq('id', planId).maybeSingle()
-      : await supabase.from('plans').select('*').eq('code', 'free').maybeSingle();
+      ? await supabase.from('plans_exact').select('*').eq('id', planId).maybeSingle()
+      : await supabase.from('plans_exact').select('*').eq('code', 'free').maybeSingle();
 
     const plan = planRow ? toPlan(planRow as Row) : FREE_PLAN;
 
@@ -216,7 +248,7 @@ export async function listPublicPlans(): Promise<
   const supabase = await createClient();
 
   const { data: plans, error } = await supabase
-    .from('plans')
+    .from('plans_exact')
     .select('*')
     .eq('is_active', true)
     .eq('is_public', true)

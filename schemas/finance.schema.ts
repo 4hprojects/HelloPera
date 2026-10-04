@@ -5,7 +5,7 @@ import {
   DIRECTIONS,
   TRANSACTION_TYPES,
 } from '@/lib/finance/types';
-import { parseDecimal, MoneyError } from '@/lib/money';
+import { isoDate, positiveAmount, signedAmount } from '@/schemas/primitives';
 
 /**
  * Finance validation — Phase 02 §40–42.
@@ -20,43 +20,9 @@ const currencyCode = z
   .length(3, 'Use a 3-letter currency code')
   .transform((v) => v.toUpperCase());
 
-/** Positive money string -> canonical decimal string for Postgres. */
-const positiveAmount = z
-  .string()
-  .min(1, 'Enter an amount')
-  .superRefine((value, ctx) => {
-    try {
-      const minor = parseDecimal(value);
-      if (minor <= 0n) {
-        ctx.addIssue({ code: 'custom', message: 'Amount must be greater than zero' });
-      }
-    } catch (error) {
-      ctx.addIssue({
-        code: 'custom',
-        message: error instanceof MoneyError ? error.message : 'Enter a valid amount',
-      });
-    }
-  });
-
-/** Amount that may be zero or negative — opening balances only. */
-const signedAmount = z.string().superRefine((value, ctx) => {
-  try {
-    parseDecimal(value);
-  } catch (error) {
-    ctx.addIssue({
-      code: 'custom',
-      message: error instanceof MoneyError ? error.message : 'Enter a valid amount',
-    });
-  }
-});
-
-const isoDate = z
-  .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a valid date')
-  .refine((value) => !Number.isNaN(Date.parse(value)), 'Use a valid date');
-
 export const createAccountSchema = z
   .object({
+    requestId: z.string().uuid('Reload this page before creating the account.'),
     name: z.string().trim().min(1, 'Name your account').max(80),
     type: z.enum(ACCOUNT_TYPES),
     nature: z.enum(ACCOUNT_NATURES),
@@ -90,6 +56,7 @@ export const updateAccountSchema = z.object({
  */
 export const createTransactionSchema = z
   .object({
+    requestId: z.string().uuid('Reload this page before saving the transaction.'),
     type: z.enum(TRANSACTION_TYPES),
     direction: z.enum(DIRECTIONS).optional().nullable(),
     amount: positiveAmount,

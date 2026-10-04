@@ -22,6 +22,9 @@
 /** Minor units per major unit. PHP, USD, EUR are all 2. */
 export const DEFAULT_SCALE = 2;
 
+/** Largest absolute value accepted by PostgreSQL numeric(18,2), in minor units. */
+export const MAX_DATABASE_MINOR = 999_999_999_999_999_999n;
+
 export type Money = {
   /** Minor units. ₱1,234.56 is 123456n. */
   readonly minor: bigint;
@@ -57,15 +60,34 @@ export function zero(currency: string): Money {
  * rounding silently — a truncated centavo is a reconciliation bug later.
  */
 export function parseDecimal(input: string, scale = DEFAULT_SCALE): bigint {
-  const cleaned = input
-    .trim()
-    .replace(/[₱$€£¥]/g, '')
-    .replace(/[\s,_]/g, '');
+  const trimmed = input.trim();
+  const withoutSymbol = trimmed.replace(/^[₱$€£¥]\s?/, '');
+
+  if (/\s|_/.test(withoutSymbol)) {
+    throw new MoneyError(`"${input}" is not a valid amount.`);
+  }
+
+  const signed = withoutSymbol.match(/^([+-]?)(.*)$/);
+  const sign = signed?.[1] ?? '';
+  const body = signed?.[2] ?? '';
+  const [wholePart = '', fractionPart = '', ...extra] = body.split('.');
+
+  if (extra.length > 0 || (wholePart === '' && fractionPart === '')) {
+    throw new MoneyError(`"${input}" is not a valid amount.`);
+  }
+
+  const grouped = /^\d{1,3}(,\d{3})+$/.test(wholePart);
+  const plain = /^\d*$/.test(wholePart) && !wholePart.includes(',');
+  if ((!plain && !grouped) || !/^\d*$/.test(fractionPart)) {
+    throw new MoneyError(`"${input}" is not a valid amount.`);
+  }
+
+  const cleaned = `${sign}${wholePart.replace(/,/g, '')}${body.includes('.') ? `.${fractionPart}` : ''}`;
 
   if (cleaned === '' || cleaned === '-' || cleaned === '+') {
     throw new MoneyError('Enter an amount.');
   }
-  if (!/^[+-]?\d*(\.\d*)?$/.test(cleaned)) {
+  if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(cleaned)) {
     throw new MoneyError(`"${input}" is not a valid amount.`);
   }
 
@@ -108,9 +130,10 @@ export function toDecimalString(minor: bigint, scale = DEFAULT_SCALE): string {
 /** Read a Postgres `numeric` (driver returns it as a string) without precision loss. */
 export function fromDatabase(value: string | number | null, currency: string): Money {
   if (value === null) return zero(currency);
-  // A number here means the driver already coerced it, which risks precision.
-  // Accepted for resilience, but String() keeps whatever precision survived.
-  return money(parseDecimal(String(value)), currency);
+  if (typeof value !== 'string') {
+    throw new MoneyError('Database money must arrive as an exact decimal string.');
+  }
+  return money(parseDecimal(value), currency);
 }
 
 /** Serialise for Postgres. Always a string — never a JS number. */

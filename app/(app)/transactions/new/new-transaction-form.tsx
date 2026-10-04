@@ -34,11 +34,13 @@ export function NewTransactionForm({
   categories,
   defaultCurrency,
   initialType,
+  requestId,
 }: {
   accounts: AccountOption[];
   categories: CategoryOption[];
   defaultCurrency: string;
   initialType: string;
+  requestId: string;
 }) {
   const [state, action, pending] = useActionState(createTransactionAction, initial);
   const [type, setType] = useState<TransactionType>(
@@ -66,6 +68,7 @@ export function NewTransactionForm({
 
   return (
     <form action={action} noValidate>
+      <input type="hidden" name="requestId" value={requestId} />
       {state.error ? <FormAlert tone="error">{state.error}</FormAlert> : null}
 
       <fieldset className="mb-4">

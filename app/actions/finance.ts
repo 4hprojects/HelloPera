@@ -45,6 +45,7 @@ export async function createAccountAction(
   }
 
   const parsed = createAccountSchema.safeParse({
+    requestId: formData.get('requestId'),
     name: formData.get('name'),
     type: formData.get('type'),
     nature: formData.get('nature'),
@@ -104,6 +105,7 @@ export async function createTransactionAction(
   }
 
   const raw = {
+    requestId: formData.get('requestId'),
     type: formData.get('type'),
     direction: formData.get('direction') || null,
     amount: formData.get('amount'),

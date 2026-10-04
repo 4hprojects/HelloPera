@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { PageHeader } from '@/components/ui/page-header';
 import { requireUser } from '@/lib/auth/guards';
 import { NewAccountForm } from './new-account-form';
+import { randomUUID } from 'node:crypto';
 
 export const metadata: Metadata = { title: 'Add account' };
 
@@ -10,7 +11,7 @@ export default async function NewAccountPage() {
   return (
     <div className="mx-auto max-w-lg">
       <PageHeader title="Add account" />
-      <NewAccountForm defaultCurrency={profile.default_currency} />
+      <NewAccountForm defaultCurrency={profile.default_currency} requestId={randomUUID()} />
     </div>
   );
 }

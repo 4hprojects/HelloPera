@@ -24,6 +24,7 @@ import {
   setEventStatus,
   setIncludeInForecast,
 } from '@/services/expected-event.service';
+import { assertWritesEnabled, WritesDisabledError } from '@/lib/ops/kill-switches';
 
 /**
  * Recurring rules and expected events — PHASE-07 §48 to §50.
@@ -69,6 +70,16 @@ function revalidateAll(): void {
   revalidatePath('/expected-income');
 }
 
+async function requireFinancialWrites(): Promise<ActionState | null> {
+  try {
+    await assertWritesEnabled();
+    return null;
+  } catch (error) {
+    if (error instanceof WritesDisabledError) return { error: error.message };
+    throw error;
+  }
+}
+
 function formValues(formData: FormData) {
   return {
     ruleType: formData.get('ruleType'),
@@ -94,6 +105,8 @@ export async function createRecurringRuleAction(
   formData: FormData,
 ): Promise<ActionState> {
   const { user, profile } = await requireUser();
+  const frozen = await requireFinancialWrites();
+  if (frozen) return frozen;
   const parsed = createRecurringRuleSchema.safeParse(formValues(formData));
   if (!parsed.success) return { fieldErrors: fieldErrorsFrom(parsed.error) };
 
@@ -130,6 +143,8 @@ export async function updateRecurringRuleAction(
   formData: FormData,
 ): Promise<ActionState> {
   const { user, profile } = await requireUser();
+  const frozen = await requireFinancialWrites();
+  if (frozen) return frozen;
   const parsed = updateRecurringRuleSchema.safeParse({
     ...formValues(formData),
     id: formData.get('id'),
@@ -164,6 +179,8 @@ export async function transitionRuleAction(
   formData: FormData,
 ): Promise<ActionState> {
   const { user, profile } = await requireUser();
+  const frozen = await requireFinancialWrites();
+  if (frozen) return frozen;
   const parsed = ruleTransitionSchema.safeParse({
     id: formData.get('id'),
     action: formData.get('action'),
@@ -218,6 +235,8 @@ export async function expectedEventAction(
   formData: FormData,
 ): Promise<ActionState> {
   const { user } = await requireUser();
+  const frozen = await requireFinancialWrites();
+  if (frozen) return frozen;
   const parsed = expectedEventActionSchema.safeParse({
     id: formData.get('id'),
     action: formData.get('action'),
@@ -274,6 +293,8 @@ export async function generateOccurrencesAction(
   _formData: FormData,
 ): Promise<ActionState> {
   const { user } = await requireUser();
+  const frozen = await requireFinancialWrites();
+  if (frozen) return frozen;
 
   try {
     const result = await generateOccurrences(user.id);

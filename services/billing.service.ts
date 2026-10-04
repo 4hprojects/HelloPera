@@ -42,7 +42,7 @@ function toEntry(row: Row): BillingHistoryEntry {
 export async function listBillingHistory(limit = 24): Promise<BillingHistoryEntry[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
-    .from('billing_history')
+    .from('billing_history_exact')
     .select(
       'id, provider, amount, currency_code, status, billing_period_start, billing_period_end, receipt_url, created_at',
     )

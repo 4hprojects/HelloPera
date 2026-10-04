@@ -7,6 +7,7 @@ import { EmptyState } from '@/components/ui/states';
 import Link from 'next/link';
 import { NewTransactionForm } from './new-transaction-form';
 import { buttonClass } from '@/components/ui/button';
+import { randomUUID } from 'node:crypto';
 
 export const metadata: Metadata = { title: 'Add transaction' };
 
@@ -49,6 +50,7 @@ export default async function NewTransactionPage({
         categories={categories.map((c) => ({ id: c.id, name: c.name, type: c.type }))}
         defaultCurrency={profile.default_currency}
         initialType={type ?? 'expense'}
+        requestId={randomUUID()}
       />
     </div>
   );

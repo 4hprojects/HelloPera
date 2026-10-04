@@ -47,10 +47,7 @@ import type { LabelledAggregate } from '@/types/dashboard';
  * else has to change.
  */
 
-/** PostgREST refuses more than this per request regardless of what we ask for. */
-const PAGE = 1000;
-/** Refuse to spin forever if `count` and the row stream ever disagree. */
-const MAX_PAGES = 60;
+const MAX_ROWS = 60_000;
 
 export type AnalyticsWindow = {
   /** YYYY-MM-DD inclusive, already in the user's timezone (§35). */
@@ -87,24 +84,15 @@ type Row = {
   } | null;
 };
 
-const SELECT = `
-  id, type, status, direction, amount, currency_code, transaction_date,
-  category_id, source_account_id, destination_account_id, merchant_name,
-  refund_of_transaction_id,
-  parent:refund_of_transaction_id (
-    category_id, source_account_id, merchant_name, currency_code
-  )
-`;
-
 /**
  * Every confirmed transaction in the window, as rows the pure aggregators
  * understand.
  *
- * **Paginated, and that is not an optimisation.** Supabase caps a REST read
- * at 1000 rows and returns HTTP 200 with `content-range: 0-999/2500` — no
- * error, just silently fewer rows. An unbounded select here would under-report
- * every total on the dashboard for any user past a thousand transactions, and
- * nothing would look wrong. Verified against this project: the cap is live.
+ * **One snapshot RPC, not paged REST reads.** Supabase caps a REST read at
+ * 1000 rows with no error, and paging across requests can straddle concurrent
+ * writes. `read_analytics_snapshot` returns the whole window as a single jsonb
+ * value from one statement, and refuses windows over `MAX_ROWS` rather than
+ * under-report.
  *
  * No `user_id` predicate anywhere (§60): the session client carries the user's
  * JWT and RLS scopes the read. There is no parameter through which a browser
@@ -119,34 +107,20 @@ export function fetchAnalyticsRows(window: AnalyticsWindow): Promise<AnalyticsRo
 
 async function readAnalyticsRows(window: AnalyticsWindow): Promise<AnalyticsRow[]> {
   const supabase = await createClient();
-  const rows: Row[] = [];
-
-  for (let page = 0; page < MAX_PAGES; page += 1) {
-    const offset = page * PAGE;
-    const { data, error } = await supabase
-      .from('transactions')
-      .select(SELECT)
-      .eq('status', 'confirmed')
-      .gte('transaction_date', window.from)
-      .lte('transaction_date', window.to)
-      // A stable order is what makes paging safe: without it two pages can
-      // overlap or skip rows.
-      .order('transaction_date', { ascending: true })
-      .order('id', { ascending: true })
-      .range(offset, offset + PAGE - 1)
-      .returns<Row[]>();
-
-    if (error) throw new Error(`Could not load analytics rows: ${error.code}`);
-    const batch = data ?? [];
-    rows.push(...batch);
-
-    if (batch.length < PAGE) return rows.map(toAnalyticsRow);
+  const { data, error } = await supabase.rpc('read_analytics_snapshot', {
+    p_from: window.from,
+    p_to: window.to,
+    p_max_rows: MAX_ROWS,
+  });
+  if (error) {
+    if (error.message.includes('ANALYTICS_WINDOW_TOO_LARGE')) {
+      throw new Error(
+        `Analytics window exceeded ${MAX_ROWS} rows. Totals would be incomplete, so nothing is shown.`,
+      );
+    }
+    throw new Error(`Could not load analytics rows: ${error.code}`);
   }
-
-  throw new Error(
-    `Analytics window exceeded ${MAX_PAGES * PAGE} rows. ` +
-      'Totals would be incomplete, so nothing is shown.',
-  );
+  return ((data ?? []) as Row[]).map(toAnalyticsRow);
 }
 
 function toAnalyticsRow(row: Row): AnalyticsRow {

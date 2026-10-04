@@ -30,7 +30,7 @@ export async function ObligationDetail({
   );
   const supabase = await createClient();
   const { data, error } = await supabase
-    .from('transactions')
+    .from('transactions_exact')
     .select('id, transaction_date, amount, description')
     .eq('status', 'confirmed')
     .eq('currency_code', item.currency)

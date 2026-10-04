@@ -47,9 +47,16 @@ export class RateLimitError extends Error {
  * header is the only source. It is spoofable in principle; it is used here for
  * abuse dampening rather than authorisation, which is the appropriate weight
  * to put on it.
+ *
+ * Behind Cloudflare, `CF-Connecting-IP` is the real visitor and the first
+ * `X-Forwarded-For` entry may be client-supplied. It is preferred when present.
+ * It is only trustworthy if the origin is reachable through Cloudflare alone;
+ * otherwise a direct caller can set it, which is the same weight as the above.
  */
 export async function clientIp(): Promise<string> {
   const h = await headers();
+  const cf = h.get('cf-connecting-ip');
+  if (cf) return cf.trim();
   const forwarded = h.get('x-forwarded-for');
   if (forwarded) return forwarded.split(',')[0]!.trim();
   return h.get('x-real-ip') ?? 'unknown';

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getCurrentUser } from '@/lib/auth/session';
+import { getAuthResult } from '@/lib/auth/guards';
 import { createSignedUrl } from '@/services/storage.service';
 
 /**
@@ -13,8 +13,14 @@ export async function GET(
   _request: Request,
   context: { params: Promise<{ id: string; which: string }> },
 ) {
-  const user = await getCurrentUser();
-  if (!user) return new NextResponse('Unauthorized', { status: 401 });
+  const auth = await getAuthResult();
+  if (!auth.ok) {
+    return new NextResponse(
+      auth.reason === 'unauthenticated' ? 'Unauthorized' : 'Forbidden',
+      { status: auth.reason === 'unauthenticated' ? 401 : 403 },
+    );
+  }
+  const { user } = auth.context;
 
   const { id, which } = await context.params;
   if (which !== 'display' && which !== 'thumbnail' && which !== 'original') {

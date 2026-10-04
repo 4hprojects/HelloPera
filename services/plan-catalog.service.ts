@@ -31,7 +31,7 @@ export async function listPublicPlanSummaries(): Promise<PlanSummary[]> {
     const admin = createAdminClient();
 
     const { data: plans, error } = await admin
-      .from('plans')
+      .from('plans_exact')
       .select('id, code, name, description')
       .eq('is_active', true)
       .eq('is_public', true)

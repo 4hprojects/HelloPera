@@ -37,13 +37,22 @@ try {
     "select public.create_account($1,'Other','cash','asset','PHP',1000)",
     [b],
   );
-  for (const [kind,table,nameColumn,dateColumn] of [
-    ['receivable','receivables','party_name','due_date'],
-    ['expected_income','expected_income','source_name','expected_date'],
+  for (const [kind, table, nameColumn, dateColumn] of [
+    ['receivable', 'receivables', 'party_name', 'due_date'],
+    ['expected_income', 'expected_income', 'source_name', 'expected_date'],
   ]) {
-    const id = await scalar(`insert into public.${table}(user_id,${nameColumn},amount,currency_code,${dateColumn}) values($1,'Incoming fixture',10,'PHP','2026-09-23') returning id`,[b]);
-    await scalar("select public.record_obligation_payment($1,$2,$3,$4,10,$5,'2026-09-23')",[b,randomUUID(),kind,id,other]);
-    assert.equal(await scalar(`select status from public.${table} where id=$1`,[id]),'paid');
+    const id = await scalar(
+      `insert into public.${table}(user_id,${nameColumn},amount,currency_code,${dateColumn}) values($1,'Incoming fixture',10,'PHP','2026-09-23') returning id`,
+      [b],
+    );
+    await scalar(
+      "select public.record_obligation_payment($1,$2,$3,$4,10,$5,'2026-09-23')",
+      [b, randomUUID(), kind, id, other],
+    );
+    assert.equal(
+      await scalar(`select status from public.${table} where id=$1`, [id]),
+      'paid',
+    );
   }
   console.log('PASS: receivable and expected-income settlement');
   const bill = await scalar(
@@ -233,6 +242,92 @@ try {
   console.log(
     'PASS: challenge expiry/replay, deletion freeze, cascade, and audit erasure',
   );
+  {
+    const c = randomUUID();
+    await db.query("insert into auth.users(id,email) values($1,'c@example.test')", [c]);
+    const req = randomUUID();
+    const mk = (r, amt = 10) =>
+      db.query(
+        "select public.create_account_idempotent($1,$2,'Idem','cash','asset','PHP',$3)",
+        [c, r, amt],
+      );
+    const first = Object.values((await mk(req)).rows[0])[0];
+    const replay = Object.values((await mk(req)).rows[0])[0];
+    assert.equal(replay, first);
+    assert.equal(
+      await scalar(
+        "select count(*)::int from public.accounts where user_id=$1 and name='Idem'",
+        [c],
+      ),
+      1,
+    );
+    await assert.rejects(mk(req, 11), /REQUEST_ALREADY_USED/);
+    await assert.rejects(
+      db.query(
+        "select public.create_account_idempotent($1,null,'X','cash','asset','PHP',0)",
+        [c],
+      ),
+      /REQUEST_ID_REQUIRED/,
+    );
+    const acct = first;
+    const tx = (r) =>
+      db.query(
+        "select public.create_transaction_idempotent($1,$2,'income',5,'PHP','2026-09-23',null,$3)",
+        [c, r, acct],
+      );
+    const treq = randomUUID();
+    const before = await scalar(
+      'select count(*)::int from public.transactions where user_id=$1',
+      [c],
+    );
+    const t1 = Object.values((await tx(treq)).rows[0])[0];
+    assert.equal(Object.values((await tx(treq)).rows[0])[0], t1);
+    assert.equal(
+      await scalar('select count(*)::int from public.transactions where user_id=$1', [c]),
+      before + 1,
+    );
+    console.log(
+      'PASS: idempotent account/transaction creation replays once and rejects mismatches',
+    );
+
+    await db.exec('set role authenticated');
+    await db.query("select set_config('request.jwt.claim.sub',$1,false)", [c]);
+    assert.equal(
+      await scalar(
+        "select jsonb_array_length(public.read_analytics_snapshot('2026-09-01','2026-09-30'))",
+      ),
+      1,
+    );
+    assert.ok(
+      await scalar(
+        "select bool_or(e->>'amount'='5.00') from jsonb_array_elements(public.read_analytics_snapshot('2026-09-01','2026-09-30')) e",
+      ),
+    );
+    await assert.rejects(
+      db.query("select public.read_analytics_snapshot('2026-09-01','2026-09-30',0)"),
+      /INVALID_ANALYTICS_LIMIT/,
+    );
+    await db.exec('reset role');
+    console.log('PASS: analytics snapshot is RLS-scoped, exact, and bounded');
+
+    await db.query(
+      "update public.feature_flags set enabled=false where key='financial_writes_enabled'",
+    );
+    assert.equal(
+      await scalar("select public.run_recurring_generation(90,null)->>'reason'"),
+      'financial_writes_disabled',
+    );
+    await db.query(
+      "delete from public.feature_flags where key='financial_writes_enabled'",
+    );
+    await assert.rejects(
+      db.query('select public.assert_financial_writes_enabled()'),
+      /FINANCIAL_WRITES_DISABLED/,
+    );
+    console.log(
+      'PASS: scheduled generation fails closed when financial writes are off or unreadable',
+    );
+  }
 } finally {
   await db.close();
 }

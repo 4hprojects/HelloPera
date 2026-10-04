@@ -40,7 +40,7 @@ function toAccount(row: AccountRow): Account {
 export async function listAccounts(options: { includeArchived?: boolean } = {}) {
   const supabase = await createClient();
   let query = supabase
-    .from('accounts')
+    .from('accounts_exact')
     .select('*')
     .order('created_at', { ascending: true });
   if (!options.includeArchived) query = query.eq('is_archived', false);
@@ -53,7 +53,7 @@ export async function listAccounts(options: { includeArchived?: boolean } = {}) 
 export async function getAccount(id: string): Promise<Account | null> {
   const supabase = await createClient();
   const { data, error } = await supabase
-    .from('accounts')
+    .from('accounts_exact')
     .select('*')
     .eq('id', id)
     .maybeSingle<AccountRow>();
@@ -90,8 +90,9 @@ export async function createAccount(
   input: CreateAccountInput,
 ): Promise<string> {
   const admin = createAdminClient();
-  const { data, error } = await admin.rpc('create_account', {
+  const { data, error } = await admin.rpc('create_account_idempotent', {
     p_user_id: userId,
+    p_request_id: input.requestId,
     p_name: input.name,
     p_type: input.type,
     p_nature: input.nature,

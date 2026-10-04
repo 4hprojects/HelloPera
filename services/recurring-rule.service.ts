@@ -11,6 +11,7 @@ import type {
   UpdateRecurringRuleInput,
 } from '@/schemas/recurring.schema';
 import type { GenerationResult, RecurringRule, RuleStatus } from '@/types/recurring';
+import { assertWritesEnabled, WritesDisabledError } from '@/lib/ops/kill-switches';
 
 /**
  * Recurring rules — PHASE-07 §7, §21 to §24, §37.
@@ -101,7 +102,7 @@ const SELECT = `
 export async function listRules(today: string): Promise<RecurringRule[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
-    .from('recurring_rules')
+    .from('recurring_rules_exact')
     .select(SELECT)
     .order('created_at', { ascending: false })
     .limit(500);
@@ -113,7 +114,7 @@ export async function listRules(today: string): Promise<RecurringRule[]> {
 export async function getRule(id: string, today: string): Promise<RecurringRule | null> {
   const supabase = await createClient();
   const { data, error } = await supabase
-    .from('recurring_rules')
+    .from('recurring_rules_exact')
     .select(SELECT)
     .eq('id', id)
     .maybeSingle();
@@ -132,7 +133,7 @@ export async function getRule(id: string, today: string): Promise<RecurringRule 
 async function assertOwned(id: string): Promise<void> {
   const supabase = await createClient();
   const { data, error } = await supabase
-    .from('recurring_rules')
+    .from('recurring_rules_exact')
     .select('id')
     .eq('id', id)
     .maybeSingle();
@@ -332,6 +333,14 @@ export async function generateOccurrences(
   userId?: string,
   horizonDays = 90,
 ): Promise<GenerationResult> {
+  try {
+    await assertWritesEnabled();
+  } catch (error) {
+    if (error instanceof WritesDisabledError) {
+      return { skipped: true, reason: 'financial_writes_disabled' };
+    }
+    throw error;
+  }
   const admin = createAdminClient();
   const { data, error } = await admin.rpc('run_recurring_generation', {
     p_horizon_days: horizonDays,

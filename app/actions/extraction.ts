@@ -14,6 +14,8 @@ import {
   createReceivable,
 } from '@/services/obligation.service';
 import { missingRequiredFields, type TargetType } from '@/lib/ocr/schema';
+import { isFlagEnabled } from '@/services/plan.service';
+import { assertWritesEnabled, WritesDisabledError } from '@/lib/ops/kill-switches';
 
 export async function runExtractionAction(
   _prev: ActionState,
@@ -70,6 +72,16 @@ export async function confirmExtractionAction(
 ): Promise<ActionState> {
   const { user, profile } = await requireUser();
 
+  if (!(await isFlagEnabled('ocr_enabled'))) {
+    return { error: 'Document reading is not available yet. Nothing was changed.' };
+  }
+  try {
+    await assertWritesEnabled();
+  } catch (error) {
+    if (error instanceof WritesDisabledError) return { error: error.message };
+    throw error;
+  }
+
   const extractionId = String(formData.get('extractionId') ?? '');
   const documentId = String(formData.get('documentId') ?? '');
   const target = String(formData.get('target') ?? 'unknown') as TargetType;
@@ -101,6 +113,7 @@ export async function confirmExtractionAction(
     if (target === 'transaction') {
       if (!accountId) return { error: 'Choose which account this came from.' };
       entityId = await createTransaction(user.id, {
+        requestId: extractionId,
         type: 'expense',
         amount: fields.amount,
         currencyCode: currency,
