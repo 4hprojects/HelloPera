@@ -184,3 +184,11 @@ Environment: local, Node 22.23.1, uncommitted working tree on `feat/hellodeploy-
 | `npm run build` | Pass |
 
 Status: HP-001–HP-007 and HP-025 are **in progress**: implemented and locally verified, awaiting hosted staging evidence and committed SHA. HP-008 (full authorization matrix) and HP-026 (transactional privileged audit) remain open.
+
+## Phase 1 — HP-008 / HP-026 local implementation — 2026-10-04
+
+Environment: local, Node 22.23.1, on top of commit 82f1a30. Hosted staging evidence still outstanding.
+
+- HP-026: migration `20261004000200_admin_atomic_audit.sql` adds service-only `admin_apply_change`, which applies the privileged change and its audit row in one transaction and re-validates active admin, reason and self-target. `adminAction` now calls it; the separate best-effort audit write and the non-atomic service mutations were removed. `npm run test:db` proves: injected audit failure rolls the change back; self-target, non-admin, suspended-admin and short-reason requests are refused; `authenticated` cannot call the function. This also fixes feature-flag audit rows, which previously passed a non-uuid key as `entity_id` and were silently lost.
+- HP-008: `lib/auth/entrypoint-matrix.test.ts` enumerates every server action and route handler and fails if one lacks a declared, source-verified boundary. It found and fixed `updateProfile` (session only; suspended/disabled/unverified accounts could write via the admin client — now `requireUser`). `GET /api/export` now returns 401/403 JSON instead of redirecting. Still outstanding for HP-008: two-user RLS/direct-write cases against hosted Auth/Storage/PostgREST (needs HP-016).
+- Checks: typecheck, lint, 820 unit tests, 10 isolated DB test blocks, build all pass.

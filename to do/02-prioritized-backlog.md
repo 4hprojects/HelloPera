@@ -13,9 +13,9 @@ Audit: 1 October 2026. These are **future tasks**, not changes performed by the 
 | [HP-005](#hp-005) | P1       | 1     | in progress | Preserve money precision across all database reads                |
 | [HP-006](#hp-006) | P1       | 1     | in progress | Make ordinary ledger creation retry-safe                          |
 | [HP-007](#hp-007) | P1       | 1     | in progress | Ensure analytics reads a consistent financial snapshot            |
-| [HP-008](#hp-008) | P1       | 1     | open     | Complete authorization and privilege regression coverage          |
+| [HP-008](#hp-008) | P1       | 1     | in progress | Complete authorization and privilege regression coverage          |
 | [HP-025](#hp-025) | P1       | 1     | in progress | Make the financial freeze comprehensive and explicit              |
-| [HP-026](#hp-026) | P1       | 1     | open     | Make privileged administrative changes durably auditable          |
+| [HP-026](#hp-026) | P1       | 1     | in progress | Make privileged administrative changes durably auditable          |
 | [HP-009](#hp-009) | P1       | 2     | open     | Verify complete core journeys and fix currency selection          |
 | [HP-011](#hp-011) | P1       | 2     | open     | Prove export and resumable deletion on hosted storage             |
 | [HP-012](#hp-012) | P1       | 3     | open     | Establish realistic performance and capacity baselines            |
@@ -186,7 +186,7 @@ P0: none demonstrated. P1 items are free-launch gates; P2 items may be scheduled
 
 ## HP-008 — Complete authorization and privilege regression coverage
 
-**Priority:** P1 · **Phase:** 1 · **Status:** open · **Evidence:** unverified full matrix; selected local checks pass
+**Priority:** P1 · **Phase:** 1 · **Status:** in progress · **Evidence:** unverified full matrix; selected local checks pass
 **Area:** Auth/RLS/admin · **Responsible role:** Security + backend + QA · **Estimate:** L
 **Dependencies:** HP-002, HP-003; HP-016 staging setup
 
@@ -564,7 +564,7 @@ P0: none demonstrated. P1 items are free-launch gates; P2 items may be scheduled
 
 ## HP-026 — Make privileged administrative changes durably auditable
 
-**Priority:** P1 · **Phase:** 1 · **Status:** open · **Evidence:** confirmed best-effort audit boundary; lost-audit incident not observed
+**Priority:** P1 · **Phase:** 1 · **Status:** in progress · **Evidence:** confirmed best-effort audit boundary; lost-audit incident not observed
 **Area:** Admin/security audit · **Responsible role:** Backend + database · **Estimate:** M
 **Dependencies:** HP-008
 

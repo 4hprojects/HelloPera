@@ -328,6 +328,103 @@ try {
       'PASS: scheduled generation fails closed when financial writes are off or unreadable',
     );
   }
+  {
+    await db.query("select set_config('request.jwt.claim.sub','',false)");
+    const admin = randomUUID();
+    const victim = randomUUID();
+    await db.query(
+      "insert into auth.users(id,email) values($1,'adm@example.test'),($2,'vic@example.test')",
+      [admin, victim],
+    );
+    await db.query(
+      "update public.profiles set role='admin', status='active' where id=$1",
+      [admin],
+    );
+    const apply = (
+      event,
+      op,
+      target,
+      args = {},
+      reason = 'testing',
+      actor = admin,
+      entity = null,
+    ) =>
+      db.query(
+        'select public.admin_apply_change($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb)',
+        [actor, event, op, target, entity, reason, JSON.stringify(args), '{}'],
+      );
+    const auditCount = (event) =>
+      scalar('select count(*)::int from public.audit_logs where event_type=$1', [event]);
+
+    await apply('user_suspended', 'set_status', victim, { status: 'suspended' });
+    assert.equal(
+      await scalar('select status from public.profiles where id=$1', [victim]),
+      'suspended',
+    );
+    assert.equal(await auditCount('user_suspended'), 1);
+    assert.equal(
+      await scalar(
+        "select metadata->>'reason' from public.audit_logs where event_type='user_suspended'",
+      ),
+      'testing',
+    );
+
+    // Injected audit failure rolls the privileged change back.
+    await db.query(
+      "alter table public.audit_logs add constraint inject_fail check (event_type <> 'user_reactivated')",
+    );
+    await assert.rejects(
+      apply('user_reactivated', 'set_status', victim, { status: 'active' }),
+      /inject_fail/,
+    );
+    assert.equal(
+      await scalar('select status from public.profiles where id=$1', [victim]),
+      'suspended',
+    );
+    await db.query('alter table public.audit_logs drop constraint inject_fail');
+
+    // Refusals: self-target, non-admin actor, suspended admin, short reason, unknown op.
+    await assert.rejects(
+      apply('role_changed', 'set_role', admin, { role: 'user' }),
+      /SELF_TARGET/,
+    );
+    await assert.rejects(
+      apply('role_changed', 'set_role', admin, { role: 'admin' }, 'testing', victim),
+      /ADMIN_REQUIRED/,
+    );
+    await assert.rejects(
+      apply('role_changed', 'set_role', victim, { role: 'admin' }, 'x'),
+      /REASON_REQUIRED/,
+    );
+    await assert.rejects(
+      apply('role_changed', 'bogus', victim),
+      /UNKNOWN_ADMIN_OPERATION/,
+    );
+    assert.equal(
+      await scalar('select role from public.profiles where id=$1', [victim]),
+      'user',
+    );
+    await db.query("update public.profiles set status='suspended' where id=$1", [admin]);
+    await assert.rejects(
+      apply('role_changed', 'set_role', victim, { role: 'admin' }),
+      /ADMIN_REQUIRED/,
+    );
+    await db.query("update public.profiles set status='active' where id=$1", [admin]);
+
+    // Direct client access is refused.
+    await db.exec('set role authenticated');
+    await assert.rejects(
+      db.query(
+        'select public.admin_apply_change($1,$2,$3,$4,null,$5,$6::jsonb,$7::jsonb)',
+        [admin, 'role_changed', 'set_role', victim, 'testing', '{"role":"admin"}', '{}'],
+      ),
+      /permission denied/,
+    );
+    await db.exec('reset role');
+    console.log(
+      'PASS: admin change + audit are atomic; self-target, non-admin and direct access refused',
+    );
+  }
 } finally {
   await db.close();
 }

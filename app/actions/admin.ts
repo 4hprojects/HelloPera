@@ -6,17 +6,6 @@ import { adminAction, AdminActionError, rejectSelfTarget } from '@/lib/auth/admi
 import { log } from '@/lib/log';
 import { ENTITLEMENT_KEYS } from '@/lib/monetization/entitlements';
 import { METERED_FEATURES } from '@/lib/monetization/limits';
-import {
-  addSupportNote,
-  adjustUsage,
-  grantOverride,
-  revokeOverride,
-  setFlag,
-  repairAccountBalance,
-  runIntegrityCheck,
-  setUserRole,
-  setUserStatus,
-} from '@/services/admin.service';
 import type { ActionState } from '@/app/actions/auth';
 
 /**
@@ -88,11 +77,10 @@ export async function setUserStatusAction(
       reason: formData.get('reason'),
       targetUserId: userId,
       metadata: { status },
-      run: async (context) => {
-        // §14 — an admin suspending themselves locks the only operator out.
-        rejectSelfTarget(context, userId);
-        await setUserStatus(userId, status);
-      },
+      // §14 — an admin suspending themselves locks the only operator out.
+      precheck: (context) => rejectSelfTarget(context, userId),
+      operation: 'set_status',
+      args: { status },
     });
 
     revalidatePath('/admin/users');
@@ -122,13 +110,12 @@ export async function setUserRoleAction(
       reason: formData.get('reason'),
       targetUserId: userId,
       metadata: { role },
-      run: async (context) => {
-        // §13, §14 — the escalation this exists to prevent is an admin
-        // changing their own privileges, and at that moment "are you an admin"
-        // is true by definition. So the check is "is this your own account".
-        rejectSelfTarget(context, userId);
-        await setUserRole(userId, role);
-      },
+      // §13, §14 — the escalation this exists to prevent is an admin
+      // changing their own privileges, and at that moment "are you an admin"
+      // is true by definition. So the check is "is this your own account".
+      precheck: (context) => rejectSelfTarget(context, userId),
+      operation: 'set_role',
+      args: { role },
     });
 
     revalidatePath(`/admin/users/${userId}`);
@@ -155,9 +142,8 @@ export async function addSupportNoteAction(
       // kind of friction that gets worked around with "see note".
       reason: note.slice(0, 200),
       targetUserId: userId,
-      run: async (context) => {
-        await addSupportNote(userId, context.user.id, note);
-      },
+      operation: 'add_note',
+      args: { note },
     });
 
     revalidatePath(`/admin/users/${userId}`);
@@ -182,11 +168,9 @@ export async function setFlagAction(
     await adminAction({
       event: 'feature_flag_changed',
       reason: formData.get('reason'),
-      entityId: key,
       metadata: { key, enabled },
-      run: async (context) => {
-        await setFlag(key, enabled, context.user.id);
-      },
+      operation: 'set_flag',
+      args: { key, enabled },
     });
 
     revalidatePath('/admin/feature-flags');
@@ -224,16 +208,8 @@ export async function grantOverrideAction(
       reason: formData.get('reason'),
       targetUserId: userId,
       metadata: { key, value: String(rawValue), endsAt },
-      run: async (context) => {
-        await grantOverride({
-          userId,
-          entitlementKey: key,
-          value,
-          reason: context.reason,
-          endsAt,
-          createdBy: context.user.id,
-        });
-      },
+      operation: 'grant_override',
+      args: { key, value, endsAt },
     });
 
     revalidatePath(`/admin/users/${userId}`);
@@ -256,9 +232,7 @@ export async function revokeOverrideAction(
       reason: formData.get('reason'),
       targetUserId: userId,
       entityId: overrideId,
-      run: async () => {
-        await revokeOverride(overrideId);
-      },
+      operation: 'revoke_override',
     });
 
     revalidatePath(`/admin/users/${userId}`);
@@ -289,15 +263,8 @@ export async function adjustUsageAction(
       reason: formData.get('reason'),
       targetUserId: userId,
       metadata: { featureKey, delta },
-      run: async (context) => {
-        await adjustUsage({
-          userId,
-          featureKey,
-          quantityDelta: delta,
-          reason: context.reason,
-          createdBy: context.user.id,
-        });
-      },
+      operation: 'adjust_usage',
+      args: { featureKey, delta },
     });
 
     revalidatePath(`/admin/users/${userId}`);
@@ -332,11 +299,13 @@ export async function repairBalanceAction(
       reason: formData.get('reason'),
       targetUserId: userId,
       entityId: accountId,
-      run: async () => repairAccountBalance(accountId),
+      operation: 'repair_balance',
     });
 
     revalidatePath('/admin/integrity');
-    return { success: `Corrected ${result.previous} to ${result.corrected}.` };
+    return {
+      success: `Corrected ${String(result.previous)} to ${String(result.corrected)}.`,
+    };
   } catch (error) {
     return fail(error);
   }
@@ -351,15 +320,16 @@ export async function runIntegrityCheckAction(
     const result = await adminAction({
       event: 'integrity_check_run',
       reason: formData.get('reason'),
-      run: async () => runIntegrityCheck(),
+      operation: 'integrity_check',
     });
 
+    const mismatches = Number(result.mismatches ?? 0);
     revalidatePath('/admin/integrity');
     return {
       success:
-        result.mismatches === 0
+        mismatches === 0
           ? 'No mismatches found.'
-          : `${result.mismatches} mismatch${result.mismatches === 1 ? '' : 'es'} found.`,
+          : `${mismatches} mismatch${mismatches === 1 ? '' : 'es'} found.`,
     };
   } catch (error) {
     return fail(error);
