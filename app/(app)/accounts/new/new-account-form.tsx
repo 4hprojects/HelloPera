@@ -23,7 +23,13 @@ const TYPE_LABELS: Record<AccountType, string> = {
   other: 'Other',
 };
 
-export function NewAccountForm({ defaultCurrency }: { defaultCurrency: string }) {
+export function NewAccountForm({
+  defaultCurrency,
+  requestId,
+}: {
+  defaultCurrency: string;
+  requestId: string;
+}) {
   const [state, action, pending] = useActionState(createAccountAction, initial);
   const [type, setType] = useState<AccountType>('cash');
 
@@ -33,6 +39,7 @@ export function NewAccountForm({ defaultCurrency }: { defaultCurrency: string })
 
   return (
     <form action={action} noValidate>
+      <input type="hidden" name="requestId" value={requestId} />
       {state.error ? <FormAlert tone="error">{state.error}</FormAlert> : null}
 
       <SelectField

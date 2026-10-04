@@ -1,3 +1,4 @@
+import { assertStagingIdentity } from './staging-identity.mjs';
 import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 for (const file of ['.env.local', '.env'])
@@ -12,9 +13,7 @@ if (process.argv[2] === 'browser') required.push('E2E_BASE_URL');
 for (const key of required)
   if (!process.env[key])
     throw new Error(`NOT VERIFIED: ${key} is required for isolated staging tests.`);
-const host = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL).hostname;
-if (host !== `${process.env.TEST_SUPABASE_PROJECT_REF}.supabase.co`)
-  throw new Error('Test project identity does not match the configured Supabase URL.');
+assertStagingIdentity(process.env);
 const browser = process.argv[2] === 'browser';
 const result = spawnSync(
   process.execPath,

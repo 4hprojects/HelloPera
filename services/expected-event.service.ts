@@ -52,7 +52,7 @@ export async function getUpcomingExpectedEvents(
 ): Promise<ExpectedEvent[]> {
   const supabase = await createClient();
   const query = supabase
-    .from('expected_events')
+    .from('expected_events_exact')
     .select(SELECT)
     .gte('scheduled_date', from)
     .lte('scheduled_date', to)
@@ -66,7 +66,7 @@ export async function getUpcomingExpectedEvents(
 export async function listEventsForRule(ruleId: string): Promise<ExpectedEvent[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
-    .from('expected_events')
+    .from('expected_events_exact')
     .select(SELECT)
     .eq('recurring_rule_id', ruleId)
     .order('scheduled_date', { ascending: false })
@@ -80,7 +80,7 @@ export async function listEventsForRule(ruleId: string): Promise<ExpectedEvent[]
 async function assertOwned(id: string): Promise<void> {
   const supabase = await createClient();
   const { data, error } = await supabase
-    .from('expected_events')
+    .from('expected_events_exact')
     .select('id')
     .eq('id', id)
     .maybeSingle();
@@ -184,7 +184,7 @@ export async function findFulfilmentCandidates(
   };
 
   const { data, error } = await supabase
-    .from('transactions')
+    .from('transactions_exact')
     .select(
       'id, transaction_date, amount, currency_code, merchant_name, description, type',
     )

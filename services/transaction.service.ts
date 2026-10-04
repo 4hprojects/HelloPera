@@ -47,7 +47,7 @@ export async function listTransactions(filter: TransactionFilter) {
     'transactions.list',
     async () => {
       const supabase = await createClient();
-      let query = supabase.from('transactions').select('*');
+      let query = supabase.from('transactions_exact').select('*');
 
       if (filter.from) query = query.gte('transaction_date', filter.from);
       if (filter.to) query = query.lte('transaction_date', filter.to);
@@ -111,7 +111,7 @@ export async function listTransactions(filter: TransactionFilter) {
 export async function getTransaction(id: string): Promise<Transaction | null> {
   const supabase = await createClient();
   const { data, error } = await supabase
-    .from('transactions')
+    .from('transactions_exact')
     .select('*')
     .eq('id', id)
     .maybeSingle<TransactionRow>();
@@ -150,8 +150,9 @@ export async function createTransaction(
   input: CreateTransactionInput,
 ): Promise<string> {
   const admin = createAdminClient();
-  const { data, error } = await admin.rpc('create_transaction', {
+  const { data, error } = await admin.rpc('create_transaction_idempotent', {
     p_user_id: userId,
+    p_request_id: input.requestId,
     p_type: input.type,
     p_amount: input.amount,
     p_currency_code: input.currencyCode,
@@ -189,7 +190,7 @@ export async function voidTransaction(userId: string, id: string, reason?: strin
 export async function getRecentTransactions(limit = 6): Promise<Transaction[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
-    .from('transactions')
+    .from('transactions_exact')
     .select('*')
     // §4 and §16 — official figures and lists show confirmed records only.
     .eq('status', 'confirmed')

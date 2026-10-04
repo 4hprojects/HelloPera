@@ -1,3 +1,5 @@
+// @ts-expect-error Shared operational ESM guard.
+import { assertStagingIdentity } from '../scripts/staging-identity.mjs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import sharp from 'sharp';
 import { createClient } from '@supabase/supabase-js';
@@ -31,6 +33,7 @@ let photo: Buffer;
 
 describe.skipIf(!enabled)('storage integration', () => {
   beforeAll(async () => {
+    assertStagingIdentity(process.env);
     photo = await sharp({
       create: { width: 2400, height: 1600, channels: 3, background: '#c94f5c' },
     })

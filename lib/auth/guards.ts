@@ -14,23 +14,47 @@ import type { Profile } from '@/types/auth';
  */
 
 export type AuthContext = { user: User; profile: Profile };
+export type AuthFailure =
+  | 'unauthenticated'
+  | 'missing_profile'
+  | 'suspended'
+  | 'disabled'
+  | 'unverified';
+export type AuthResult =
+  | { ok: true; context: AuthContext }
+  | { ok: false; reason: AuthFailure };
+
+/** Shared authentication/account-state decision for pages, actions and APIs. */
+export async function getAuthResult(): Promise<AuthResult> {
+  const user = await getCurrentUser();
+  if (!user) return { ok: false, reason: 'unauthenticated' };
+
+  const profile = await getCurrentProfile();
+  if (!profile) return { ok: false, reason: 'missing_profile' };
+  if (profile.status === 'suspended') return { ok: false, reason: 'suspended' };
+  if (profile.status === 'disabled') return { ok: false, reason: 'disabled' };
+  if (!user.email_confirmed_at) return { ok: false, reason: 'unverified' };
+
+  return { ok: true, context: { user, profile } };
+}
 
 /** Authenticated + active. Redirects otherwise. */
 export async function requireUser(): Promise<AuthContext> {
-  const user = await getCurrentUser();
-  if (!user) redirect('/login');
+  const result = await getAuthResult();
+  if (result.ok) return result.context;
 
-  const profile = await getCurrentProfile();
-  // Authenticated but no profile means the trigger did not fire. Failing
-  // closed is correct: we cannot evaluate role or status without it.
-  if (!profile) redirect('/auth/error?reason=no_profile');
-
-  if (profile.status === 'suspended') redirect('/account-suspended');
-  if (profile.status === 'disabled') redirect('/account-disabled');
-
-  if (!user.email_confirmed_at) redirect('/verify-email');
-
-  return { user, profile };
+  switch (result.reason) {
+    case 'unauthenticated':
+      redirect('/login');
+    case 'missing_profile':
+      redirect('/auth/error?reason=no_profile');
+    case 'suspended':
+      redirect('/account-suspended');
+    case 'disabled':
+      redirect('/account-disabled');
+    case 'unverified':
+      redirect('/verify-email');
+  }
 }
 
 /**

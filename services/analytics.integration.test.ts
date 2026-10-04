@@ -1,3 +1,5 @@
+// @ts-expect-error Shared operational ESM guard.
+import { assertStagingIdentity } from '../scripts/staging-identity.mjs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
@@ -120,6 +122,7 @@ async function readAnalytics(client: SupabaseClient) {
 
 describe.skipIf(!enabled)('analytics cross-user isolation — §60, §61, §73', () => {
   beforeAll(async () => {
+    assertStagingIdentity(process.env);
     seeded.push(await seedUser('alpha', 1111.11));
     seeded.push(await seedUser('bravo', 2222.22));
   }, 60_000);

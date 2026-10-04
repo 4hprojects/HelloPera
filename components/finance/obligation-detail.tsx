@@ -1,12 +1,14 @@
-import { randomUUID } from 'node:crypto';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { requireUser } from '@/lib/auth/guards';
 import { todayInTimezone, STATUS_LABELS } from '@/lib/finance/obligation';
 import { toDecimalString } from '@/lib/money';
-import { getObligation, type ObligationKind } from '@/services/obligation.service';
+import {
+  getObligation,
+  listPaymentCandidates,
+  type ObligationKind,
+} from '@/services/obligation.service';
 import { listAccounts } from '@/services/account.service';
-import { createClient } from '@/lib/supabase/server';
 import { cancelObligationAction } from '@/app/actions/obligations';
 import { PageHeader } from '@/components/ui/page-header';
 import { Card } from '@/components/ui/card';
@@ -28,17 +30,7 @@ export async function ObligationDetail({
   const accounts = (await listAccounts()).filter(
     (a) => a.currency_code === item.currency && (kind === 'bill' || a.nature === 'asset'),
   );
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from('transactions')
-    .select('id, transaction_date, amount, description')
-    .eq('status', 'confirmed')
-    .eq('currency_code', item.currency)
-    .eq('type', kind === 'bill' ? 'expense' : 'income')
-    .order('transaction_date', { ascending: false })
-    .order('id', { ascending: false })
-    .limit(100);
-  if (error) throw new Error('Payments could not be loaded. Please try again.');
+  const candidates = await listPaymentCandidates({ kind, currency: item.currency });
   const open = item.lifecycle !== 'cancelled' && item.remaining.minor > 0n;
   return (
     <div className="mx-auto max-w-xl space-y-4">
@@ -64,16 +56,10 @@ export async function ObligationDetail({
             id={id}
             today={today}
             amount={toDecimalString(item.remaining.minor)}
-            requestId={randomUUID()}
+            currency={item.currency}
             accounts={accounts.map((a) => ({ id: a.id, name: a.name }))}
-            transactions={(data ?? []).map((t) => ({
-              id: t.id,
-              label: `${t.transaction_date} · ${item.currency} ${t.amount}${t.description ? ` · ${t.description}` : ''}`,
-            }))}
+            initialCandidates={candidates}
           />
-          <p className="hp-small mt-3">
-            The most recent 100 matching transactions are offered.
-          </p>
         </Card>
       )}
       {open && (

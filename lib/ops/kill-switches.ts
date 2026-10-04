@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { isFlagEnabled } from '@/services/plan.service';
+import { readFlagStrict } from '@/services/plan.service';
 import { log } from '@/lib/log';
 
 /**
@@ -62,21 +62,16 @@ export class WritesDisabledError extends Error {
  * button is not a control: it is a suggestion that anyone with the page already
  * open, or anyone posting to the action directly, never receives.
  *
- * **Fails open on its own failure.** If the flag cannot be read, the write is
- * allowed. That is the opposite of how entitlements fail, and deliberately:
- * `isFlagEnabled` returns false for an unreadable flag, which for this flag
- * would mean an unreachable `feature_flags` table silently freezes every user's
- * ability to record a transaction. Locking people out of their own finances
- * because an operational table hiccuped is worse than briefly honouring a
- * freeze less strictly than intended.
+ * Fails closed. An incident switch whose state cannot be established cannot
+ * safely authorize a financial mutation. Reads and recovery remain available.
  */
 export async function assertWritesEnabled(): Promise<void> {
   let enabled: boolean;
   try {
-    enabled = await isFlagEnabled('financial_writes_enabled');
+    enabled = await readFlagStrict('financial_writes_enabled');
   } catch {
-    log.error('kill switch: could not read financial_writes_enabled; allowing the write');
-    return;
+    log.error('kill switch: could not read financial_writes_enabled; refusing write');
+    throw new WritesDisabledError();
   }
 
   if (!enabled) {

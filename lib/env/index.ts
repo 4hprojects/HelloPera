@@ -60,6 +60,7 @@ const supabaseAnonKey = z
   .refine(
     (value) => {
       // Newer publishable keys are not JWTs; only role-check the JWT form.
+      if (value.startsWith('sb_secret_')) return false;
       if (!value.startsWith('eyJ')) return true;
       return readJwtRole(value) !== 'service_role';
     },

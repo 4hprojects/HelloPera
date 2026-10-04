@@ -93,10 +93,18 @@ function ensureTracking(url) {
 }
 
 function applied(url) {
+  const existence = psql(url, {
+    sql: "select to_regclass('public.schema_migrations') is not null",
+    quiet: true,
+  });
+  if (existence.status !== 0)
+    throw new Error('Could not read migration tracking status.');
+  if (existence.stdout.trim() !== 't') return new Set();
   const r = psql(url, {
     sql: 'select version from public.schema_migrations',
     quiet: true,
   });
+  if (r.status !== 0) throw new Error('Could not read applied migrations.');
   return new Set(
     (r.stdout || '')
       .split('\n')
@@ -118,7 +126,6 @@ loadEnv();
 const url = connectionString();
 
 if (command === 'status') {
-  ensureTracking(url);
   const { all, done } = pending(url);
   for (const f of all) console.log(`  ${done.has(f) ? '✓ applied' : '· pending'}  ${f}`);
   if (all.length === 0) console.log('  no migrations found');

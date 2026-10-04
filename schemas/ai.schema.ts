@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { RANGE_PRESETS } from '@/lib/analytics/range';
+import { isoDate } from '@/schemas/primitives';
 
 /**
  * The assistant's intent schema — PHASE-12 §9, §10, §12, §47.
@@ -60,16 +61,6 @@ export const AI_RANGE_PRESETS = [
   'next-7-days',
 ] as const;
 export type AiRangePreset = (typeof AI_RANGE_PRESETS)[number];
-
-const isoDate = z
-  .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/)
-  .refine((value) => {
-    // Date.parse('2026-02-31') rolls forward to March 3rd rather than failing,
-    // so the round-trip is what actually rejects a day that does not exist.
-    const parsed = new Date(`${value}T00:00:00Z`);
-    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
-  }, 'Use a valid date');
 
 /**
  * A free-text name the model lifted from the question — a category, an account

@@ -1,26 +1,5 @@
 import { z } from 'zod';
-import { MoneyError, parseDecimal } from '@/lib/money';
-
-const positiveAmount = z
-  .string()
-  .min(1, 'Enter an amount')
-  .superRefine((value, ctx) => {
-    try {
-      if (parseDecimal(value) <= 0n) {
-        ctx.addIssue({ code: 'custom', message: 'Amount must be greater than zero' });
-      }
-    } catch (error) {
-      ctx.addIssue({
-        code: 'custom',
-        message: error instanceof MoneyError ? error.message : 'Enter a valid amount',
-      });
-    }
-  });
-
-const isoDate = z
-  .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a valid date')
-  .refine((v) => !Number.isNaN(Date.parse(v)), 'Use a valid date');
+import { isoDate, positiveAmount } from '@/schemas/primitives';
 
 const currencyCode = z
   .string()

@@ -258,7 +258,7 @@ export async function findDuplicateCandidates(params: {
   since.setDate(since.getDate() - 45);
 
   const { data } = await admin
-    .from('transactions')
+    .from('transactions_exact')
     .select('id, amount, currency_code, transaction_date, merchant_name, description')
     .eq('user_id', params.userId)
     .eq('status', 'confirmed')

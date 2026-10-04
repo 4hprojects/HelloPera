@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { RANGE_PRESETS } from '@/lib/analytics/range';
 import { TRANSACTION_TYPES } from '@/lib/finance/types';
+import { isoDate } from '@/schemas/primitives';
 
 /**
  * Analytics inputs — PHASE-06 §65.
@@ -28,14 +29,6 @@ import { TRANSACTION_TYPES } from '@/lib/finance/types';
  * `Date.parse('2026-02-31')` succeeds — JavaScript rolls it forward to March
  * 3rd — so the round-trip is what actually rejects a day that does not exist.
  */
-const isoDate = z
-  .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/)
-  .refine((value) => {
-    const parsed = new Date(`${value}T00:00:00Z`);
-    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
-  }, 'Use a valid date');
-
 export const dashboardParamsSchema = z.object({
   /** §24 — 3, 6 or 12 months of trend. */
   trend: z.coerce

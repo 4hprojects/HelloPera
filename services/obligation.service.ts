@@ -306,3 +306,65 @@ export async function listObligationPage(
     hasNext: rows.length > 25,
   };
 }
+
+export type PaymentCandidate = {
+  id: string;
+  date: string;
+  amount: string;
+  remaining: string;
+  label: string;
+};
+
+const CANDIDATE_PAGE = 25;
+
+/**
+ * Confirmed transactions that can still be linked to an item, newest first,
+ * each with the amount left to allocate. Fully allocated transactions are not
+ * returned, so the picker cannot offer a link the database would refuse.
+ * Keyset-paginated: `cursor` is the previous page's `next`.
+ */
+export async function listPaymentCandidates(params: {
+  kind: ObligationKind;
+  currency: string;
+  search?: string;
+  cursor?: string | null;
+}): Promise<{ items: PaymentCandidate[]; next: string | null }> {
+  const [afterDate, afterId] = (params.cursor ?? '').split('|');
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc('list_payment_candidates', {
+    p_type: params.kind === 'bill' ? 'expense' : 'income',
+    p_currency: params.currency,
+    p_search: params.search?.trim().slice(0, 80) || null,
+    p_after_date: afterDate || null,
+    p_after_id: afterId || null,
+    p_limit: CANDIDATE_PAGE + 1,
+  });
+  if (error) throw new Error(`Could not load transactions: ${error.code}`);
+
+  const rows = (data ?? []) as Array<{
+    id: string;
+    transaction_date: string;
+    amount: string;
+    description: string | null;
+    merchant_name: string | null;
+    remaining: string;
+  }>;
+  const page = rows.slice(0, CANDIDATE_PAGE);
+  const last = page[page.length - 1];
+  return {
+    items: page.map((r) => {
+      const name = r.merchant_name || r.description;
+      return {
+        id: r.id,
+        date: r.transaction_date,
+        amount: r.amount,
+        remaining: r.remaining,
+        label: `${r.transaction_date} · ${params.currency} ${r.amount}${
+          r.remaining !== r.amount ? ` (${r.remaining} left)` : ''
+        }${name ? ` · ${name}` : ''}`,
+      };
+    }),
+    next:
+      rows.length > CANDIDATE_PAGE && last ? `${last.transaction_date}|${last.id}` : null,
+  };
+}

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { requireUser } from '@/lib/auth/guards';
+import { getAuthResult } from '@/lib/auth/guards';
 import { log } from '@/lib/log';
 import {
   ExportError,
@@ -22,7 +22,13 @@ import {
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: Request): Promise<NextResponse> {
-  await requireUser();
+  const auth = await getAuthResult();
+  if (!auth.ok) {
+    return NextResponse.json(
+      { error: auth.reason === 'unauthenticated' ? 'Unauthorized' : 'Forbidden' },
+      { status: auth.reason === 'unauthenticated' ? 401 : 403 },
+    );
+  }
 
   const format =
     new URL(request.url).searchParams.get('format') === 'csv' ? 'csv' : 'json';

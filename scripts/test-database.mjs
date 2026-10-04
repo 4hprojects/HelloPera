@@ -37,13 +37,22 @@ try {
     "select public.create_account($1,'Other','cash','asset','PHP',1000)",
     [b],
   );
-  for (const [kind,table,nameColumn,dateColumn] of [
-    ['receivable','receivables','party_name','due_date'],
-    ['expected_income','expected_income','source_name','expected_date'],
+  for (const [kind, table, nameColumn, dateColumn] of [
+    ['receivable', 'receivables', 'party_name', 'due_date'],
+    ['expected_income', 'expected_income', 'source_name', 'expected_date'],
   ]) {
-    const id = await scalar(`insert into public.${table}(user_id,${nameColumn},amount,currency_code,${dateColumn}) values($1,'Incoming fixture',10,'PHP','2026-09-23') returning id`,[b]);
-    await scalar("select public.record_obligation_payment($1,$2,$3,$4,10,$5,'2026-09-23')",[b,randomUUID(),kind,id,other]);
-    assert.equal(await scalar(`select status from public.${table} where id=$1`,[id]),'paid');
+    const id = await scalar(
+      `insert into public.${table}(user_id,${nameColumn},amount,currency_code,${dateColumn}) values($1,'Incoming fixture',10,'PHP','2026-09-23') returning id`,
+      [b],
+    );
+    await scalar(
+      "select public.record_obligation_payment($1,$2,$3,$4,10,$5,'2026-09-23')",
+      [b, randomUUID(), kind, id, other],
+    );
+    assert.equal(
+      await scalar(`select status from public.${table} where id=$1`, [id]),
+      'paid',
+    );
   }
   console.log('PASS: receivable and expected-income settlement');
   const bill = await scalar(
@@ -233,6 +242,342 @@ try {
   console.log(
     'PASS: challenge expiry/replay, deletion freeze, cascade, and audit erasure',
   );
+  {
+    const c = randomUUID();
+    await db.query("insert into auth.users(id,email) values($1,'c@example.test')", [c]);
+    const req = randomUUID();
+    const mk = (r, amt = 10) =>
+      db.query(
+        "select public.create_account_idempotent($1,$2,'Idem','cash','asset','PHP',$3)",
+        [c, r, amt],
+      );
+    const first = Object.values((await mk(req)).rows[0])[0];
+    const replay = Object.values((await mk(req)).rows[0])[0];
+    assert.equal(replay, first);
+    assert.equal(
+      await scalar(
+        "select count(*)::int from public.accounts where user_id=$1 and name='Idem'",
+        [c],
+      ),
+      1,
+    );
+    await assert.rejects(mk(req, 11), /REQUEST_ALREADY_USED/);
+    await assert.rejects(
+      db.query(
+        "select public.create_account_idempotent($1,null,'X','cash','asset','PHP',0)",
+        [c],
+      ),
+      /REQUEST_ID_REQUIRED/,
+    );
+    const acct = first;
+    const tx = (r) =>
+      db.query(
+        "select public.create_transaction_idempotent($1,$2,'income',5,'PHP','2026-09-23',null,$3)",
+        [c, r, acct],
+      );
+    const treq = randomUUID();
+    const before = await scalar(
+      'select count(*)::int from public.transactions where user_id=$1',
+      [c],
+    );
+    const t1 = Object.values((await tx(treq)).rows[0])[0];
+    assert.equal(Object.values((await tx(treq)).rows[0])[0], t1);
+    assert.equal(
+      await scalar('select count(*)::int from public.transactions where user_id=$1', [c]),
+      before + 1,
+    );
+    console.log(
+      'PASS: idempotent account/transaction creation replays once and rejects mismatches',
+    );
+
+    await db.exec('set role authenticated');
+    await db.query("select set_config('request.jwt.claim.sub',$1,false)", [c]);
+    assert.equal(
+      await scalar(
+        "select jsonb_array_length(public.read_analytics_snapshot('2026-09-01','2026-09-30'))",
+      ),
+      1,
+    );
+    assert.ok(
+      await scalar(
+        "select bool_or(e->>'amount'='5.00') from jsonb_array_elements(public.read_analytics_snapshot('2026-09-01','2026-09-30')) e",
+      ),
+    );
+    await assert.rejects(
+      db.query("select public.read_analytics_snapshot('2026-09-01','2026-09-30',0)"),
+      /INVALID_ANALYTICS_LIMIT/,
+    );
+    await db.exec('reset role');
+    console.log('PASS: analytics snapshot is RLS-scoped, exact, and bounded');
+
+    await db.query(
+      "update public.feature_flags set enabled=false where key='financial_writes_enabled'",
+    );
+    assert.equal(
+      await scalar("select public.run_recurring_generation(90,null)->>'reason'"),
+      'financial_writes_disabled',
+    );
+    await db.query(
+      "delete from public.feature_flags where key='financial_writes_enabled'",
+    );
+    await assert.rejects(
+      db.query('select public.assert_financial_writes_enabled()'),
+      /FINANCIAL_WRITES_DISABLED/,
+    );
+    console.log(
+      'PASS: scheduled generation fails closed when financial writes are off or unreadable',
+    );
+  }
+  {
+    await db.query("select set_config('request.jwt.claim.sub','',false)");
+    const admin = randomUUID();
+    const victim = randomUUID();
+    await db.query(
+      "insert into auth.users(id,email) values($1,'adm@example.test'),($2,'vic@example.test')",
+      [admin, victim],
+    );
+    await db.query(
+      "update public.profiles set role='admin', status='active' where id=$1",
+      [admin],
+    );
+    const apply = (
+      event,
+      op,
+      target,
+      args = {},
+      reason = 'testing',
+      actor = admin,
+      entity = null,
+    ) =>
+      db.query(
+        'select public.admin_apply_change($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb)',
+        [actor, event, op, target, entity, reason, JSON.stringify(args), '{}'],
+      );
+    const auditCount = (event) =>
+      scalar('select count(*)::int from public.audit_logs where event_type=$1', [event]);
+
+    await apply('user_suspended', 'set_status', victim, { status: 'suspended' });
+    assert.equal(
+      await scalar('select status from public.profiles where id=$1', [victim]),
+      'suspended',
+    );
+    assert.equal(await auditCount('user_suspended'), 1);
+    assert.equal(
+      await scalar(
+        "select metadata->>'reason' from public.audit_logs where event_type='user_suspended'",
+      ),
+      'testing',
+    );
+
+    // Injected audit failure rolls the privileged change back.
+    await db.query(
+      "alter table public.audit_logs add constraint inject_fail check (event_type <> 'user_reactivated')",
+    );
+    await assert.rejects(
+      apply('user_reactivated', 'set_status', victim, { status: 'active' }),
+      /inject_fail/,
+    );
+    assert.equal(
+      await scalar('select status from public.profiles where id=$1', [victim]),
+      'suspended',
+    );
+    await db.query('alter table public.audit_logs drop constraint inject_fail');
+
+    // Refusals: self-target, non-admin actor, suspended admin, short reason, unknown op.
+    await assert.rejects(
+      apply('role_changed', 'set_role', admin, { role: 'user' }),
+      /SELF_TARGET/,
+    );
+    await assert.rejects(
+      apply('role_changed', 'set_role', admin, { role: 'admin' }, 'testing', victim),
+      /ADMIN_REQUIRED/,
+    );
+    await assert.rejects(
+      apply('role_changed', 'set_role', victim, { role: 'admin' }, 'x'),
+      /REASON_REQUIRED/,
+    );
+    await assert.rejects(
+      apply('role_changed', 'bogus', victim),
+      /UNKNOWN_ADMIN_OPERATION/,
+    );
+    assert.equal(
+      await scalar('select role from public.profiles where id=$1', [victim]),
+      'user',
+    );
+    await db.query("update public.profiles set status='suspended' where id=$1", [admin]);
+    await assert.rejects(
+      apply('role_changed', 'set_role', victim, { role: 'admin' }),
+      /ADMIN_REQUIRED/,
+    );
+    await db.query("update public.profiles set status='active' where id=$1", [admin]);
+
+    // Direct client access is refused.
+    await db.exec('set role authenticated');
+    await assert.rejects(
+      db.query(
+        'select public.admin_apply_change($1,$2,$3,$4,null,$5,$6::jsonb,$7::jsonb)',
+        [admin, 'role_changed', 'set_role', victim, 'testing', '{"role":"admin"}', '{}'],
+      ),
+      /permission denied/,
+    );
+    await db.exec('reset role');
+    console.log(
+      'PASS: admin change + audit are atomic; self-target, non-admin and direct access refused',
+    );
+  }
+  {
+    await db.query("select set_config('request.jwt.claim.sub','',false)");
+    const u = randomUUID();
+    const v = randomUUID();
+    await db.query(
+      "insert into auth.users(id,email) values($1,'pc@example.test'),($2,'pd@example.test')",
+      [u, v],
+    );
+    const acct = await scalar(
+      "select public.create_account($1,'Cand','cash','asset','PHP',100000)",
+      [u],
+    );
+    const vAcct = await scalar(
+      "select public.create_account($1,'Other','cash','asset','PHP',100000)",
+      [v],
+    );
+    await db.query(
+      "select public.create_transaction($1,'expense',10,'PHP',('2026-01-01'::date + i)::date,$2,null,null,null,null,'Row '||i) from generate_series(1,120) i",
+      [u, acct],
+    );
+    await db.query(
+      "select public.create_transaction($1,'expense',10,'PHP','2026-06-01',$2,null,null,null,null,'Foreign')",
+      [v, vAcct],
+    );
+    const bill = await scalar(
+      "insert into public.bills(user_id,provider_name,amount,currency_code,due_date) values($1,'Cand bill',500,'PHP','2026-09-23') returning id",
+      [u],
+    );
+    const oldest = await scalar(
+      "select id from public.transactions where user_id=$1 and description='Row 1'",
+      [u],
+    );
+    const newest = await scalar(
+      "select id from public.transactions where user_id=$1 and description='Row 120'",
+      [u],
+    );
+    // Partly allocate the oldest, fully allocate the newest.
+    await db.query(
+      "select public.record_obligation_payment($1,$2,'bill',$3,4,null,'2026-09-23',$4)",
+      [u, randomUUID(), bill, oldest],
+    );
+    await db.query(
+      "select public.record_obligation_payment($1,$2,'bill',$3,10,null,'2026-09-23',$4)",
+      [u, randomUUID(), bill, newest],
+    );
+
+    await db.exec('set role authenticated');
+    await db.query("select set_config('request.jwt.claim.sub',$1,false)", [u]);
+    const page = async (args) =>
+      (
+        await db.query(
+          'select * from public.list_payment_candidates($1,$2,$3,$4,$5,$6)',
+          args,
+        )
+      ).rows;
+    let seen = [];
+    let cursor = [null, null];
+    for (;;) {
+      const rows = await page(['expense', 'PHP', null, cursor[0], cursor[1], 50]);
+      seen.push(...rows);
+      if (rows.length < 50) break;
+      const last = rows[rows.length - 1];
+      cursor = [last.transaction_date, last.id];
+    }
+    assert.equal(seen.length, 119, 'all but the fully allocated transaction, past 100');
+    assert.ok(!seen.some((r) => r.id === newest), 'fully allocated hidden');
+    assert.ok(
+      seen.some((r) => r.id === oldest && r.remaining === '6.00'),
+      'older than 100 selectable with remaining',
+    );
+    assert.ok(!seen.some((r) => r.description === 'Foreign'), 'other users never leak');
+    assert.equal(
+      (await page(['expense', 'PHP', 'row 7%', null, null, 50])).length,
+      0,
+      'wildcards are literal',
+    );
+    assert.equal((await page(['expense', 'PHP', 'Row 11', null, null, 50])).length, 11);
+    assert.equal((await page(['income', 'PHP', null, null, null, 50])).length, 0);
+    await db.exec('reset role');
+    console.log(
+      'PASS: payment candidates paginate past 100, hide allocated, show remaining, stay private',
+    );
+  }
+  {
+    await db.query("select set_config('request.jwt.claim.sub','',false)");
+    const w = randomUUID();
+    await db.query("insert into auth.users(id,email) values($1,'agg@example.test')", [w]);
+    // Beyond the 1,000-row REST cap.
+    await db.query(
+      "insert into public.ai_usage_logs(user_id,provider,model,call_type,status,duration_ms) select $1,'p','m','intent',case when i%4=0 then 'failed' else 'succeeded' end,i from generate_series(1,1200) i",
+      [w],
+    );
+    await db.query(
+      "insert into public.notifications(user_id,type,channel,delivery_status,dedupe_key,title,message) select $1,'bill_overdue','in_app',case when i%3=0 then 'failed' else 'pending' end,'k'||i,'t','m' from generate_series(1,1500) i",
+      [w],
+    );
+    await db.query(
+      "insert into public.job_runs(job_type,status,started_at) values('x','failed',now()),('x','failed',now()-interval '3 days'),('x','succeeded',now())",
+    );
+    const counts = (
+      await db.query(
+        "select public.admin_overview_counts(now()-interval '1 day', now()-interval '1 day') r",
+      )
+    ).rows[0].r;
+    assert.equal(counts.ai_today, 1200);
+    assert.equal(counts.ai_failed, 300);
+    assert.equal(counts.notifications_pending, 1000);
+    assert.equal(counts.notifications_failed, 500);
+    assert.equal(counts.jobs_failed, 1, 'only failures inside the stated window');
+    const ai = (
+      await db.query("select public.admin_ai_aggregates(now()-interval '7 days') r")
+    ).rows[0].r;
+    assert.equal(ai.total, 1200);
+    assert.equal(ai.by_call_type[0].count, 1200);
+    const n = (await db.query('select public.admin_notification_aggregates() r')).rows[0]
+      .r;
+    assert.equal(
+      n.by_delivery_status.reduce((t, x) => t + x.count, 0),
+      1500,
+    );
+    await db.exec('set role authenticated');
+    await assert.rejects(
+      db.query('select public.admin_overview_counts(now(),now())'),
+      /permission denied/,
+    );
+    await db.exec('reset role');
+    console.log(
+      'PASS: admin aggregates are exact beyond 1,000 rows, windowed, and service-only',
+    );
+  }
+  {
+    // Browser roles may only read: no write privilege on any public table or
+    // view, and no execute on service-only functions.
+    const writable = (
+      await db.query(
+        `select table_name||':'||grantee||':'||privilege_type as g
+         from information_schema.role_table_grants
+         where table_schema='public' and grantee in ('anon','authenticated')
+           and privilege_type in ('INSERT','UPDATE','DELETE','TRUNCATE')
+           and table_name not in ('schema_migrations')`,
+      )
+    ).rows.map((r) => r.g);
+    assert.deepEqual(writable, [], 'browser roles must not hold write privileges');
+    const anonExec = (
+      await db.query(
+        `select p.proname from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+         where n.nspname='public' and has_function_privilege('anon',p.oid,'execute')
+           and p.prokind='f' and p.proname not in ('handle_new_user','set_updated_at')`,
+      )
+    ).rows.map((r) => r.proname);
+    console.log('INFO anon-executable public functions:', anonExec.join(',') || 'none');
+    console.log('PASS: browser roles hold no write privileges on public tables or views');
+  }
 } finally {
   await db.close();
 }

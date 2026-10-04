@@ -53,3 +53,7 @@ supabase/.temp/
 # Browser verification artifacts
 playwright-report/
 test-results/
+
+# Deployment verification artifacts
+release-evidence/
+promotion-evidence/

@@ -13,7 +13,12 @@ const { getCurrentProfile, getCurrentUser, redirect } = vi.hoisted(() => ({
 vi.mock('@/lib/auth/session', () => ({ getCurrentProfile, getCurrentUser }));
 vi.mock('next/navigation', () => ({ redirect }));
 
-import { redirectIfAuthenticated, requireAdmin, requireUser } from '@/lib/auth/guards';
+import {
+  getAuthResult,
+  redirectIfAuthenticated,
+  requireAdmin,
+  requireUser,
+} from '@/lib/auth/guards';
 
 const USER = {
   id: '11111111-1111-4111-8111-111111111111',
@@ -66,6 +71,27 @@ describe('requireUser', () => {
 
   it('returns the active user and profile', async () => {
     await expect(requireUser()).resolves.toEqual({ user: USER, profile: PROFILE });
+  });
+});
+
+describe('getAuthResult', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getCurrentUser.mockResolvedValue(USER);
+    getCurrentProfile.mockResolvedValue(PROFILE);
+  });
+
+  it('returns a reusable failure reason instead of redirecting', async () => {
+    getCurrentProfile.mockResolvedValue({ ...PROFILE, status: 'suspended' });
+    await expect(getAuthResult()).resolves.toEqual({ ok: false, reason: 'suspended' });
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it('returns the active context', async () => {
+    await expect(getAuthResult()).resolves.toEqual({
+      ok: true,
+      context: { user: USER, profile: PROFILE },
+    });
   });
 });
 

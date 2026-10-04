@@ -1,3 +1,5 @@
+// @ts-expect-error Shared operational ESM guard.
+import { assertStagingIdentity } from '../../scripts/staging-identity.mjs';
 import { test, expect } from '@playwright/test';
 import { createClient } from '@supabase/supabase-js';
 import { randomUUID } from 'node:crypto';
@@ -10,6 +12,7 @@ test('account → income → bill → partial payment → void → archive', asy
     process.env.HELLOPERA_E2E_STAGING !== '1',
     'Staging release gate runs this separately with an isolated project.',
   );
+  assertStagingIdentity(process.env);
   const admin = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SECRET_KEY!,
@@ -67,13 +70,11 @@ test('account → income → bill → partial payment → void → archive', asy
     for (const size of [2 * 1024 * 1024, 8 * 1024 * 1024]) {
       const buffer = Buffer.alloc(size, 32);
       buffer.write('%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\n%%EOF');
-      await page
-        .getByLabel('Choose a file')
-        .setInputFiles({
-          name: `fixture-${size}.pdf`,
-          mimeType: 'application/pdf',
-          buffer,
-        });
+      await page.getByLabel('Choose a file').setInputFiles({
+        name: `fixture-${size}.pdf`,
+        mimeType: 'application/pdf',
+        buffer,
+      });
       await page.getByRole('button', { name: 'Upload', exact: true }).click();
       await expect(page.getByRole('status')).toContainText('Uploaded');
       await page.reload();

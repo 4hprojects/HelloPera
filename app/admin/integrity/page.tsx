@@ -5,6 +5,7 @@ import { Card, SectionCard } from '@/components/ui/card';
 import { Cell, DataTable } from '@/components/admin/data-table';
 import { AdminForm } from '@/components/admin/admin-form';
 import { requireAdmin } from '@/lib/auth/guards';
+import { Unavailable } from '@/components/admin/unavailable';
 import { listIntegrityFindings, listJobRuns } from '@/services/admin.service';
 import { repairBalanceAction, runIntegrityCheckAction } from '@/app/actions/admin';
 
@@ -25,7 +26,24 @@ export const metadata: Metadata = { title: 'Integrity · Admin' };
 export default async function AdminIntegrityPage() {
   await requireAdmin();
 
-  const [findings, runs] = await Promise.all([listIntegrityFindings(), listJobRuns(5)]);
+  const [findingsResult, runsResult] = await Promise.all([
+    listIntegrityFindings(),
+    listJobRuns(5),
+  ]);
+
+  if (findingsResult.state === 'unavailable') {
+    return (
+      <div className="mx-auto max-w-5xl">
+        <PageHeader
+          title="Financial integrity"
+          description="Mismatches between what is stored and what the records imply."
+        />
+        <Unavailable what="The integrity report" reference={findingsResult.reference} />
+      </div>
+    );
+  }
+  const findings = findingsResult.data;
+  const runs = runsResult.state === 'ok' ? runsResult.data : [];
 
   const lastRun = runs.find((r) => r.jobType === 'financial_integrity_check');
   const balanceFindings = findings.filter((f) => f.checkName === 'account_balance');
@@ -47,7 +65,9 @@ export default async function AdminIntegrityPage() {
         <p className="hp-small mt-1 text-text-muted">
           {lastRun
             ? `The nightly check last ran ${new Date(lastRun.startedAt).toLocaleString()} (${lastRun.status}).`
-            : 'The nightly check has not run yet.'}
+            : runsResult.state === 'unavailable'
+              ? `Job history is unavailable (reference ${runsResult.reference}).`
+              : 'The nightly check has not run yet.'}
         </p>
         <div className="mt-3">
           <AdminForm

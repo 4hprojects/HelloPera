@@ -13,3 +13,8 @@ grant execute on function auth.uid(),auth.role() to anon,authenticated,service_r
 create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);
 create table storage.objects(id uuid primary key default gen_random_uuid(),bucket_id text,name text);
 create table public.schema_migrations(version text primary key);
+-- Supabase grants broad default privileges on every new public object. Mirror
+-- that here so a migration that forgets to revoke is caught by the grant tests.
+alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
+alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;
+alter default privileges in schema public grant execute on functions to anon, authenticated, service_role;

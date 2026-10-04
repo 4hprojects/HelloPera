@@ -7,6 +7,7 @@ import { appUrl } from '@/lib/env';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getCurrentUser } from '@/lib/auth/session';
+import { requireUser } from '@/lib/auth/guards';
 import { recordAuditEvent } from '@/lib/auth/audit';
 import {
   RateLimitError,
@@ -345,8 +346,7 @@ export async function updateProfile(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const user = await getCurrentUser();
-  if (!user) redirect('/login');
+  const { user } = await requireUser();
 
   const parsed = updateProfileSchema.safeParse({
     firstName: formData.get('firstName') ?? '',

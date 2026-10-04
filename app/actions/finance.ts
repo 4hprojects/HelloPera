@@ -10,7 +10,8 @@ import {
   createTransactionSchema,
   voidTransactionSchema,
 } from '@/schemas/finance.schema';
-import { archiveAccount, createAccount } from '@/services/account.service';
+import { archiveAccount, createAccount, getAccount } from '@/services/account.service';
+import { deriveTransactionCurrency } from '@/lib/finance/currency';
 import {
   createTransaction,
   TransactionError,
@@ -45,6 +46,7 @@ export async function createAccountAction(
   }
 
   const parsed = createAccountSchema.safeParse({
+    requestId: formData.get('requestId'),
     name: formData.get('name'),
     type: formData.get('type'),
     nature: formData.get('nature'),
@@ -104,6 +106,7 @@ export async function createTransactionAction(
   }
 
   const raw = {
+    requestId: formData.get('requestId'),
     type: formData.get('type'),
     direction: formData.get('direction') || null,
     amount: formData.get('amount'),
@@ -116,6 +119,22 @@ export async function createTransactionAction(
     description: formData.get('description') ?? '',
     notes: formData.get('notes') ?? '',
   };
+
+  // The accounts decide the currency. Whatever the browser sent is ignored, so
+  // a stale or tampered value cannot disagree with the ledger.
+  const [source, destination] = await Promise.all([
+    raw.sourceAccountId ? getAccount(String(raw.sourceAccountId)) : null,
+    raw.destinationAccountId ? getAccount(String(raw.destinationAccountId)) : null,
+  ]);
+  if ((raw.sourceAccountId && !source) || (raw.destinationAccountId && !destination)) {
+    return { error: 'Choose one of your accounts.' };
+  }
+  const derived = deriveTransactionCurrency(
+    source && { id: source.id, currency: source.currency_code },
+    destination && { id: destination.id, currency: destination.currency_code },
+  );
+  if (!derived.ok) return { error: derived.message };
+  raw.currencyCode = derived.currency;
 
   const parsed = createTransactionSchema.safeParse(raw);
   if (!parsed.success) return { fieldErrors: fieldErrorsFrom(parsed.error) };

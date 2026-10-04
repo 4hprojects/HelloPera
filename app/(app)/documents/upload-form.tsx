@@ -23,7 +23,7 @@ const TYPES = [
   { value: 'other', label: 'Other' },
 ];
 
-export function UploadForm() {
+export function UploadForm({ initialType = 'receipt' }: { initialType?: string }) {
   const [state, action, pending] = useActionState(uploadDocumentAction, initial);
   const [clientError, setClientError] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
@@ -88,7 +88,7 @@ export function UploadForm() {
       <SelectField
         id="documentType"
         label="What is it?"
-        defaultValue="receipt"
+        defaultValue={initialType}
         wrapClassName="mb-4"
       >
         {TYPES.map((t) => (

@@ -12,8 +12,14 @@ The free tracker is in launch hardening. Core workflows now include payment
 detail pages, corrections, retry-safe payments, and resumable deletion. Provider
 features remain disabled. Implementation is not evidence of production readiness.
 
-Start at **[docs/LAUNCH-IMPLEMENTATION.md](docs/LAUNCH-IMPLEMENTATION.md)** for the
-current implementation, migration order, test commands, and unverified gates.
+**Current readiness entrypoint: [to do/README.md](<to do/README.md>)** — the quality
+backlog (HP-001–HP-026), each task's status, and dated evidence in
+[to do/08-validation-and-evidence.md](<to do/08-validation-and-evidence.md>). A task
+is done only when its acceptance evidence is attached.
+
+**[docs/LAUNCH-IMPLEMENTATION.md](docs/LAUNCH-IMPLEMENTATION.md)** is the dated
+25 September 2026 readiness record (historical evidence). It still holds the
+migration order and the list of unverified external gates.
 **[docs/LAUNCH-CHECKLIST.md](docs/LAUNCH-CHECKLIST.md)** retains the operational checklist.
 
 Phase docs live in `docs/`, one per phase, each with its own acceptance
@@ -24,7 +30,9 @@ current in the same commit as any migration.
 
 ## Local setup
 
-Requires **Node 22** (`.nvmrc` is provided; production runs `node:22-alpine`).
+Requires **Node 22** (`.nvmrc` is provided; production runs `node:22-alpine`). Activate
+it with `nvm use` in every new shell — `dev`, `build` and `test` refuse to run on any
+other major version (`npm run check:node`).
 
 ```sh
 nvm use
@@ -50,6 +58,11 @@ Open http://localhost:3030.
 browser `SELECT` only, so every write goes through a server action that checks
 ownership in code first. Verify the key with `npm run check:key`.
 
+**Build time vs runtime.** Only `NEXT_PUBLIC_*` values are needed (and safe) at build
+time; they are baked into the browser bundle. `SUPABASE_SECRET_KEY` and other
+privileged values are runtime-only and must never carry a `NEXT_PUBLIC_` prefix
+(see [DEPLOYMENT.md](docs/DEPLOYMENT.md)).
+
 Configuration is validated at startup by `lib/env`. It checks shape, not just
 presence — a present-but-wrong value fails far from its cause. Two guards exist
 because both mistakes have already happened here:
@@ -74,26 +87,34 @@ npm run typecheck     # tsc --noEmit
 npm run check:node    # verify the active runtime matches .nvmrc
 npm run preflight     # key check, types, lint, unit tests, and production build
 npm test              # unit tests (live integration tests excluded)
-npm run test:integration # live Supabase integration tests
-npm run ops:check     # live cron, admin, flag, and provider-safety audit
+npm run test:integration # LIVE Supabase integration tests (staging only)
+npm run ops:check     # LIVE read-only cron, admin, flag, and provider-safety audit
 npm run format        # Prettier write
 npm run format:check  # Prettier check
 ```
 
-### Continuous integration
+### Which commands touch live systems
 
-GitHub Actions uses the Node version in `.nvmrc`. Every push and pull request
-runs type checking, linting, unit tests, and a production build. The build uses
-non-secret placeholder Supabase values; this verifies that compiling the app
-does not depend on privileged production credentials.
+Everything above runs locally and is safe. These talk to a real project, so run them
+only against the environment you mean to:
 
-The live integration job is separate because it creates temporary users and
-storage objects in a real Supabase project. It runs only after pushes to
-`main`, or when started manually, so credentials are never exposed to pull
-request code. Configure the isolated staging secrets listed in
-[LAUNCH-IMPLEMENTATION.md](docs/LAUNCH-IMPLEMENTATION.md). The release integration
-job fails when credentials are missing. `TEST_SUPABASE_PROJECT_REF` must match the
-configured test project. Never run these fixture-creating tests against production.
+| Command                                                              | Effect                                     |
+| -------------------------------------------------------------------- | ------------------------------------------ |
+| `npm run db:migrate`                                                 | **Mutates** the database in `DATABASE_URL` |
+| `npm run test:integration`, `test:e2e:staging`, `test:performance:*` | Writes fixtures to the **staging** project |
+| `npm run ops:check`, `db:status`, `db:verify`, `verify:restore`      | Read-only against the configured project   |
+| `npm run test:db`                                                    | Isolated in-memory PostgreSQL, no network  |
+
+### Continuous integration and deployment
+
+PRs run the quality checks without production credentials. Pushes to `main` then
+migrate, deploy and test an isolated staging release at the exact commit SHA.
+Production requires a manual promotion of a successful staging release.
+
+Start with **[the deployment runbook](docs/DEPLOYMENT.md)** for the HelloDeploy
+upgrade, project settings, GitHub environments, secrets, domains, auth and rollback.
+**[The readiness record](docs/LAUNCH-IMPLEMENTATION.md)** lists unverified external
+launch gates. Local tests do not establish production readiness.
 
 ---
 

@@ -19,7 +19,9 @@ import {
   createBill,
   createExpectedIncome,
   createReceivable,
+  listPaymentCandidates,
   type ObligationKind,
+  type PaymentCandidate,
 } from '@/services/obligation.service';
 
 function fieldErrorsFrom(error: {
@@ -153,10 +155,11 @@ export async function createExpectedIncomeAction(
 /**
  * Record a payment or collection.
  *
- * Two steps that must both succeed: the transaction, then the allocation. If
- * the allocation fails the transaction still stands — the money genuinely
- * moved, and deleting it would be worse than leaving it unlinked. The message
- * says exactly that, so the user is not left guessing.
+ * One atomic database call (`record_obligation_payment`): creating the
+ * transaction and allocating it either both happen or neither does. The form's
+ * request key makes a retry replay the original result instead of recording a
+ * second payment; "Record another payment" supplies a fresh key. Linking an
+ * existing transaction only adds the allocation and never changes a balance.
  */
 export async function recordPaymentAction(
   _p: ActionState,
@@ -222,4 +225,27 @@ export async function cancelObligationAction(formData: FormData): Promise<void> 
   revalidatePath('/forecast');
   revalidatePath('/dashboard');
   revalidatePath('/analytics');
+}
+
+/** Read-only page of linkable transactions for the payment picker. */
+export async function searchPaymentCandidatesAction(input: {
+  kind: ObligationKind;
+  currency: string;
+  search?: string;
+  cursor?: string | null;
+}): Promise<{ items: PaymentCandidate[]; next: string | null; error?: string }> {
+  await requireUser();
+  if (!['bill', 'receivable', 'expected_income'].includes(input.kind)) {
+    return { items: [], next: null, error: 'Unknown item type.' };
+  }
+  try {
+    return await listPaymentCandidates({
+      kind: input.kind,
+      currency: String(input.currency).slice(0, 3).toUpperCase(),
+      search: input.search,
+      cursor: input.cursor,
+    });
+  } catch {
+    return { items: [], next: null, error: 'Transactions could not be loaded.' };
+  }
 }

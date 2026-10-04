@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { requireAdmin } from '@/lib/auth/guards';
-import { recordAuditEvent } from '@/lib/auth/audit';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { log } from '@/lib/log';
 import type { AdminAuditEvent, Profile } from '@/types/auth';
 import type { User } from '@supabase/supabase-js';
@@ -59,20 +59,43 @@ export function validateReason(raw: unknown): string {
   return reason;
 }
 
-export type AdminActionParams<T> = {
+export type AdminOperation =
+  | 'set_status'
+  | 'set_role'
+  | 'add_note'
+  | 'set_flag'
+  | 'grant_override'
+  | 'revoke_override'
+  | 'adjust_usage'
+  | 'repair_balance'
+  | 'integrity_check';
+
+export type AdminActionParams = {
   event: AdminAuditEvent;
   /** §54 — required for every audited action, without exception. */
   reason: unknown;
   /** The user being acted upon, when there is one. */
   targetUserId?: string | null;
+  /** A uuid of the row acted upon. Non-uuid keys belong in `metadata`. */
   entityId?: string | null;
   /** Safe metadata. Never free-text user content, never a secret. */
   metadata?: Record<string, string | number | boolean | null>;
-  run: (context: AdminContext & { reason: string }) => Promise<T>;
+  /** The database change, applied together with its audit row. */
+  operation: AdminOperation;
+  args?: Record<string, unknown>;
+  /** Cheap application-side refusal (e.g. self-target) before touching the database. */
+  precheck?: (context: AdminContext) => void;
+};
+
+const DATABASE_REFUSALS: Record<string, [string, string]> = {
+  ADMIN_REQUIRED: ['You are not allowed to do that.', 'FORBIDDEN'],
+  REASON_REQUIRED: ['Give a reason for this change.', 'REASON_REQUIRED'],
+  SELF_TARGET: ['You cannot apply this to your own account.', 'SELF_TARGET'],
+  TARGET_NOT_FOUND: ['That record no longer exists.', 'NOT_FOUND'],
 };
 
 /**
- * Authorise, run, audit.
+ * Authorise, apply, audit — atomically.
  *
  * `requireAdmin()` re-checks role *and* status, because it delegates to
  * `requireUser()` which redirects a suspended or disabled account before role
@@ -80,28 +103,40 @@ export type AdminActionParams<T> = {
  * `status = active`). An admin suspended between page load and button press is
  * refused here, which is the entire reason this cannot be a layout check.
  *
- * The audit row is written **after** the work succeeds. A record of something
- * that did not happen is worse than a missing one: it sends the next person
- * looking for a cause that never existed.
+ * The change and its audit row are written by one database function
+ * (`admin_apply_change`), so they commit or roll back together: a privileged
+ * change can never succeed without its record, and a record can never describe
+ * a change that did not happen. If the audit insert fails, the change is undone
+ * and the admin is told nothing was changed.
  */
-export async function adminAction<T>(params: AdminActionParams<T>): Promise<T> {
+export async function adminAction(
+  params: AdminActionParams,
+): Promise<Record<string, unknown>> {
   const context = await requireAdmin();
   const reason = validateReason(params.reason);
+  params.precheck?.(context);
 
-  const result = await params.run({ ...context, reason });
-
-  await recordAuditEvent({
-    eventType: params.event,
-    actorUserId: context.user.id,
-    targetUserId: params.targetUserId ?? null,
-    entityType: 'admin',
-    entityId: params.entityId ?? null,
-    metadata: { ...params.metadata, reason },
+  const { data, error } = await createAdminClient().rpc('admin_apply_change', {
+    p_actor: context.user.id,
+    p_event: params.event,
+    p_op: params.operation,
+    p_target: params.targetUserId || null,
+    p_entity: params.entityId || null,
+    p_reason: reason,
+    p_args: params.args ?? {},
+    p_metadata: params.metadata ?? {},
   });
 
-  log.info('admin action', { event: params.event, actor: context.user.id });
+  if (error) {
+    const refusal = Object.entries(DATABASE_REFUSALS).find(([key]) =>
+      error.message.includes(key),
+    );
+    if (refusal) throw new AdminActionError(refusal[1][0], refusal[1][1]);
+    throw new Error(`Admin change failed: ${error.code}`);
+  }
 
-  return result;
+  log.info('admin action', { event: params.event, actor: context.user.id });
+  return (data ?? {}) as Record<string, unknown>;
 }
 
 /**

@@ -6,8 +6,8 @@ export default defineConfig({
     alias: {
       '@': fileURLToPath(new URL('./', import.meta.url)),
       /**
-       * `server-only` throws on import outside a Server Component, which makes
-       * any module carrying it untestable — including `lib/ai/claude-provider.ts`,
+       * `server-only` throws on import outside a Server Component, which would
+       * make any module carrying it untestable — including `lib/ai/claude-provider.ts`,
        * the one piece of Phase 12 that would otherwise need a real key and a
        * network to verify at all.
        *

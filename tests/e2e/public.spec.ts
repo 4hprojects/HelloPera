@@ -18,6 +18,7 @@ test('public pages are navigable, honest about availability, and fit the viewpor
   for (const route of [
     '/',
     '/features',
+    '/pricing',
     '/faq',
     '/privacy',
     '/contact',
