@@ -208,3 +208,12 @@ Local, Node 22.23.1. Migration `20261004000400_admin_aggregates.sql` adds servic
 ## Phase 3 — HP-014 docs and maintainability — 2026-10-04
 
 Local. README now names `to do/README.md` as the current readiness entrypoint, labels `docs/LAUNCH-IMPLEMENTATION.md` as the historical 25 Sep record, documents Node 22 activation, build-time vs runtime variables, and which commands are live/mutating. `dev`, `build` and `test` run a Node-version guard (verified: Node 20 refuses, Node 22 passes). Stale "two-step payment" and "services cannot be reached from a test" comments corrected. No blanket reformat. Typecheck, lint, 831 tests pass. **Outstanding:** consolidating action field-error mapping (deferred until touched by functional work, per the task) and a link review of the remaining phase docs.
+
+## First hosted run — staging Supabase project — 2026-10-04
+
+Environment: disposable Supabase project `ebtkpymtrouewzwxmqje` (staging; production is a different ref), migrated directly with `psql` from a local machine over the direct IPv6 host. This is **database-only evidence**: the HelloDeploy staging app, GitHub staging release run, hosted integration/browser suites, auth/email, and performance runs have not happened.
+
+- All 33 migrations applied cleanly, in order, one transaction each, on a real Supabase database (previously only in-memory PostgreSQL). Six cron jobs active, private `hello-pera-documents` bucket (8 MB limit, not public), provider flags off, `financial_writes_enabled` on.
+- **Defect found only on the hosted database and fixed:** the six `*_exact` views created by `20261004000100` inherited Supabase's default grants, giving `authenticated` INSERT/UPDATE/DELETE/TRUNCATE (base tables remained read-only, so no write path was demonstrated). Fixed by forward migration `20261004000500_exact_views_read_only.sql`; applied to staging; browser roles now hold zero write privileges on public tables/views. The isolated database test bootstrap now mirrors Supabase default privileges and asserts this, and was confirmed to fail before the fix.
+- New service-only functions (`admin_apply_change`, `admin_overview_counts`, idempotent creators, `assert_financial_writes_enabled`, `run_recurring_generation`) are not executable by `anon` or `authenticated`; `read_analytics_snapshot` and `list_payment_candidates` are executable by `authenticated` only.
+- Local: typecheck, lint, 831 unit tests, 13 isolated DB test blocks pass.

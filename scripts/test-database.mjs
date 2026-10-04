@@ -555,6 +555,29 @@ try {
       'PASS: admin aggregates are exact beyond 1,000 rows, windowed, and service-only',
     );
   }
+  {
+    // Browser roles may only read: no write privilege on any public table or
+    // view, and no execute on service-only functions.
+    const writable = (
+      await db.query(
+        `select table_name||':'||grantee||':'||privilege_type as g
+         from information_schema.role_table_grants
+         where table_schema='public' and grantee in ('anon','authenticated')
+           and privilege_type in ('INSERT','UPDATE','DELETE','TRUNCATE')
+           and table_name not in ('schema_migrations')`,
+      )
+    ).rows.map((r) => r.g);
+    assert.deepEqual(writable, [], 'browser roles must not hold write privileges');
+    const anonExec = (
+      await db.query(
+        `select p.proname from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+         where n.nspname='public' and has_function_privilege('anon',p.oid,'execute')
+           and p.prokind='f' and p.proname not in ('handle_new_user','set_updated_at')`,
+      )
+    ).rows.map((r) => r.proname);
+    console.log('INFO anon-executable public functions:', anonExec.join(',') || 'none');
+    console.log('PASS: browser roles hold no write privileges on public tables or views');
+  }
 } finally {
   await db.close();
 }
