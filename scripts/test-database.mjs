@@ -557,7 +557,9 @@ try {
   }
   {
     const u = randomUUID();
-    await db.query("insert into auth.users(id,email) values($1,'loan@example.test')", [u]);
+    await db.query("insert into auth.users(id,email) values($1,'loan@example.test')", [
+      u,
+    ]);
     const req = randomUUID();
     const mk = (r, owed = 5000, remind = true) =>
       db.query(
@@ -565,13 +567,23 @@ try {
         [u, r, owed, remind],
       );
     const id = Object.values((await mk(req)).rows[0])[0];
-    assert.equal(Object.values((await mk(req)).rows[0])[0], id, 'replay returns same loan');
     assert.equal(
-      await scalar("select count(*)::int from public.accounts where user_id=$1 and type='loan'", [u]),
+      Object.values((await mk(req)).rows[0])[0],
+      id,
+      'replay returns same loan',
+    );
+    assert.equal(
+      await scalar(
+        "select count(*)::int from public.accounts where user_id=$1 and type='loan'",
+        [u],
+      ),
       1,
     );
     assert.equal(
-      await scalar("select nature||':'||current_balance::text from public.accounts where id=$1", [id]),
+      await scalar(
+        "select nature||':'||current_balance::text from public.accounts where id=$1",
+        [id],
+      ),
       'liability:5000.00',
     );
     assert.equal(
@@ -586,10 +598,359 @@ try {
     await assert.rejects(mk(randomUUID(), 0), /LOAN_BALANCE_REQUIRED/);
     const noRule = Object.values((await mk(randomUUID(), 100, false)).rows[0])[0];
     assert.equal(
-      await scalar("select recurring_rule_id is null from public.loan_details where account_id=$1", [noRule]),
+      await scalar(
+        'select recurring_rule_id is null from public.loan_details where account_id=$1',
+        [noRule],
+      ),
       true,
     );
     console.log('PASS: loan creation is atomic, idempotent, and validated');
+  }
+  {
+    const u = randomUUID();
+    const v = randomUUID();
+    await db.query(
+      "insert into auth.users(id,email) values($1,'edit@example.test'),($2,'edit2@example.test')",
+      [u, v],
+    );
+    const acct = await scalar(
+      "select public.create_account($1,'Edit wallet','cash','asset','PHP',1000)",
+      [u],
+    );
+    const tx = await scalar(
+      "select public.create_transaction($1,'expense',100,'PHP','2026-10-01',$2,null,null,null,'Cafe','Latte','')",
+      [u, acct],
+    ).catch(() => null);
+    const tid =
+      tx ??
+      (await scalar(
+        "insert into public.transactions(user_id,type,amount,currency_code,transaction_date,source_account_id,status) values($1,'expense',100,'PHP','2026-10-01',$2,'confirmed') returning id",
+        [u, acct],
+      ));
+    await db.query('select public.recalculate_account_balance($1)', [acct]);
+    const balance = () =>
+      scalar('select current_balance::text from public.accounts where id=$1', [acct]);
+    assert.equal(await balance(), '900.00');
+
+    await db.query(
+      "select public.update_transaction($1,$2,150,'2026-10-02',null,' Cafe ','Latte','n')",
+      [u, tid],
+    );
+    assert.equal(await balance(), '850.00', 'amount edit recomputes the balance');
+    assert.equal(
+      await scalar(
+        "select merchant_name||'|'||transaction_date::text from public.transactions where id=$1",
+        [tid],
+      ),
+      'Cafe|2026-10-02',
+    );
+    await assert.rejects(
+      db.query("select public.update_transaction($1,$2,10,'2026-10-02')", [v, tid]),
+      /TRANSACTION_NOT_FOUND/,
+    );
+    await assert.rejects(
+      db.query("select public.update_transaction($1,$2,0,'2026-10-02')", [u, tid]),
+      /AMOUNT_NOT_POSITIVE/,
+    );
+
+    // Linked to a bill: text fields stay editable, the amount is locked.
+    const bill = await scalar(
+      "insert into public.bills(user_id,provider_name,amount,currency_code,due_date) values($1,'Power',150,'PHP','2026-10-05') returning id",
+      [u],
+    );
+    await db.query(
+      'insert into public.bill_payments(user_id,bill_id,transaction_id,amount_applied) values($1,$2,$3,150)',
+      [u, bill, tid],
+    );
+    await db.query(
+      "select public.update_transaction($1,$2,150,'2026-10-03',null,'Cafe','Latte','changed')",
+      [u, tid],
+    );
+    await assert.rejects(
+      db.query("select public.update_transaction($1,$2,160,'2026-10-03')", [u, tid]),
+      /TRANSACTION_LINKED/,
+    );
+
+    // Obligation amounts cannot drop below what is applied; status follows.
+    await assert.rejects(
+      db.query("select public.update_obligation($1,'bill',$2,'Power',100,'2026-10-05')", [
+        u,
+        bill,
+      ]),
+      /AMOUNT_BELOW_APPLIED/,
+    );
+    await db.query(
+      "select public.update_obligation($1,'bill',$2,'Power Co',400,'2026-10-09','d','n')",
+      [u, bill],
+    );
+    assert.equal(
+      await scalar("select status||'|'||provider_name from public.bills where id=$1", [
+        bill,
+      ]),
+      'partially_paid|Power Co',
+    );
+    await assert.rejects(
+      db.query("select public.update_obligation($1,'bill',$2,'x',5,'2026-10-09')", [
+        v,
+        bill,
+      ]),
+      /OBLIGATION_NOT_FOUND/,
+    );
+
+    await db.query("select public.update_account_details($1,$2,'Renamed',' BPI ')", [
+      u,
+      acct,
+    ]);
+    assert.equal(
+      await scalar(
+        "select name||'|'||institution_name from public.accounts where id=$1",
+        [acct],
+      ),
+      'Renamed|BPI',
+    );
+    assert.equal(await balance(), '850.00', 'account edit never touches the balance');
+
+    // Loans: the reminder rule follows the schedule.
+    const loan = await scalar(
+      "select public.create_loan_account_idempotent($1,$2,'Car','PHP',5000,'BDO',450,'monthly','2026-11-01')",
+      [u, randomUUID()],
+    );
+    await assert.rejects(
+      db.query(
+        "select public.update_account_details($1,$2,'Car','BDO',450,'monthly','2026-11-01',4000)",
+        [u, loan],
+      ),
+      /LOAN_PRINCIPAL_BELOW_BALANCE/,
+    );
+    await db.query(
+      "select public.update_account_details($1,$2,'Car 2','Metrobank',500,'weekly','2026-11-08',6000,7.5,24)",
+      [u, loan],
+    );
+    assert.equal(
+      await scalar(
+        "select count(*)::int from public.recurring_rules r join public.loan_details d on d.recurring_rule_id=r.id where d.account_id=$1 and r.amount=500 and r.frequency='weekly' and r.next_occurrence_date='2026-11-08' and r.provider_name='Metrobank'",
+        [loan],
+      ),
+      1,
+    );
+    assert.ok(
+      (await scalar(
+        "select count(*)::int from public.audit_logs where event_type in ('transaction_updated','obligation_updated','account_updated')",
+      )) >= 5,
+    );
+    // Installment terms: both or neither, monthly within the total.
+    const terms = (n, a, c) =>
+      db.query(
+        "select public.update_obligation($1,'bill',$2,'Power Co',$3,'2026-10-09','d','n',null,$4,$5)",
+        [u, bill, n, a, c],
+      );
+    await terms(400, 100, 4);
+    assert.equal(
+      await scalar(
+        "select installment_amount::text||'x'||installment_count from public.bills where id=$1",
+        [bill],
+      ),
+      '100.00x4',
+    );
+    await assert.rejects(terms(400, 500, 4), /INSTALLMENT_INVALID/);
+    await assert.rejects(terms(400, 100, null), /INSTALLMENT_INVALID/);
+    await assert.rejects(terms(400, null, 4), /INSTALLMENT_INVALID/);
+    await assert.rejects(terms(400, 100, 1), /INSTALLMENT_INVALID/);
+    await db.query(
+      "select public.update_obligation($1,'bill',$2,'Power Co',400,'2026-10-09','d','n',null,100,4,1)",
+      [u, bill],
+    );
+    assert.equal(
+      await scalar('select installments_prior from public.bills where id=$1', [bill]),
+      1,
+    );
+    await assert.rejects(
+      db.query(
+        "select public.update_obligation($1,'bill',$2,'Power Co',400,'2026-10-09','d','n',null,100,4,5)",
+        [u, bill],
+      ),
+      /INSTALLMENT_INVALID/,
+    );
+    await assert.rejects(
+      db.query(
+        "select public.update_obligation($1,'bill',$2,'Power Co',400,'2026-10-09','d','n',null,null,null,1)",
+        [u, bill],
+      ),
+      /INSTALLMENT_INVALID/,
+    );
+    await terms(400, null, null);
+    assert.equal(
+      await scalar('select installment_amount is null from public.bills where id=$1', [
+        bill,
+      ]),
+      true,
+      'clearing both returns the bill to one-time',
+    );
+    await assert.rejects(
+      db.query(
+        "insert into public.bills(user_id,provider_name,amount,due_date,installment_amount) values($1,'X',100,'2026-10-05',50)",
+        [u],
+      ),
+      /bills_installment_check/,
+    );
+    const recv = await scalar(
+      "insert into public.receivables(user_id,party_name,amount,currency_code,due_date) values($1,'Juan',500,'PHP','2026-11-01') returning id",
+      [u],
+    );
+    await db.query(
+      "select public.update_obligation($1,'receivable',$2,'Juan',500,'2026-11-01',null,null,null,null,null,0,'2026-10-01')",
+      [u, recv],
+    );
+    assert.equal(
+      await scalar('select borrowed_date::text from public.receivables where id=$1', [
+        recv,
+      ]),
+      '2026-10-01',
+    );
+    await assert.rejects(
+      db.query(
+        "select public.update_obligation($1,'receivable',$2,'Juan',500,'2026-09-01',null,null,null,null,null,0,'2026-10-01')",
+        [u, recv],
+      ),
+      /DATE_BEFORE_BORROWED/,
+    );
+    const bank = await scalar(
+      "select public.create_account($1,'BDO ••1234','bank','asset','PHP',0,'BDO')",
+      [u],
+    );
+    await db.query("select public.upsert_bank_details($1,$2,'1234','savings')", [
+      u,
+      bank,
+    ]);
+    assert.equal(
+      await scalar(
+        "select last4||'|'||kind from public.account_details where account_id=$1",
+        [bank],
+      ),
+      '1234|savings',
+    );
+    await db.query("select public.upsert_bank_details($1,$2,'5678',null)", [u, bank]);
+    assert.equal(
+      await scalar('select last4 from public.account_details where account_id=$1', [
+        bank,
+      ]),
+      '5678',
+    );
+    await assert.rejects(
+      db.query("select public.upsert_bank_details($1,$2,'12a4',null)", [u, bank]),
+      /account_details_last4_check/,
+    );
+    await assert.rejects(
+      db.query("select public.upsert_bank_details($1,$2,'1234',null)", [v, bank]),
+      /ACCOUNT_NOT_FOUND/,
+    );
+    await assert.rejects(
+      db.query("select public.upsert_bank_details($1,$2,'1234',null)", [u, acct]),
+      /ACCOUNT_NOT_FOUND/,
+      'cash accounts take no bank details',
+    );
+    await db.query('select public.upsert_bank_details($1,$2,null,null)', [u, bank]);
+    assert.equal(
+      await scalar(
+        'select count(*)::int from public.account_details where account_id=$1',
+        [bank],
+      ),
+      0,
+      'clearing both removes the row',
+    );
+    // Delete: only without real history; opening entry and loan reminder go too.
+    const del = await scalar(
+      "select public.create_account($1,'Mistake','bank','asset','PHP',250)",
+      [u],
+    );
+    await assert.rejects(
+      db.query('select public.delete_account($1,$2)', [v, del]),
+      /ACCOUNT_NOT_FOUND/,
+    );
+    await db.query('select public.delete_account($1,$2)', [u, del]);
+    assert.equal(
+      await scalar(
+        'select count(*)::int from public.accounts a where a.id=$1 or exists (select 1 from public.transactions t where t.destination_account_id=$1)',
+        [del],
+      ),
+      0,
+    );
+    const used = await scalar(
+      "select public.create_account($1,'Used','cash','asset','PHP',100)",
+      [u],
+    );
+    await db.query(
+      "insert into public.transactions(user_id,type,amount,currency_code,transaction_date,source_account_id,status) values($1,'expense',5,'PHP','2026-10-01',$2,'confirmed')",
+      [u, used],
+    );
+    await assert.rejects(
+      db.query('select public.delete_account($1,$2)', [u, used]),
+      /ACCOUNT_HAS_HISTORY/,
+    );
+    const delLoan = await scalar(
+      "select public.create_loan_account_idempotent($1,$2,'Temp loan','PHP',900,'BDO',100,'monthly','2026-12-01')",
+      [u, randomUUID()],
+    );
+    const ruleBefore = await scalar(
+      'select recurring_rule_id from public.loan_details where account_id=$1',
+      [delLoan],
+    );
+    await db.query('select public.delete_account($1,$2)', [u, delLoan]);
+    assert.equal(
+      await scalar('select count(*)::int from public.recurring_rules where id=$1', [
+        ruleBefore,
+      ]),
+      0,
+      'the loan reminder rule is removed with the loan',
+    );
+    // Multi-record extractions: each draft index is saved once; the extraction
+    // is confirmed only when every draft is.
+    const docId = await scalar(
+      "insert into public.documents(user_id,document_type,original_filename,processing_status) values($1,'receipt','r.jpg','ready') returning id",
+      [u],
+    );
+    {
+      const ex = await scalar(
+        `insert into public.extraction_results(user_id,document_id,status,structured_data)
+         values($1,$2,'pending_review','{"drafts":[{"target":"transaction"},{"target":"bill"},{"target":"transaction"}]}') returning id`,
+        [u, docId],
+      );
+      const draft = (i, who = u, type = 'transaction') =>
+        db.query('select public.confirm_extraction_draft($1,$2,$3,$4,$5)', [
+          who,
+          ex,
+          i,
+          type,
+          tid,
+        ]);
+      await draft(0);
+      await assert.rejects(draft(0), /DRAFT_ALREADY_SAVED/);
+      await assert.rejects(draft(1, v), /EXTRACTION_NOT_FOUND/);
+      await assert.rejects(draft(3), /DRAFT_NOT_FOUND/);
+      await assert.rejects(draft(-1), /DRAFT_NOT_FOUND/);
+      await assert.rejects(draft(1, u, 'account'), /UNKNOWN_ENTITY_TYPE/);
+      assert.equal(
+        await scalar('select status from public.extraction_results where id=$1', [ex]),
+        'pending_review',
+        'one of three saved: still pending',
+      );
+      await draft(1, u, 'bill');
+      await draft(2);
+      assert.equal(
+        await scalar('select status from public.extraction_results where id=$1', [ex]),
+        'confirmed',
+      );
+      await assert.rejects(draft(2), /ALREADY_CONFIRMED/);
+      assert.equal(
+        await scalar(
+          'select count(*)::int from public.document_links where document_id=$1',
+          [docId],
+        ),
+        2,
+        'one link per distinct record (the same transaction is linked once)',
+      );
+    }
+    console.log('PASS: transactions, obligations and accounts can be edited safely');
   }
   {
     // Browser roles may only read: no write privilege on any public table or

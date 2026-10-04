@@ -8,12 +8,13 @@ import { requireUser } from '@/lib/auth/guards';
 import { getDocument } from '@/services/document.service';
 import {
   getExtractionForDocument,
-  findDuplicateCandidates,
+  loadRecentForDuplicates,
 } from '@/services/ocr.service';
 import { listAccounts } from '@/services/account.service';
 import { listCategories } from '@/services/category.service';
-import { explainCandidate } from '@/lib/ocr/duplicate';
-import { ReviewForm } from './review-form';
+import { explainCandidate, findCandidates } from '@/lib/ocr/duplicate';
+import { draftsFromFields } from '@/lib/ocr/schema';
+import { DraftList, type DraftCardData } from './draft-list';
 import { RunExtraction } from './run-extraction';
 
 export const metadata: Metadata = { title: 'Review document' };
@@ -31,26 +32,41 @@ export default async function ReviewPage({
   if (!doc) notFound();
 
   const extraction = await getExtractionForDocument(id);
-  const [accounts, categories] = await Promise.all([
-    listAccounts(),
-    listCategories('expense'),
-  ]);
+  const [accounts, categories] = await Promise.all([listAccounts(), listCategories()]);
 
-  const fields = (extraction?.structured_data ?? {}) as Record<string, string | null>;
-  const confidence = (extraction?.field_confidence ?? {}) as Record<string, number>;
+  const fields = (extraction?.structured_data ?? {}) as Record<string, unknown>;
+  const drafts = draftsFromFields(fields);
+  const savedIndexes = new Set(
+    Object.keys(
+      (extraction?.corrected_data as { saved?: Record<string, unknown> } | null)?.saved ??
+        {},
+    ).map(Number),
+  );
 
-  const duplicates =
-    extraction && extraction.status === 'pending_review'
-      ? await findDuplicateCandidates({
-          userId: profile.id,
-          amount: fields.amount ?? null,
-          currency: fields.currencyCode ?? profile.default_currency,
-          date: fields.transactionDate ?? null,
-          merchant: fields.merchantName ?? null,
-          reference: fields.referenceNumber ?? null,
-          documentHash: doc.content_hash,
-        })
+  // One query for recent transactions, compared against every draft.
+  const recent =
+    extraction && extraction.status === 'pending_review' && drafts.length > 0
+      ? await loadRecentForDuplicates(profile.id)
       : [];
+  const cards: DraftCardData[] = drafts.map((draft, index) => {
+    const matches = findCandidates(
+      {
+        amount: draft.amount ?? null,
+        currency: (fields.currencyCode as string | null) ?? profile.default_currency,
+        date: draft.date ?? null,
+        merchant: draft.name ?? null,
+        reference: draft.referenceNumber ?? null,
+        documentHash: doc.content_hash,
+      },
+      draft.target === 'transaction' ? recent : [],
+    );
+    return {
+      draft,
+      index,
+      saved: savedIndexes.has(index),
+      duplicates: matches.slice(0, 1).map(explainCandidate),
+    };
+  });
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -121,37 +137,38 @@ export default async function ReviewPage({
               </p>
               {ocrEnabled && <RunExtraction documentId={doc.id} label="Read it again" />}
             </Card>
+          ) : drafts.length === 0 ? (
+            <Card>
+              <p className="hp-h3 text-text">Nothing to record found</p>
+              <p className="hp-body mb-4 mt-1 text-text-muted">
+                The reader could not turn this document into a record. You can add one by
+                hand, or read it again if the photo was unclear.
+              </p>
+              <Link
+                className="inline-flex min-h-11 items-center text-primary-text underline"
+                href="/transactions/new"
+              >
+                Add a transaction
+              </Link>
+              {ocrEnabled && (
+                <div className="mt-3">
+                  <RunExtraction documentId={doc.id} label="Read it again" />
+                </div>
+              )}
+            </Card>
           ) : (
-            <>
-              {duplicates.length > 0 ? (
-                <Card className="mb-4 border-warning">
-                  <p className="hp-h3 text-warning-text">
-                    You may have recorded this already
-                  </p>
-                  <ul className="mt-2 space-y-1">
-                    {duplicates.slice(0, 3).map((c) => (
-                      <li key={c.id} className="hp-small text-text-muted">
-                        {explainCandidate(c)}
-                      </li>
-                    ))}
-                  </ul>
-                  <p className="hp-small mt-2 text-text-muted">
-                    Nothing has been merged. Confirm only if this is a separate payment.
-                  </p>
-                </Card>
-              ) : null}
-
-              <ReviewForm
-                extractionId={extraction.id}
-                documentId={doc.id}
-                fields={fields}
-                confidence={confidence}
-                suggestedTarget={(fields.suggestedTarget as string) ?? 'unknown'}
-                currency={profile.default_currency}
-                accounts={accounts.map((a) => ({ id: a.id, name: a.name }))}
-                categories={categories.map((c) => ({ id: c.id, name: c.name }))}
-              />
-            </>
+            <DraftList
+              extractionId={extraction.id}
+              documentId={doc.id}
+              cards={cards}
+              currency={profile.default_currency}
+              accounts={accounts.map((a) => ({ id: a.id, name: a.name }))}
+              categories={categories.map((c) => ({
+                id: c.id,
+                name: c.name,
+                type: c.type,
+              }))}
+            />
           )}
         </div>
       </div>

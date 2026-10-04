@@ -7,11 +7,15 @@ import {
   scoreCandidate,
   type ExistingRecord,
 } from '@/lib/ocr/duplicate';
+import { z } from 'zod';
+import { draftRequestId } from '@/lib/ocr/drafts';
 import {
+  draftsFromFields,
   extractedFieldsSchema,
   extractionResultSchema,
   lowConfidenceFields,
   missingRequiredFields,
+  missingRequiredFieldsForDraft,
 } from '@/lib/ocr/schema';
 
 const existing = (over: Partial<ExistingRecord> = {}): ExistingRecord => ({
@@ -322,5 +326,128 @@ describe('lowConfidenceFields', () => {
 
   it('treats the threshold itself as acceptable', () => {
     expect(lowConfidenceFields({ amount: 0.8 })).toEqual([]);
+  });
+});
+
+describe('drafts', () => {
+  const base = { documentType: 'receipt', suggestedTarget: 'transaction' } as const;
+
+  it('defaults to no drafts and caps the count', () => {
+    expect(extractedFieldsSchema.parse(base).drafts).toEqual([]);
+    const tooMany = Array.from({ length: 31 }, () => ({ target: 'transaction' }));
+    expect(extractedFieldsSchema.safeParse({ ...base, drafts: tooMany }).success).toBe(
+      false,
+    );
+  });
+
+  it('rejects a draft amount that is not a plain decimal', () => {
+    const r = extractedFieldsSchema.safeParse({
+      ...base,
+      drafts: [{ target: 'transaction', amount: '₱1,200' }],
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it('shows stored drafts as they are', () => {
+    const drafts = draftsFromFields({
+      drafts: [
+        { target: 'transaction', name: 'Jollibee', amount: '250.00', date: '2026-09-12' },
+        { target: 'transaction', direction: 'income', name: 'Salary', amount: '900.00' },
+      ],
+    });
+    expect(drafts).toHaveLength(2);
+    expect(drafts[1]?.direction).toBe('income');
+  });
+
+  it('turns a pre-drafts extraction into one draft', () => {
+    const [d] = draftsFromFields({
+      suggestedTarget: 'bill',
+      providerName: 'Meralco',
+      amount: '1899.00',
+      dueDate: '2026-10-20',
+    });
+    expect(d).toMatchObject({
+      target: 'bill',
+      name: 'Meralco',
+      amount: '1899.00',
+      date: '2026-10-20',
+    });
+  });
+
+  it('reads the right name and date field per target', () => {
+    expect(
+      draftsFromFields({
+        suggestedTarget: 'transaction',
+        merchantName: 'SM',
+        transactionDate: '2026-09-01',
+      })[0],
+    ).toMatchObject({ name: 'SM', date: '2026-09-01', direction: 'expense' });
+    expect(
+      draftsFromFields({ suggestedTarget: 'receivable', partyName: 'Juan' })[0],
+    ).toMatchObject({ name: 'Juan', date: null });
+    expect(
+      draftsFromFields({
+        suggestedTarget: 'expected_income',
+        providerName: 'ACME',
+        expectedDate: '2026-10-30',
+      })[0],
+    ).toMatchObject({ name: 'ACME', date: '2026-10-30' });
+  });
+
+  it('proposes nothing when the document is unclassified', () => {
+    expect(draftsFromFields({ suggestedTarget: 'unknown' })).toEqual([]);
+    expect(draftsFromFields({})).toEqual([]);
+  });
+
+  it('names what is missing per target', () => {
+    expect(
+      missingRequiredFieldsForDraft({
+        target: 'transaction',
+        name: null,
+        amount: '5.00',
+        date: '2026-09-01',
+      }),
+    ).toEqual([]);
+    expect(
+      missingRequiredFieldsForDraft({
+        target: 'transaction',
+        name: 'x',
+        amount: null,
+        date: null,
+      }),
+    ).toEqual(['amount', 'date']);
+    expect(
+      missingRequiredFieldsForDraft({
+        target: 'bill',
+        name: '',
+        amount: '5.00',
+        date: '2026-09-01',
+      }),
+    ).toEqual(['name']);
+    expect(
+      missingRequiredFieldsForDraft({
+        target: 'receivable',
+        name: 'Juan',
+        amount: '5.00',
+        date: null,
+      }),
+    ).toEqual([]);
+  });
+});
+
+describe('draftRequestId', () => {
+  it('is stable per extraction and index, and distinct otherwise', () => {
+    const a = draftRequestId('ex-1', 0);
+    expect(draftRequestId('ex-1', 0)).toBe(a);
+    expect(draftRequestId('ex-1', 1)).not.toBe(a);
+    expect(draftRequestId('ex-2', 0)).not.toBe(a);
+  });
+
+  it('is a well-formed UUID the transaction schema accepts', () => {
+    const id = draftRequestId('ex-1', 7);
+    expect(id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    expect(z.string().uuid().safeParse(id).success).toBe(true);
   });
 });

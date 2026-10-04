@@ -6,9 +6,12 @@ import { PageHeader } from '@/components/ui/page-header';
 import { EmptyState } from '@/components/ui/states';
 import { requireUser } from '@/lib/auth/guards';
 import { listDocuments } from '@/services/document.service';
+import { listExtractionSummaries } from '@/services/ocr.service';
+import { isFlagEnabled } from '@/services/plan.service';
 import { Button } from '@/components/ui/button';
 import { archiveDocumentAction } from '@/app/actions/documents';
 import { UploadForm } from './upload-form';
+import { ReadAndDraft } from './read-and-draft';
 
 export const metadata: Metadata = { title: 'Documents' };
 
@@ -41,6 +44,10 @@ export default async function DocumentsPage({
   const { type } = await searchParams;
   const initialType = type && type in TYPE_LABELS ? type : 'receipt';
   const documents = await listDocuments();
+  const [summaries, ocrEnabled] = await Promise.all([
+    listExtractionSummaries(documents.map((d) => d.id)),
+    isFlagEnabled('ocr_enabled'),
+  ]);
 
   const saved = documents.reduce((acc, d) => {
     if (!d.original_size_bytes || !d.display_size_bytes) return acc;
@@ -106,17 +113,39 @@ export default async function DocumentsPage({
                   </div>
 
                   <div className="flex shrink-0 items-center gap-3">
-                    {doc.processing_status === 'ready' ? (
-                      <Link
-                        href={`/documents/${doc.id}/review`}
-                        className="hp-small font-medium text-primary-text"
-                      >
-                        Review
-                      </Link>
-                    ) : null}
+                    {doc.processing_status === 'ready'
+                      ? (() => {
+                          const s = summaries.get(doc.id);
+                          const open = s?.status === 'pending_review';
+                          const unread =
+                            !s || s.status === 'discarded' || s.status === 'failed';
+                          if (unread && ocrEnabled)
+                            return <ReadAndDraft documentId={doc.id} />;
+                          return (
+                            <Link
+                              href={`/documents/${doc.id}/review`}
+                              className="hp-small font-medium text-primary-text"
+                            >
+                              {open ? 'Review draft' : 'Review'}
+                            </Link>
+                          );
+                        })()
+                      : null}
                     {/* Status is stated in words, never colour alone. */}
                     {doc.processing_status === 'ready' ? (
-                      <Badge tone="success">Ready</Badge>
+                      (() => {
+                        const s = summaries.get(doc.id);
+                        if (s?.status === 'pending_review' && s.drafts > 0) {
+                          return (
+                            <Badge tone="info">
+                              Draft · {s.drafts - s.saved} to review
+                            </Badge>
+                          );
+                        }
+                        if (s?.status === 'confirmed')
+                          return <Badge tone="success">Saved</Badge>;
+                        return <Badge tone="success">Ready</Badge>;
+                      })()
                     ) : doc.processing_status === 'failed' ? (
                       <Badge tone="danger">Failed</Badge>
                     ) : (

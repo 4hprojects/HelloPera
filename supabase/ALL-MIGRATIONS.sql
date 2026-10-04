@@ -41,6 +41,13 @@
 --   32. 20261004000400 admin aggregates
 --   33. 20261004000500 exact views read only
 --   34. 20261004000600 loan details
+--   35. 20261004000700 edit entries
+--   36. 20261004000800 bill installments
+--   37. 20261004000900 installments prior
+--   38. 20261004001000 receivable borrowed date
+--   39. 20261004001100 bank details
+--   40. 20261004001200 delete account
+--   41. 20261004001300 extraction drafts
 --
 -- Prefer `npm run db:migrate` where you have DATABASE_URL: it applies each
 -- file in its own transaction and records what ran. This bundle is for the
@@ -6677,3 +6684,945 @@ end $$;
 
 revoke all on function public.create_loan_account_idempotent(uuid,uuid,text,text,numeric,text,numeric,text,date,numeric,date,numeric,integer,boolean) from public,anon,authenticated;
 grant execute on function public.create_loan_account_idempotent(uuid,uuid,text,text,numeric,text,numeric,text,date,numeric,date,numeric,integer,boolean) to service_role;
+
+
+-- ======================================================================
+-- 20261004000700_edit_entries.sql
+-- ======================================================================
+
+-- Editing entries in place.
+--
+-- Until now everything was create-only: transactions could be voided,
+-- obligations cancelled, accounts archived. These RPCs let a person correct
+-- the entry itself. All three run as service_role, check ownership in the
+-- predicate, and write an audit row with before/after.
+--
+-- Guard rails, because balances and allocations are derived from these rows:
+--   * a transaction's amount is locked once it settles a bill, receivable or
+--     expected income (void it to release the link first);
+--   * opening-balance and voided transactions cannot be edited;
+--   * an obligation's amount cannot drop below what is already applied, and
+--     its lifecycle status is recomputed after an amount change;
+--   * currency, type and accounts are never editable.
+
+-- -----------------------------------------------------------------------------
+-- Transactions
+-- -----------------------------------------------------------------------------
+
+create or replace function public.update_transaction(
+  p_user_id     uuid,
+  p_id          uuid,
+  p_amount      numeric,
+  p_date        date,
+  p_category_id uuid default null,
+  p_merchant    text default null,
+  p_description text default null,
+  p_notes       text default null
+) returns void language plpgsql security definer set search_path = '' as $$
+declare
+  v_tx     public.transactions%rowtype;
+  v_linked boolean;
+begin
+  select * into v_tx from public.transactions
+  where id = p_id and user_id = p_user_id
+  for update;
+
+  if v_tx.id is null then
+    raise exception 'TRANSACTION_NOT_FOUND' using errcode = 'P0002';
+  end if;
+  if v_tx.status = 'voided' then
+    raise exception 'TRANSACTION_VOIDED' using errcode = 'P0001';
+  end if;
+  if v_tx.type = 'opening_balance' then
+    raise exception 'TRANSACTION_NOT_EDITABLE' using errcode = 'P0001';
+  end if;
+  if p_amount is null or p_amount <= 0 then
+    raise exception 'AMOUNT_NOT_POSITIVE' using errcode = 'P0001';
+  end if;
+  if p_date is null then
+    raise exception 'DATE_REQUIRED' using errcode = 'P0001';
+  end if;
+
+  if p_category_id is not null and not exists (
+    select 1 from public.categories c
+    where c.id = p_category_id and c.is_active
+      and (c.is_system or c.user_id = p_user_id)
+  ) then
+    raise exception 'CATEGORY_NOT_FOUND' using errcode = 'P0001';
+  end if;
+
+  if p_amount <> v_tx.amount then
+    select exists (select 1 from public.bill_payments where transaction_id = p_id)
+        or exists (select 1 from public.receivable_payments where transaction_id = p_id)
+        or exists (select 1 from public.expected_income_receipts where transaction_id = p_id)
+      into v_linked;
+    if v_linked then
+      raise exception 'TRANSACTION_LINKED' using errcode = 'P0001';
+    end if;
+  end if;
+
+  update public.transactions
+  set amount           = p_amount,
+      transaction_date = p_date,
+      category_id      = p_category_id,
+      merchant_name    = nullif(btrim(coalesce(p_merchant, '')), ''),
+      description      = nullif(btrim(coalesce(p_description, '')), ''),
+      notes            = nullif(btrim(coalesce(p_notes, '')), '')
+  where id = p_id;
+
+  if p_amount <> v_tx.amount then
+    if v_tx.source_account_id is not null then
+      perform public.recalculate_account_balance(v_tx.source_account_id);
+    end if;
+    if v_tx.destination_account_id is not null then
+      perform public.recalculate_account_balance(v_tx.destination_account_id);
+    end if;
+  end if;
+
+  insert into public.audit_logs
+    (actor_user_id, target_user_id, entity_type, entity_id, event_type,
+     before_data, after_data)
+  values
+    (p_user_id, p_user_id, 'transaction', p_id, 'transaction_updated',
+     jsonb_build_object('amount', v_tx.amount, 'date', v_tx.transaction_date,
+                        'category_id', v_tx.category_id),
+     jsonb_build_object('amount', p_amount, 'date', p_date,
+                        'category_id', p_category_id));
+end;
+$$;
+
+revoke all on function public.update_transaction from public, anon, authenticated;
+grant execute on function public.update_transaction to service_role;
+
+-- -----------------------------------------------------------------------------
+-- Bills, receivables, expected income
+-- -----------------------------------------------------------------------------
+
+create or replace function public.update_obligation(
+  p_user_id     uuid,
+  p_kind        text,
+  p_id          uuid,
+  p_name        text,
+  p_amount      numeric,
+  p_date        date,
+  p_description text default null,
+  p_notes       text default null,
+  p_category_id uuid default null
+) returns void language plpgsql security definer set search_path = '' as $$
+declare
+  v_name    text := nullif(btrim(coalesce(p_name, '')), '');
+  v_desc    text := nullif(btrim(coalesce(p_description, '')), '');
+  v_notes   text := nullif(btrim(coalesce(p_notes, '')), '');
+  v_status  text;
+  v_old     numeric(18,2);
+  v_applied numeric(18,2);
+  v_new     text;
+begin
+  if p_kind not in ('bill', 'receivable', 'expected_income') then
+    raise exception 'UNKNOWN_OBLIGATION_TYPE' using errcode = 'P0001';
+  end if;
+  if v_name is null then raise exception 'NAME_REQUIRED' using errcode = 'P0001'; end if;
+  if p_amount is null or p_amount <= 0 then
+    raise exception 'AMOUNT_NOT_POSITIVE' using errcode = 'P0001';
+  end if;
+  if p_kind <> 'receivable' and p_date is null then
+    raise exception 'DATE_REQUIRED' using errcode = 'P0001';
+  end if;
+  if p_category_id is not null and not exists (
+    select 1 from public.categories c
+    where c.id = p_category_id and c.is_active
+      and (c.is_system or c.user_id = p_user_id)
+  ) then
+    raise exception 'CATEGORY_NOT_FOUND' using errcode = 'P0001';
+  end if;
+
+  if p_kind = 'bill' then
+    select status, amount into v_status, v_old from public.bills
+      where id = p_id and user_id = p_user_id for update;
+    if v_status is null then raise exception 'OBLIGATION_NOT_FOUND' using errcode = 'P0002'; end if;
+    if v_status = 'cancelled' then raise exception 'OBLIGATION_CANCELLED' using errcode = 'P0001'; end if;
+    select coalesce(sum(amount_applied), 0) into v_applied
+      from public.bill_payments where bill_id = p_id;
+    if p_amount < v_applied then raise exception 'AMOUNT_BELOW_APPLIED' using errcode = 'P0001'; end if;
+    v_new := case when v_applied >= p_amount then 'paid'
+                  when v_applied > 0 then 'partially_paid' else 'open' end;
+    update public.bills
+      set provider_name = v_name, description = v_desc, amount = p_amount,
+          due_date = p_date, category_id = p_category_id, notes = v_notes,
+          status = v_new
+      where id = p_id;
+
+  elsif p_kind = 'receivable' then
+    select status, amount into v_status, v_old from public.receivables
+      where id = p_id and user_id = p_user_id for update;
+    if v_status is null then raise exception 'OBLIGATION_NOT_FOUND' using errcode = 'P0002'; end if;
+    if v_status = 'cancelled' then raise exception 'OBLIGATION_CANCELLED' using errcode = 'P0001'; end if;
+    select coalesce(sum(amount_applied), 0) into v_applied
+      from public.receivable_payments where receivable_id = p_id;
+    if p_amount < v_applied then raise exception 'AMOUNT_BELOW_APPLIED' using errcode = 'P0001'; end if;
+    v_new := case when v_applied >= p_amount then 'paid'
+                  when v_applied > 0 then 'partially_paid' else 'open' end;
+    update public.receivables
+      set party_name = v_name, description = v_desc, amount = p_amount,
+          due_date = p_date, notes = v_notes, status = v_new
+      where id = p_id;
+
+  else
+    select status, amount into v_status, v_old from public.expected_income
+      where id = p_id and user_id = p_user_id for update;
+    if v_status is null then raise exception 'OBLIGATION_NOT_FOUND' using errcode = 'P0002'; end if;
+    if v_status = 'cancelled' then raise exception 'OBLIGATION_CANCELLED' using errcode = 'P0001'; end if;
+    select coalesce(sum(amount_applied), 0) into v_applied
+      from public.expected_income_receipts where expected_income_id = p_id;
+    if p_amount < v_applied then raise exception 'AMOUNT_BELOW_APPLIED' using errcode = 'P0001'; end if;
+    v_new := case when v_applied >= p_amount then 'paid'
+                  when v_applied > 0 then 'partially_paid' else 'open' end;
+    update public.expected_income
+      set source_name = v_name, description = v_desc, amount = p_amount,
+          expected_date = p_date, category_id = p_category_id, notes = v_notes,
+          status = v_new
+      where id = p_id;
+  end if;
+
+  insert into public.audit_logs
+    (actor_user_id, target_user_id, entity_type, entity_id, event_type,
+     before_data, after_data)
+  values
+    (p_user_id, p_user_id, p_kind, p_id, 'obligation_updated',
+     jsonb_build_object('amount', v_old, 'status', v_status),
+     jsonb_build_object('amount', p_amount, 'status', v_new, 'date', p_date));
+end;
+$$;
+
+revoke all on function public.update_obligation from public, anon, authenticated;
+grant execute on function public.update_obligation to service_role;
+
+-- -----------------------------------------------------------------------------
+-- Accounts (and loan details)
+-- -----------------------------------------------------------------------------
+
+create or replace function public.update_account_details(
+  p_user_id           uuid,
+  p_id                uuid,
+  p_name              text,
+  p_institution_name  text default null,
+  p_payment_amount    numeric default null,
+  p_payment_frequency text default null,
+  p_next_due_date     date default null,
+  p_principal         numeric default null,
+  p_interest_rate_apr numeric default null,
+  p_term_months       integer default null
+) returns void language plpgsql security definer set search_path = '' as $$
+declare
+  v_acc  public.accounts%rowtype;
+  v_name text := nullif(btrim(coalesce(p_name, '')), '');
+  v_inst text := nullif(btrim(coalesce(p_institution_name, '')), '');
+  v_rule uuid;
+begin
+  select * into v_acc from public.accounts
+  where id = p_id and user_id = p_user_id for update;
+  if v_acc.id is null then raise exception 'ACCOUNT_NOT_FOUND' using errcode = 'P0002'; end if;
+  if v_name is null then raise exception 'NAME_REQUIRED' using errcode = 'P0001'; end if;
+
+  if v_acc.type = 'loan' then
+    if v_inst is null then raise exception 'LOAN_LENDER_REQUIRED' using errcode = 'P0001'; end if;
+    if p_payment_amount is null or p_payment_amount <= 0
+       or p_payment_frequency is null or p_next_due_date is null then
+      raise exception 'LOAN_PAYMENT_REQUIRED' using errcode = 'P0001';
+    end if;
+    if p_principal is not null and p_principal < v_acc.current_balance then
+      raise exception 'LOAN_PRINCIPAL_BELOW_BALANCE' using errcode = 'P0001';
+    end if;
+
+    update public.loan_details
+      set payment_amount = p_payment_amount, payment_frequency = p_payment_frequency,
+          next_due_date = p_next_due_date, principal = p_principal,
+          interest_rate_apr = p_interest_rate_apr, term_months = p_term_months
+      where account_id = p_id
+      returning recurring_rule_id into v_rule;
+
+    -- Keep the reminder in step with the schedule it was created from.
+    if v_rule is not null then
+      update public.recurring_rules
+        set name = v_name || ' payment', amount = p_payment_amount,
+            frequency = p_payment_frequency, next_occurrence_date = p_next_due_date,
+            provider_name = v_inst
+        where id = v_rule and user_id = p_user_id;
+    end if;
+  end if;
+
+  update public.accounts set name = v_name, institution_name = v_inst where id = p_id;
+
+  insert into public.audit_logs
+    (actor_user_id, target_user_id, entity_type, entity_id, event_type,
+     before_data, after_data)
+  values
+    (p_user_id, p_user_id, 'account', p_id, 'account_updated',
+     jsonb_build_object('name', v_acc.name, 'institution', v_acc.institution_name),
+     jsonb_build_object('name', v_name, 'institution', v_inst));
+end;
+$$;
+
+revoke all on function public.update_account_details from public, anon, authenticated;
+grant execute on function public.update_account_details to service_role;
+
+
+-- ======================================================================
+-- 20261004000800_bill_installments.sql
+-- ======================================================================
+
+-- Installment terms on bills: how much per month, and for how many months.
+--
+-- Optional and informational: the bill's `amount` stays the total owed, and
+-- progress ("2 of 6 paid") is derived from recorded payments at read time, so
+-- nothing here needs updating when a payment is recorded or voided.
+
+alter table public.bills add column if not exists installment_amount numeric(18, 2);
+alter table public.bills add column if not exists installment_count integer;
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'bills_installment_check') then
+    alter table public.bills add constraint bills_installment_check check (
+      (installment_amount is null and installment_count is null)
+      or (installment_amount is not null and installment_count is not null
+          and installment_amount > 0 and installment_amount <= amount
+          and installment_count between 2 and 600)
+    );
+  end if;
+end $$;
+
+-- The new signature has two more parameters; drop the old one so PostgREST
+-- does not see an ambiguous overload.
+drop function if exists public.update_obligation(
+  uuid, text, uuid, text, numeric, date, text, text, uuid);
+
+create or replace function public.update_obligation(
+  p_user_id     uuid,
+  p_kind        text,
+  p_id          uuid,
+  p_name        text,
+  p_amount      numeric,
+  p_date        date,
+  p_description text default null,
+  p_notes       text default null,
+  p_category_id uuid default null,
+  p_installment_amount numeric default null,
+  p_installment_count  integer default null
+) returns void language plpgsql security definer set search_path = '' as $$
+declare
+  v_name    text := nullif(btrim(coalesce(p_name, '')), '');
+  v_desc    text := nullif(btrim(coalesce(p_description, '')), '');
+  v_notes   text := nullif(btrim(coalesce(p_notes, '')), '');
+  v_status  text;
+  v_old     numeric(18,2);
+  v_applied numeric(18,2);
+  v_new     text;
+begin
+  if p_kind not in ('bill', 'receivable', 'expected_income') then
+    raise exception 'UNKNOWN_OBLIGATION_TYPE' using errcode = 'P0001';
+  end if;
+  if v_name is null then raise exception 'NAME_REQUIRED' using errcode = 'P0001'; end if;
+  if p_amount is null or p_amount <= 0 then
+    raise exception 'AMOUNT_NOT_POSITIVE' using errcode = 'P0001';
+  end if;
+  if p_kind <> 'receivable' and p_date is null then
+    raise exception 'DATE_REQUIRED' using errcode = 'P0001';
+  end if;
+  if p_category_id is not null and not exists (
+    select 1 from public.categories c
+    where c.id = p_category_id and c.is_active
+      and (c.is_system or c.user_id = p_user_id)
+  ) then
+    raise exception 'CATEGORY_NOT_FOUND' using errcode = 'P0001';
+  end if;
+
+  if p_kind = 'bill' then
+    if (p_installment_amount is not null or p_installment_count is not null)
+       and (p_installment_amount is null or p_installment_count is null
+            or p_installment_amount <= 0 or p_installment_amount > p_amount
+            or p_installment_count not between 2 and 600) then
+      raise exception 'INSTALLMENT_INVALID' using errcode = 'P0001';
+    end if;
+    select status, amount into v_status, v_old from public.bills
+      where id = p_id and user_id = p_user_id for update;
+    if v_status is null then raise exception 'OBLIGATION_NOT_FOUND' using errcode = 'P0002'; end if;
+    if v_status = 'cancelled' then raise exception 'OBLIGATION_CANCELLED' using errcode = 'P0001'; end if;
+    select coalesce(sum(amount_applied), 0) into v_applied
+      from public.bill_payments where bill_id = p_id;
+    if p_amount < v_applied then raise exception 'AMOUNT_BELOW_APPLIED' using errcode = 'P0001'; end if;
+    v_new := case when v_applied >= p_amount then 'paid'
+                  when v_applied > 0 then 'partially_paid' else 'open' end;
+    update public.bills
+      set provider_name = v_name, description = v_desc, amount = p_amount,
+          due_date = p_date, category_id = p_category_id, notes = v_notes,
+          installment_amount = p_installment_amount,
+          installment_count = p_installment_count, status = v_new
+      where id = p_id;
+
+  elsif p_kind = 'receivable' then
+    select status, amount into v_status, v_old from public.receivables
+      where id = p_id and user_id = p_user_id for update;
+    if v_status is null then raise exception 'OBLIGATION_NOT_FOUND' using errcode = 'P0002'; end if;
+    if v_status = 'cancelled' then raise exception 'OBLIGATION_CANCELLED' using errcode = 'P0001'; end if;
+    select coalesce(sum(amount_applied), 0) into v_applied
+      from public.receivable_payments where receivable_id = p_id;
+    if p_amount < v_applied then raise exception 'AMOUNT_BELOW_APPLIED' using errcode = 'P0001'; end if;
+    v_new := case when v_applied >= p_amount then 'paid'
+                  when v_applied > 0 then 'partially_paid' else 'open' end;
+    update public.receivables
+      set party_name = v_name, description = v_desc, amount = p_amount,
+          due_date = p_date, notes = v_notes, status = v_new
+      where id = p_id;
+
+  else
+    select status, amount into v_status, v_old from public.expected_income
+      where id = p_id and user_id = p_user_id for update;
+    if v_status is null then raise exception 'OBLIGATION_NOT_FOUND' using errcode = 'P0002'; end if;
+    if v_status = 'cancelled' then raise exception 'OBLIGATION_CANCELLED' using errcode = 'P0001'; end if;
+    select coalesce(sum(amount_applied), 0) into v_applied
+      from public.expected_income_receipts where expected_income_id = p_id;
+    if p_amount < v_applied then raise exception 'AMOUNT_BELOW_APPLIED' using errcode = 'P0001'; end if;
+    v_new := case when v_applied >= p_amount then 'paid'
+                  when v_applied > 0 then 'partially_paid' else 'open' end;
+    update public.expected_income
+      set source_name = v_name, description = v_desc, amount = p_amount,
+          expected_date = p_date, category_id = p_category_id, notes = v_notes,
+          status = v_new
+      where id = p_id;
+  end if;
+
+  insert into public.audit_logs
+    (actor_user_id, target_user_id, entity_type, entity_id, event_type,
+     before_data, after_data)
+  values
+    (p_user_id, p_user_id, p_kind, p_id, 'obligation_updated',
+     jsonb_build_object('amount', v_old, 'status', v_status),
+     jsonb_build_object('amount', p_amount, 'status', v_new, 'date', p_date));
+end;
+$$;
+
+revoke all on function public.update_obligation from public, anon, authenticated;
+grant execute on function public.update_obligation to service_role;
+
+
+-- ======================================================================
+-- 20261004000900_installments_prior.sql
+-- ======================================================================
+
+-- Installments already paid before the bill was added to HelloPera.
+--
+-- Progress is installments_prior + whole installments covered by recorded
+-- payments. The bill's `amount` stays what is still owed, so prior payments
+-- never count against it.
+
+alter table public.bills
+  add column if not exists installments_prior integer not null default 0;
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'bills_installments_prior_check') then
+    alter table public.bills add constraint bills_installments_prior_check check (
+      installments_prior = 0
+      or (installment_count is not null and installments_prior <= installment_count)
+    );
+  end if;
+end $$;
+
+drop function if exists public.update_obligation(
+  uuid, text, uuid, text, numeric, date, text, text, uuid, numeric, integer);
+
+create or replace function public.update_obligation(
+  p_user_id     uuid,
+  p_kind        text,
+  p_id          uuid,
+  p_name        text,
+  p_amount      numeric,
+  p_date        date,
+  p_description text default null,
+  p_notes       text default null,
+  p_category_id uuid default null,
+  p_installment_amount numeric default null,
+  p_installment_count  integer default null,
+  p_installments_prior integer default 0
+) returns void language plpgsql security definer set search_path = '' as $$
+declare
+  v_name    text := nullif(btrim(coalesce(p_name, '')), '');
+  v_desc    text := nullif(btrim(coalesce(p_description, '')), '');
+  v_notes   text := nullif(btrim(coalesce(p_notes, '')), '');
+  v_status  text;
+  v_old     numeric(18,2);
+  v_applied numeric(18,2);
+  v_new     text;
+begin
+  if p_kind not in ('bill', 'receivable', 'expected_income') then
+    raise exception 'UNKNOWN_OBLIGATION_TYPE' using errcode = 'P0001';
+  end if;
+  if v_name is null then raise exception 'NAME_REQUIRED' using errcode = 'P0001'; end if;
+  if p_amount is null or p_amount <= 0 then
+    raise exception 'AMOUNT_NOT_POSITIVE' using errcode = 'P0001';
+  end if;
+  if p_kind <> 'receivable' and p_date is null then
+    raise exception 'DATE_REQUIRED' using errcode = 'P0001';
+  end if;
+  if p_category_id is not null and not exists (
+    select 1 from public.categories c
+    where c.id = p_category_id and c.is_active
+      and (c.is_system or c.user_id = p_user_id)
+  ) then
+    raise exception 'CATEGORY_NOT_FOUND' using errcode = 'P0001';
+  end if;
+
+  if p_kind = 'bill' then
+    if (p_installment_amount is not null or p_installment_count is not null)
+       and (p_installment_amount is null or p_installment_count is null
+            or p_installment_amount <= 0 or p_installment_amount > p_amount
+            or p_installment_count not between 2 and 600
+            or coalesce(p_installments_prior, 0) not between 0 and p_installment_count) then
+      raise exception 'INSTALLMENT_INVALID' using errcode = 'P0001';
+    end if;
+    if p_installment_amount is null and coalesce(p_installments_prior, 0) <> 0 then
+      raise exception 'INSTALLMENT_INVALID' using errcode = 'P0001';
+    end if;
+    select status, amount into v_status, v_old from public.bills
+      where id = p_id and user_id = p_user_id for update;
+    if v_status is null then raise exception 'OBLIGATION_NOT_FOUND' using errcode = 'P0002'; end if;
+    if v_status = 'cancelled' then raise exception 'OBLIGATION_CANCELLED' using errcode = 'P0001'; end if;
+    select coalesce(sum(amount_applied), 0) into v_applied
+      from public.bill_payments where bill_id = p_id;
+    if p_amount < v_applied then raise exception 'AMOUNT_BELOW_APPLIED' using errcode = 'P0001'; end if;
+    v_new := case when v_applied >= p_amount then 'paid'
+                  when v_applied > 0 then 'partially_paid' else 'open' end;
+    update public.bills
+      set provider_name = v_name, description = v_desc, amount = p_amount,
+          due_date = p_date, category_id = p_category_id, notes = v_notes,
+          installment_amount = p_installment_amount,
+          installment_count = p_installment_count,
+          installments_prior = coalesce(p_installments_prior, 0), status = v_new
+      where id = p_id;
+
+  elsif p_kind = 'receivable' then
+    select status, amount into v_status, v_old from public.receivables
+      where id = p_id and user_id = p_user_id for update;
+    if v_status is null then raise exception 'OBLIGATION_NOT_FOUND' using errcode = 'P0002'; end if;
+    if v_status = 'cancelled' then raise exception 'OBLIGATION_CANCELLED' using errcode = 'P0001'; end if;
+    select coalesce(sum(amount_applied), 0) into v_applied
+      from public.receivable_payments where receivable_id = p_id;
+    if p_amount < v_applied then raise exception 'AMOUNT_BELOW_APPLIED' using errcode = 'P0001'; end if;
+    v_new := case when v_applied >= p_amount then 'paid'
+                  when v_applied > 0 then 'partially_paid' else 'open' end;
+    update public.receivables
+      set party_name = v_name, description = v_desc, amount = p_amount,
+          due_date = p_date, notes = v_notes, status = v_new
+      where id = p_id;
+
+  else
+    select status, amount into v_status, v_old from public.expected_income
+      where id = p_id and user_id = p_user_id for update;
+    if v_status is null then raise exception 'OBLIGATION_NOT_FOUND' using errcode = 'P0002'; end if;
+    if v_status = 'cancelled' then raise exception 'OBLIGATION_CANCELLED' using errcode = 'P0001'; end if;
+    select coalesce(sum(amount_applied), 0) into v_applied
+      from public.expected_income_receipts where expected_income_id = p_id;
+    if p_amount < v_applied then raise exception 'AMOUNT_BELOW_APPLIED' using errcode = 'P0001'; end if;
+    v_new := case when v_applied >= p_amount then 'paid'
+                  when v_applied > 0 then 'partially_paid' else 'open' end;
+    update public.expected_income
+      set source_name = v_name, description = v_desc, amount = p_amount,
+          expected_date = p_date, category_id = p_category_id, notes = v_notes,
+          status = v_new
+      where id = p_id;
+  end if;
+
+  insert into public.audit_logs
+    (actor_user_id, target_user_id, entity_type, entity_id, event_type,
+     before_data, after_data)
+  values
+    (p_user_id, p_user_id, p_kind, p_id, 'obligation_updated',
+     jsonb_build_object('amount', v_old, 'status', v_status),
+     jsonb_build_object('amount', p_amount, 'status', v_new, 'date', p_date));
+end;
+$$;
+
+revoke all on function public.update_obligation from public, anon, authenticated;
+grant execute on function public.update_obligation to service_role;
+
+
+-- ======================================================================
+-- 20261004001000_receivable_borrowed_date.sql
+-- ======================================================================
+
+-- Date borrowed (lent) on receivables: when the money actually went out.
+-- Optional and informational; the due date remains the expected repayment.
+
+alter table public.receivables add column if not exists borrowed_date date;
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'receivables_borrowed_before_due_check') then
+    alter table public.receivables add constraint receivables_borrowed_before_due_check
+      check (borrowed_date is null or due_date is null or due_date >= borrowed_date);
+  end if;
+end $$;
+
+drop function if exists public.update_obligation(
+  uuid, text, uuid, text, numeric, date, text, text, uuid, numeric, integer, integer);
+
+create or replace function public.update_obligation(
+  p_user_id     uuid,
+  p_kind        text,
+  p_id          uuid,
+  p_name        text,
+  p_amount      numeric,
+  p_date        date,
+  p_description text default null,
+  p_notes       text default null,
+  p_category_id uuid default null,
+  p_installment_amount numeric default null,
+  p_installment_count  integer default null,
+  p_installments_prior integer default 0,
+  p_borrowed_date      date default null
+) returns void language plpgsql security definer set search_path = '' as $$
+declare
+  v_name    text := nullif(btrim(coalesce(p_name, '')), '');
+  v_desc    text := nullif(btrim(coalesce(p_description, '')), '');
+  v_notes   text := nullif(btrim(coalesce(p_notes, '')), '');
+  v_status  text;
+  v_old     numeric(18,2);
+  v_applied numeric(18,2);
+  v_new     text;
+begin
+  if p_kind not in ('bill', 'receivable', 'expected_income') then
+    raise exception 'UNKNOWN_OBLIGATION_TYPE' using errcode = 'P0001';
+  end if;
+  if v_name is null then raise exception 'NAME_REQUIRED' using errcode = 'P0001'; end if;
+  if p_amount is null or p_amount <= 0 then
+    raise exception 'AMOUNT_NOT_POSITIVE' using errcode = 'P0001';
+  end if;
+  if p_kind = 'receivable' and p_borrowed_date is not null
+     and p_date is not null and p_date < p_borrowed_date then
+    raise exception 'DATE_BEFORE_BORROWED' using errcode = 'P0001';
+  end if;
+  if p_kind <> 'receivable' and p_date is null then
+    raise exception 'DATE_REQUIRED' using errcode = 'P0001';
+  end if;
+  if p_category_id is not null and not exists (
+    select 1 from public.categories c
+    where c.id = p_category_id and c.is_active
+      and (c.is_system or c.user_id = p_user_id)
+  ) then
+    raise exception 'CATEGORY_NOT_FOUND' using errcode = 'P0001';
+  end if;
+
+  if p_kind = 'bill' then
+    if (p_installment_amount is not null or p_installment_count is not null)
+       and (p_installment_amount is null or p_installment_count is null
+            or p_installment_amount <= 0 or p_installment_amount > p_amount
+            or p_installment_count not between 2 and 600
+            or coalesce(p_installments_prior, 0) not between 0 and p_installment_count) then
+      raise exception 'INSTALLMENT_INVALID' using errcode = 'P0001';
+    end if;
+    if p_installment_amount is null and coalesce(p_installments_prior, 0) <> 0 then
+      raise exception 'INSTALLMENT_INVALID' using errcode = 'P0001';
+    end if;
+    select status, amount into v_status, v_old from public.bills
+      where id = p_id and user_id = p_user_id for update;
+    if v_status is null then raise exception 'OBLIGATION_NOT_FOUND' using errcode = 'P0002'; end if;
+    if v_status = 'cancelled' then raise exception 'OBLIGATION_CANCELLED' using errcode = 'P0001'; end if;
+    select coalesce(sum(amount_applied), 0) into v_applied
+      from public.bill_payments where bill_id = p_id;
+    if p_amount < v_applied then raise exception 'AMOUNT_BELOW_APPLIED' using errcode = 'P0001'; end if;
+    v_new := case when v_applied >= p_amount then 'paid'
+                  when v_applied > 0 then 'partially_paid' else 'open' end;
+    update public.bills
+      set provider_name = v_name, description = v_desc, amount = p_amount,
+          due_date = p_date, category_id = p_category_id, notes = v_notes,
+          installment_amount = p_installment_amount,
+          installment_count = p_installment_count,
+          installments_prior = coalesce(p_installments_prior, 0), status = v_new
+      where id = p_id;
+
+  elsif p_kind = 'receivable' then
+    select status, amount into v_status, v_old from public.receivables
+      where id = p_id and user_id = p_user_id for update;
+    if v_status is null then raise exception 'OBLIGATION_NOT_FOUND' using errcode = 'P0002'; end if;
+    if v_status = 'cancelled' then raise exception 'OBLIGATION_CANCELLED' using errcode = 'P0001'; end if;
+    select coalesce(sum(amount_applied), 0) into v_applied
+      from public.receivable_payments where receivable_id = p_id;
+    if p_amount < v_applied then raise exception 'AMOUNT_BELOW_APPLIED' using errcode = 'P0001'; end if;
+    v_new := case when v_applied >= p_amount then 'paid'
+                  when v_applied > 0 then 'partially_paid' else 'open' end;
+    update public.receivables
+      set party_name = v_name, description = v_desc, amount = p_amount,
+          due_date = p_date, borrowed_date = p_borrowed_date, notes = v_notes,
+          status = v_new
+      where id = p_id;
+
+  else
+    select status, amount into v_status, v_old from public.expected_income
+      where id = p_id and user_id = p_user_id for update;
+    if v_status is null then raise exception 'OBLIGATION_NOT_FOUND' using errcode = 'P0002'; end if;
+    if v_status = 'cancelled' then raise exception 'OBLIGATION_CANCELLED' using errcode = 'P0001'; end if;
+    select coalesce(sum(amount_applied), 0) into v_applied
+      from public.expected_income_receipts where expected_income_id = p_id;
+    if p_amount < v_applied then raise exception 'AMOUNT_BELOW_APPLIED' using errcode = 'P0001'; end if;
+    v_new := case when v_applied >= p_amount then 'paid'
+                  when v_applied > 0 then 'partially_paid' else 'open' end;
+    update public.expected_income
+      set source_name = v_name, description = v_desc, amount = p_amount,
+          expected_date = p_date, category_id = p_category_id, notes = v_notes,
+          status = v_new
+      where id = p_id;
+  end if;
+
+  insert into public.audit_logs
+    (actor_user_id, target_user_id, entity_type, entity_id, event_type,
+     before_data, after_data)
+  values
+    (p_user_id, p_user_id, p_kind, p_id, 'obligation_updated',
+     jsonb_build_object('amount', v_old, 'status', v_status),
+     jsonb_build_object('amount', p_amount, 'status', v_new, 'date', p_date));
+end;
+$$;
+
+revoke all on function public.update_obligation from public, anon, authenticated;
+grant execute on function public.update_obligation to service_role;
+
+
+-- ======================================================================
+-- 20261004001100_bank_details.sql
+-- ======================================================================
+
+-- Bank-only extras: last 4 digits and account kind (savings / checking / time
+-- deposit). Informational, so they live in a side table like loan_details and
+-- leave `accounts`, its constraints and `accounts_exact` untouched.
+-- Only the last 4 digits are ever stored — never a full account number.
+
+create table if not exists public.account_details (
+  account_id uuid primary key references public.accounts (id) on delete cascade,
+  user_id    uuid not null references auth.users (id) on delete cascade,
+  last4      text,
+  kind       text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'account_details_last4_check') then
+    alter table public.account_details add constraint account_details_last4_check
+      check (last4 is null or last4 ~ '^[0-9]{4}$');
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'account_details_kind_check') then
+    alter table public.account_details add constraint account_details_kind_check
+      check (kind is null or kind in ('savings', 'checking', 'time_deposit'));
+  end if;
+end $$;
+
+create index if not exists account_details_user_idx on public.account_details (user_id);
+
+drop trigger if exists account_details_set_updated_at on public.account_details;
+create trigger account_details_set_updated_at before update on public.account_details
+  for each row execute function public.set_updated_at();
+
+alter table public.account_details enable row level security;
+alter table public.account_details force row level security;
+
+drop policy if exists account_details_select_own on public.account_details;
+create policy account_details_select_own on public.account_details
+  for select to authenticated using (user_id = (select auth.uid()));
+
+revoke all on public.account_details from public, anon, authenticated;
+grant select on public.account_details to authenticated;
+grant all on public.account_details to service_role;
+
+-- One writer for create and edit. Ownership and type are checked here, so the
+-- service layer cannot attach bank details to someone else's or a non-bank account.
+create or replace function public.upsert_bank_details(
+  p_user_id    uuid,
+  p_account_id uuid,
+  p_last4      text default null,
+  p_kind       text default null
+) returns void language plpgsql security definer set search_path = '' as $$
+declare
+  v_last4 text := nullif(btrim(coalesce(p_last4, '')), '');
+  v_kind  text := nullif(btrim(coalesce(p_kind, '')), '');
+begin
+  if not exists (
+    select 1 from public.accounts
+    where id = p_account_id and user_id = p_user_id and type = 'bank'
+  ) then
+    raise exception 'ACCOUNT_NOT_FOUND' using errcode = 'P0002';
+  end if;
+
+  if v_last4 is null and v_kind is null then
+    delete from public.account_details where account_id = p_account_id;
+    return;
+  end if;
+
+  insert into public.account_details (account_id, user_id, last4, kind)
+  values (p_account_id, p_user_id, v_last4, v_kind)
+  on conflict (account_id) do update
+    set last4 = excluded.last4, kind = excluded.kind;
+end;
+$$;
+
+revoke all on function public.upsert_bank_details from public, anon, authenticated;
+grant execute on function public.upsert_bank_details to service_role;
+
+
+-- ======================================================================
+-- 20261004001200_delete_account.sql
+-- ======================================================================
+
+-- Deleting an account is only allowed while it has no real history: nothing
+-- but its own opening-balance entry. An account with transactions must be
+-- archived instead, so balances, reports and payments elsewhere never change
+-- because an account disappeared.
+--
+-- Removes, in one transaction: the account's opening-balance entry (the
+-- transactions FK is `on delete restrict`), a loan's reminder rule (and its
+-- generated occurrences), then the account. Bank/loan detail rows cascade.
+
+create or replace function public.delete_account(
+  p_user_id uuid,
+  p_id      uuid
+) returns void language plpgsql security definer set search_path = '' as $$
+declare
+  v_acc  public.accounts%rowtype;
+  v_rule uuid;
+begin
+  select * into v_acc from public.accounts
+  where id = p_id and user_id = p_user_id for update;
+  if v_acc.id is null then
+    raise exception 'ACCOUNT_NOT_FOUND' using errcode = 'P0002';
+  end if;
+
+  if exists (
+    select 1 from public.transactions t
+    where (t.source_account_id = p_id or t.destination_account_id = p_id)
+      and t.type <> 'opening_balance'
+  ) then
+    raise exception 'ACCOUNT_HAS_HISTORY' using errcode = 'P0001';
+  end if;
+
+  -- Opening entries can be linked from nothing else, but be explicit.
+  if exists (
+    select 1 from public.transactions t
+    where (t.source_account_id = p_id or t.destination_account_id = p_id)
+      and (exists (select 1 from public.bill_payments where transaction_id = t.id)
+        or exists (select 1 from public.receivable_payments where transaction_id = t.id)
+        or exists (select 1 from public.expected_income_receipts where transaction_id = t.id))
+  ) then
+    raise exception 'ACCOUNT_HAS_HISTORY' using errcode = 'P0001';
+  end if;
+
+  select recurring_rule_id into v_rule from public.loan_details where account_id = p_id;
+
+  delete from public.transactions
+    where (source_account_id = p_id or destination_account_id = p_id)
+      and type = 'opening_balance';
+  if v_rule is not null then
+    delete from public.recurring_rules where id = v_rule and user_id = p_user_id;
+  end if;
+  delete from public.accounts where id = p_id;
+
+  insert into public.audit_logs
+    (actor_user_id, target_user_id, entity_type, entity_id, event_type, before_data)
+  values
+    (p_user_id, p_user_id, 'account', p_id, 'account_deleted',
+     jsonb_build_object('name', v_acc.name, 'type', v_acc.type,
+                        'opening_balance', v_acc.opening_balance));
+end;
+$$;
+
+revoke all on function public.delete_account from public, anon, authenticated;
+grant execute on function public.delete_account to service_role;
+
+
+-- ======================================================================
+-- 20261004001300_extraction_drafts.sql
+-- ======================================================================
+
+-- Saving one draft of a multi-record extraction.
+--
+-- A document can now propose several records, created through different
+-- services, so they cannot share one database transaction. Instead each draft
+-- is saved on its own, and this function is what makes that safe:
+--   * it locks the extraction row, so two concurrent saves of the same draft
+--     cannot both pass the check;
+--   * a draft index is accepted once (DRAFT_ALREADY_SAVED on a repeat), so a
+--     double-click or retry never records the same draft twice;
+--   * the document is linked to each record it produced;
+--   * the extraction becomes `confirmed` only when every draft is saved, and
+--     stays `pending_review` while some remain.
+-- Saved drafts are kept in `corrected_data.saved` as { "<index>": { type, id } }.
+
+create or replace function public.confirm_extraction_draft(
+  p_user_id       uuid,
+  p_extraction_id uuid,
+  p_draft_index   integer,
+  p_entity_type   text,
+  p_entity_id     uuid
+) returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  v_ex     public.extraction_results%rowtype;
+  v_saved  jsonb;
+  v_total  integer;
+  v_done   boolean;
+begin
+  select * into v_ex from public.extraction_results
+  where id = p_extraction_id for update;
+
+  if v_ex.id is null or v_ex.user_id <> p_user_id then
+    raise exception 'EXTRACTION_NOT_FOUND' using errcode = 'P0002';
+  end if;
+  if v_ex.status = 'confirmed' then
+    raise exception 'ALREADY_CONFIRMED' using errcode = 'P0001';
+  end if;
+  if v_ex.status <> 'pending_review' then
+    raise exception 'NOT_PENDING_REVIEW' using errcode = 'P0001';
+  end if;
+  if p_entity_type not in ('transaction', 'bill', 'receivable', 'expected_income') then
+    raise exception 'UNKNOWN_ENTITY_TYPE' using errcode = 'P0001';
+  end if;
+
+  v_total := coalesce(jsonb_array_length(v_ex.structured_data -> 'drafts'), 0);
+  if p_draft_index < 0 or p_draft_index >= greatest(v_total, 1) then
+    raise exception 'DRAFT_NOT_FOUND' using errcode = 'P0001';
+  end if;
+
+  v_saved := coalesce(v_ex.corrected_data -> 'saved', '{}'::jsonb);
+  if v_saved ? p_draft_index::text then
+    raise exception 'DRAFT_ALREADY_SAVED' using errcode = 'P0001';
+  end if;
+
+  v_saved := v_saved || jsonb_build_object(
+    p_draft_index::text, jsonb_build_object('type', p_entity_type, 'id', p_entity_id));
+  -- An older extraction with no drafts array is one implicit draft.
+  v_done := (select count(*) from jsonb_object_keys(v_saved)) >= greatest(v_total, 1);
+
+  update public.extraction_results
+  set corrected_data = coalesce(corrected_data, '{}'::jsonb)
+                       || jsonb_build_object('saved', v_saved),
+      status = case when v_done then 'confirmed' else status end,
+      confirmed_at = case when v_done then now() else confirmed_at end
+  where id = p_extraction_id;
+
+  insert into public.document_links (user_id, document_id, entity_type, entity_id)
+  values (p_user_id, v_ex.document_id, p_entity_type, p_entity_id)
+  on conflict do nothing;
+
+  insert into public.audit_logs
+    (actor_user_id, target_user_id, entity_type, entity_id, event_type, after_data)
+  values
+    (p_user_id, p_user_id, 'extraction', p_extraction_id, 'extraction_draft_saved',
+     jsonb_build_object('draft_index', p_draft_index, 'entity_type', p_entity_type,
+                        'entity_id', p_entity_id, 'complete', v_done));
+
+  return jsonb_build_object('saved', (select count(*) from jsonb_object_keys(v_saved)),
+                            'total', greatest(v_total, 1), 'complete', v_done);
+end;
+$$;
+
+revoke all on function public.confirm_extraction_draft from public, anon, authenticated;
+grant execute on function public.confirm_extraction_draft to service_role;

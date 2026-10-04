@@ -1,7 +1,7 @@
 import 'server-only';
 
 import Anthropic from '@anthropic-ai/sdk';
-import { extractionResultSchema } from '@/lib/ocr/schema';
+import { draftSchema, extractionResultSchema, MAX_DRAFTS } from '@/lib/ocr/schema';
 import type {
   ExtractionProvider,
   ProviderInput,
@@ -51,7 +51,25 @@ Choosing suggestedTarget:
 - Anything unclear -> "unknown"
 
 "unknown" is a correct answer. A wrong guess costs the user more than an
-honest one, because they will trust it.`;
+honest one, because they will trust it.
+
+Drafts: also return \`drafts\`, one entry for every separate record the document
+could become, so the user can tick the ones they want.
+- A receipt or payment confirmation is ONE draft (target "transaction",
+  direction "expense"). Do not split a receipt into its items.
+- A statement or transaction history becomes one draft per transaction line.
+  Debits are direction "expense", credits are direction "income". Skip opening
+  and closing balances, running totals and fees already included in a line.
+- A bill is one "bill" draft; an invoice the user issued is one "receivable"
+  draft; a payslip or income advice for money not yet received is one
+  "expected_income" draft. A payslip for money already received is a
+  "transaction" with direction "income".
+- For each draft, \`name\` is the merchant, provider, debtor or source, and
+  \`date\` is the transaction date, due date or expected date for its target.
+- Give each draft its own confidence. Return at most ${MAX_DRAFTS} drafts; if
+  there are more lines, return the clearest ones. If the document cannot be
+  turned into any record, return an empty list.
+- Keep the top-level fields describing the first draft.`;
 
 /** Tool call rather than free text: the schema is enforced, not requested. */
 const EXTRACTION_TOOL: Anthropic.Tool = {
@@ -63,6 +81,30 @@ const EXTRACTION_TOOL: Anthropic.Tool = {
     additionalProperties: false,
     properties: {
       documentType: { type: 'string' },
+      drafts: {
+        type: 'array',
+        description: 'Every separate record this document could become',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            target: {
+              type: 'string',
+              enum: ['transaction', 'bill', 'receivable', 'expected_income'],
+            },
+            direction: { type: ['string', 'null'], enum: ['expense', 'income', null] },
+            name: { type: ['string', 'null'] },
+            amount: { type: ['string', 'null'], description: 'Plain decimal, e.g. "1234.56"' },
+            date: { type: ['string', 'null'], description: 'YYYY-MM-DD' },
+            description: { type: ['string', 'null'] },
+            categorySuggestion: { type: ['string', 'null'] },
+            paymentMethod: { type: ['string', 'null'] },
+            referenceNumber: { type: ['string', 'null'] },
+            confidence: { type: ['number', 'null'] },
+          },
+          required: ['target'],
+        },
+      },
       suggestedTarget: { type: 'string' },
       merchantName: { type: ['string', 'null'] },
       providerName: { type: ['string', 'null'] },
@@ -134,7 +176,7 @@ export class ClaudeExtractionProvider implements ExtractionProvider {
     try {
       response = await this.client.messages.create({
         model: MODEL,
-        max_tokens: 4096,
+        max_tokens: 8192,
         system: SYSTEM_PROMPT,
         thinking: { type: 'adaptive' },
         tools: [EXTRACTION_TOOL],
@@ -184,10 +226,17 @@ export class ClaudeExtractionProvider implements ExtractionProvider {
     // Validate even though the tool is strict. Provider output is untrusted
     // input (§17); a schema-valid shape can still carry an impossible date.
     const raw = call.input as Record<string, unknown>;
-    const { confidence, visibleText, ...fields } = raw;
+    const { confidence, visibleText, drafts: rawDrafts, ...fields } = raw;
+
+    // One unreadable line must not discard the others: keep the drafts that
+    // validate, drop the rest.
+    const drafts = (Array.isArray(rawDrafts) ? rawDrafts : [])
+      .map((d) => draftSchema.safeParse(d))
+      .flatMap((r) => (r.success ? [r.data] : []))
+      .slice(0, MAX_DRAFTS);
 
     const parsed = extractionResultSchema.safeParse({
-      fields,
+      fields: { ...fields, drafts },
       confidence: confidence ?? {},
       rawText: visibleText ?? null,
     });

@@ -52,6 +52,35 @@ const isoDate = z
 
 const text = (max: number) => z.string().trim().max(max).nullable().optional();
 
+/** Most records one document may propose. A statement page rarely has more. */
+export const MAX_DRAFTS = 30;
+
+/**
+ * One record a document could become.
+ *
+ * A receipt yields one; a statement yields a line each. Like every extracted
+ * value it is a proposal: amounts stay strings, everything but `target` may be
+ * missing, and nothing here is a financial record until a person saves it.
+ */
+export const draftSchema = z.object({
+  target: z.enum(['transaction', 'bill', 'receivable', 'expected_income']),
+  /** Transactions only: money out, or money in. Defaults to expense. */
+  direction: z.enum(['expense', 'income']).nullable().optional(),
+  /** Merchant, provider, debtor or source, whichever the target calls for. */
+  name: text(120),
+  amount: amountString,
+  /** Transaction date, due date or expected date, per target. */
+  date: isoDate,
+  description: text(200),
+  categorySuggestion: text(60),
+  paymentMethod: text(40),
+  referenceNumber: text(80),
+  /** 0–1, how clearly this line was read. Absent means unknown. */
+  confidence: z.number().min(0).max(1).nullable().optional(),
+});
+
+export type Draft = z.infer<typeof draftSchema>;
+
 export const extractedFieldsSchema = z.object({
   documentType: z.enum(EXTRACTED_DOCUMENT_TYPES).default('unknown'),
   suggestedTarget: z.enum(TARGET_TYPES).default('unknown'),
@@ -79,6 +108,9 @@ export const extractedFieldsSchema = z.object({
   paymentMethod: text(40),
   categorySuggestion: text(60),
   description: text(200),
+
+  /** Every record this document could become. See `draftsFromFields`. */
+  drafts: z.array(draftSchema).max(MAX_DRAFTS).default([]),
 });
 
 export type ExtractedFields = z.infer<typeof extractedFieldsSchema>;
@@ -130,4 +162,68 @@ export function lowConfidenceFields(
   return Object.entries(confidence)
     .filter(([, score]) => score < threshold)
     .map(([field]) => field);
+}
+
+/**
+ * The drafts to show for an extraction.
+ *
+ * Extractions saved before drafts existed carry only the single set of
+ * top-level fields; those are shown as one draft so nothing already stored is
+ * orphaned. A document the reader could not classify yields none.
+ */
+export function draftsFromFields(
+  fields: Partial<ExtractedFields> | Record<string, unknown>,
+): Draft[] {
+  const f = fields as Record<string, unknown>;
+  const stored = z.array(draftSchema).safeParse(f.drafts);
+  if (stored.success && stored.data.length > 0) return stored.data;
+
+  const target = f.suggestedTarget;
+  if (
+    target !== 'transaction' &&
+    target !== 'bill' &&
+    target !== 'receivable' &&
+    target !== 'expected_income'
+  ) {
+    return [];
+  }
+  const str = (v: unknown) => (typeof v === 'string' && v ? v : null);
+  const name =
+    target === 'receivable'
+      ? str(f.partyName)
+      : target === 'transaction'
+        ? str(f.merchantName)
+        : str(f.providerName);
+  const date =
+    target === 'transaction'
+      ? str(f.transactionDate)
+      : target === 'expected_income'
+        ? str(f.expectedDate)
+        : str(f.dueDate);
+  return [
+    {
+      target,
+      direction: target === 'transaction' ? 'expense' : null,
+      name,
+      amount: str(f.amount),
+      date,
+      description: str(f.description),
+      categorySuggestion: str(f.categorySuggestion),
+      paymentMethod: str(f.paymentMethod),
+      referenceNumber: str(f.referenceNumber),
+      confidence: null,
+    },
+  ];
+}
+
+/** What a person must still fill in before this draft can be saved. */
+export function missingRequiredFieldsForDraft(
+  draft: Pick<Draft, 'target' | 'name' | 'amount' | 'date'>,
+): Array<'name' | 'amount' | 'date'> {
+  const blank = (v: string | null | undefined) => !v;
+  const missing: Array<'name' | 'amount' | 'date'> = [];
+  if (draft.target !== 'transaction' && blank(draft.name)) missing.push('name');
+  if (blank(draft.amount)) missing.push('amount');
+  if (draft.target !== 'receivable' && blank(draft.date)) missing.push('date');
+  return missing;
 }

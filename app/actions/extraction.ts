@@ -1,5 +1,6 @@
 'use server';
 
+import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { requireUser } from '@/lib/auth/guards';
 import { log } from '@/lib/log';
@@ -13,7 +14,10 @@ import {
   createExpectedIncome,
   createReceivable,
 } from '@/services/obligation.service';
-import { missingRequiredFields, type TargetType } from '@/lib/ocr/schema';
+import { missingRequiredFieldsForDraft, type TargetType } from '@/lib/ocr/schema';
+import { draftRequestId } from '@/lib/ocr/drafts';
+import { getAccount } from '@/services/account.service';
+import { isoDate, positiveAmount } from '@/schemas/primitives';
 import { isFlagEnabled } from '@/services/plan.service';
 import { assertWritesEnabled, WritesDisabledError } from '@/lib/ops/kill-switches';
 
@@ -51,144 +55,12 @@ export async function runExtractionAction(
 
   revalidatePath(`/documents/${documentId}/review`);
   revalidatePath('/documents');
+  // From the documents list the person asked to "Read & draft": take them
+  // straight to the draft rather than leaving them on the list to find it.
+  if (formData.get('redirectTo') === 'review') {
+    redirect(`/documents/${documentId}/review`);
+  }
   return { success: 'Document read. Review the details below.' };
-}
-
-/**
- * Confirm an extraction into a real financial record.
- *
- * Two things happen, in this order and only this order:
- *   1. the record is created from the values the USER submitted, not the
- *      extracted ones — editing a field must actually change what is saved;
- *   2. confirm_extraction() flips the status and links the document, and
- *      refuses if the row is not pending_review.
- *
- * That second step is what makes a double-click safe (§83): the second call
- * finds the row already confirmed and stops.
- */
-export async function confirmExtractionAction(
-  _prev: ActionState,
-  formData: FormData,
-): Promise<ActionState> {
-  const { user, profile } = await requireUser();
-
-  if (!(await isFlagEnabled('ocr_enabled'))) {
-    return { error: 'Document reading is not available yet. Nothing was changed.' };
-  }
-  try {
-    await assertWritesEnabled();
-  } catch (error) {
-    if (error instanceof WritesDisabledError) return { error: error.message };
-    throw error;
-  }
-
-  const extractionId = String(formData.get('extractionId') ?? '');
-  const documentId = String(formData.get('documentId') ?? '');
-  const target = String(formData.get('target') ?? 'unknown') as TargetType;
-
-  const fields = {
-    amount: String(formData.get('amount') ?? ''),
-    transactionDate: String(formData.get('transactionDate') ?? ''),
-    dueDate: String(formData.get('dueDate') ?? ''),
-    expectedDate: String(formData.get('expectedDate') ?? ''),
-    merchantName: String(formData.get('merchantName') ?? ''),
-    providerName: String(formData.get('providerName') ?? ''),
-    partyName: String(formData.get('partyName') ?? ''),
-  };
-
-  if (target === 'unknown') {
-    return { error: 'Choose what this document is before confirming.' };
-  }
-
-  const missing = missingRequiredFields(target, fields);
-  if (missing.length > 0) {
-    return { error: `Fill in: ${missing.join(', ')}` };
-  }
-
-  const currency = profile.default_currency;
-  const accountId = String(formData.get('accountId') ?? '');
-  let entityId: string;
-
-  try {
-    if (target === 'transaction') {
-      if (!accountId) return { error: 'Choose which account this came from.' };
-      entityId = await createTransaction(user.id, {
-        requestId: extractionId,
-        type: 'expense',
-        amount: fields.amount,
-        currencyCode: currency,
-        transactionDate: fields.transactionDate,
-        sourceAccountId: accountId,
-        destinationAccountId: null,
-        direction: null,
-        categoryId: String(formData.get('categoryId') ?? '') || null,
-        merchantName: fields.merchantName,
-        description: '',
-        notes: '',
-        refundOfTransactionId: null,
-      });
-    } else if (target === 'bill') {
-      entityId = await createBill(user.id, {
-        providerName: fields.providerName,
-        description: '',
-        amount: fields.amount,
-        currencyCode: currency,
-        dueDate: fields.dueDate,
-        categoryId: null,
-        notes: '',
-      });
-    } else if (target === 'receivable') {
-      entityId = await createReceivable(user.id, {
-        partyName: fields.partyName,
-        description: '',
-        amount: fields.amount,
-        currencyCode: currency,
-        dueDate: '',
-        notes: '',
-      });
-    } else {
-      entityId = await createExpectedIncome(user.id, {
-        sourceName: fields.providerName,
-        description: '',
-        amount: fields.amount,
-        currencyCode: currency,
-        expectedDate: fields.expectedDate,
-        categoryId: null,
-        notes: '',
-      });
-    }
-  } catch (error) {
-    if (error instanceof TransactionError) return { error: error.message };
-    log.error('confirm create failed', { target });
-    return { error: 'We could not create that record.' };
-  }
-
-  const admin = createAdminClient();
-  const { error } = await admin.rpc('confirm_extraction', {
-    p_user_id: user.id,
-    p_extraction_id: extractionId,
-    p_entity_type: target,
-    p_entity_id: entityId,
-  });
-
-  if (error) {
-    if (error.message.includes('ALREADY_CONFIRMED')) {
-      // The record above was created by this call, but the extraction was
-      // already confirmed — say so rather than implying nothing happened.
-      return {
-        error: 'This document was already confirmed. Check for a duplicate record.',
-      };
-    }
-    return { error: 'We created the record but could not link the document to it.' };
-  }
-
-  revalidatePath(`/documents/${documentId}/review`);
-  revalidatePath('/documents');
-  revalidatePath('/transactions');
-  revalidatePath('/accounts');
-  revalidatePath('/dashboard');
-  revalidatePath('/analytics');
-  return { success: 'Saved, and the document is attached to it.' };
 }
 
 export async function discardExtractionAction(formData: FormData): Promise<void> {
@@ -214,4 +86,210 @@ function formatResetDate(iso: string): string {
     'en-US',
     { month: 'long', day: 'numeric', timeZone: 'UTC' },
   );
+}
+
+export type DraftResult = { index: number; ok: boolean; message: string };
+export type DraftsState = ActionState & { results?: DraftResult[] };
+
+const FIELD_LABELS = { name: 'name', amount: 'amount', date: 'date' } as const;
+
+/**
+ * Save the drafts a person ticked.
+ *
+ * Each draft is created from the values the USER submitted (their edits, not
+ * what was read), then recorded with confirm_extraction_draft, which accepts a
+ * draft index once. Drafts are independent: one that fails does not undo the
+ * ones already saved, and the result says which is which.
+ */
+export async function confirmDraftsAction(
+  _prev: DraftsState,
+  formData: FormData,
+): Promise<DraftsState> {
+  const { user } = await requireUser();
+
+  if (!(await isFlagEnabled('ocr_enabled'))) {
+    return { error: 'Document reading is not available yet. Nothing was changed.' };
+  }
+  try {
+    await assertWritesEnabled();
+  } catch (error) {
+    if (error instanceof WritesDisabledError) return { error: error.message };
+    throw error;
+  }
+
+  const extractionId = String(formData.get('extractionId') ?? '');
+  const documentId = String(formData.get('documentId') ?? '');
+  const count = Math.min(Number(formData.get('count') ?? 0) || 0, 30);
+  const sharedAccountId = String(formData.get('accountId') ?? '');
+  if (!extractionId) return { error: 'No document selected.' };
+
+  const selected: number[] = [];
+  for (let i = 0; i < count; i++) {
+    if (formData.get(`d${i}.selected`) === 'on') selected.push(i);
+  }
+  if (selected.length === 0) return { error: 'Tick at least one record to save.' };
+
+  const account = sharedAccountId ? await getAccount(sharedAccountId) : null;
+  const results: DraftResult[] = [];
+  const admin = createAdminClient();
+
+  for (const i of selected) {
+    const get = (key: string) => String(formData.get(`d${i}.${key}`) ?? '').trim();
+    const target = get('target') as Exclude<TargetType, 'unknown'>;
+    const name = get('name');
+    const amountRaw = get('amount');
+    const dateRaw = get('date');
+    const categoryId = get('categoryId') || null;
+    const description = get('description');
+
+    const missing = missingRequiredFieldsForDraft({
+      target,
+      name,
+      amount: amountRaw,
+      date: dateRaw,
+    });
+    if (missing.length > 0) {
+      results.push({
+        index: i,
+        ok: false,
+        message: `Fill in: ${missing.map((m) => FIELD_LABELS[m]).join(', ')}`,
+      });
+      continue;
+    }
+    const amount = positiveAmount.safeParse(amountRaw);
+    if (!amount.success) {
+      results.push({
+        index: i,
+        ok: false,
+        message: amount.error.issues[0]?.message ?? 'Check the amount',
+      });
+      continue;
+    }
+    const date = dateRaw ? isoDate.safeParse(dateRaw) : null;
+    if (date && !date.success) {
+      results.push({ index: i, ok: false, message: 'Use a valid date' });
+      continue;
+    }
+    const day = date?.success ? date.data : '';
+
+    let entityId: string;
+    try {
+      if (target === 'transaction') {
+        if (!account) {
+          results.push({ index: i, ok: false, message: 'Choose an account first.' });
+          continue;
+        }
+        const income = get('direction') === 'income';
+        entityId = await createTransaction(user.id, {
+          requestId: draftRequestId(extractionId, i),
+          type: income ? 'income' : 'expense',
+          amount: amount.data,
+          currencyCode: account.currency_code,
+          transactionDate: day,
+          sourceAccountId: income ? null : account.id,
+          destinationAccountId: income ? account.id : null,
+          direction: null,
+          categoryId,
+          merchantName: name,
+          description,
+          notes: '',
+          refundOfTransactionId: null,
+        });
+      } else if (target === 'bill') {
+        entityId = await createBill(user.id, {
+          providerName: name,
+          description,
+          amount: amount.data,
+          currencyCode: currencyFor(account, formData),
+          dueDate: day,
+          categoryId,
+          notes: '',
+        });
+      } else if (target === 'receivable') {
+        entityId = await createReceivable(user.id, {
+          partyName: name,
+          description,
+          amount: amount.data,
+          currencyCode: currencyFor(account, formData),
+          dueDate: day,
+          notes: '',
+        });
+      } else {
+        entityId = await createExpectedIncome(user.id, {
+          sourceName: name,
+          description,
+          amount: amount.data,
+          currencyCode: currencyFor(account, formData),
+          expectedDate: day,
+          categoryId,
+          notes: '',
+        });
+      }
+    } catch (error) {
+      if (error instanceof TransactionError) {
+        results.push({ index: i, ok: false, message: error.message });
+      } else {
+        log.error('draft create failed', { target });
+        results.push({
+          index: i,
+          ok: false,
+          message: 'We could not create that record.',
+        });
+      }
+      continue;
+    }
+
+    const { error } = await admin.rpc('confirm_extraction_draft', {
+      p_user_id: user.id,
+      p_extraction_id: extractionId,
+      p_draft_index: i,
+      p_entity_type: target,
+      p_entity_id: entityId,
+    });
+    if (error) {
+      results.push({
+        index: i,
+        ok: false,
+        message: error.message.includes('DRAFT_ALREADY_SAVED')
+          ? 'Already saved earlier.'
+          : 'The record was created but could not be linked to the document. Check for a duplicate before retrying.',
+      });
+    } else {
+      results.push({ index: i, ok: true, message: 'Saved' });
+    }
+  }
+
+  revalidatePath(`/documents/${documentId}/review`);
+  revalidatePath('/documents');
+  for (const route of [
+    '/transactions',
+    '/accounts',
+    '/dashboard',
+    '/analytics',
+    '/bills',
+    '/receivables',
+    '/expected-income',
+    '/forecast',
+  ])
+    revalidatePath(route);
+
+  const ok = results.filter((r) => r.ok).length;
+  const failed = results.length - ok;
+  if (ok === 0)
+    return { error: 'Nothing was saved. See the notes on each record.', results };
+  return {
+    success:
+      failed === 0
+        ? `Saved ${ok} record${ok === 1 ? '' : 's'}.`
+        : `Saved ${ok}. ${failed} need${failed === 1 ? 's' : ''} attention.`,
+    results,
+  };
+}
+
+/** Non-ledger records take the shared account's currency, else the user's default. */
+function currencyFor(
+  account: { currency_code: string } | null,
+  formData: FormData,
+): string {
+  return account?.currency_code ?? (String(formData.get('currency') ?? '') || 'PHP');
 }

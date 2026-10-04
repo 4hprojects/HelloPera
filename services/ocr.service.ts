@@ -8,6 +8,7 @@ import { ProviderError, type ExtractionProvider } from '@/lib/ocr/provider';
 import { assertWithinLimit, recordUsage } from '@/services/usage.service';
 import { enforceRateLimit } from '@/services/rate-limit.service';
 import { findCandidates, type ExistingRecord } from '@/lib/ocr/duplicate';
+import { draftsFromFields } from '@/lib/ocr/schema';
 import { log } from '@/lib/log';
 import { isFlagEnabled } from '@/services/plan.service';
 
@@ -237,21 +238,13 @@ export async function runExtraction(params: {
 }
 
 /**
- * Look for records this extraction might duplicate.
+ * Recent confirmed transactions, loaded once so a whole page of drafts can be
+ * compared against the same list.
  *
- * Compares against recent transactions only — a receipt is almost never for
- * something recorded months ago, and a wider window produces noise the user
- * learns to dismiss.
+ * Only the last 45 days — a receipt is almost never for something recorded
+ * months ago, and a wider window produces noise the user learns to dismiss.
  */
-export async function findDuplicateCandidates(params: {
-  userId: string;
-  amount: string | null;
-  currency: string | null;
-  date: string | null;
-  merchant: string | null;
-  reference: string | null;
-  documentHash: string | null;
-}) {
+export async function loadRecentForDuplicates(userId: string): Promise<ExistingRecord[]> {
   const admin = createAdminClient();
 
   const since = new Date();
@@ -260,7 +253,7 @@ export async function findDuplicateCandidates(params: {
   const { data } = await admin
     .from('transactions_exact')
     .select('id, amount, currency_code, transaction_date, merchant_name, description')
-    .eq('user_id', params.userId)
+    .eq('user_id', userId)
     .eq('status', 'confirmed')
     .gte('transaction_date', since.toISOString().slice(0, 10))
     .returns<
@@ -274,7 +267,7 @@ export async function findDuplicateCandidates(params: {
       }>
     >();
 
-  const existing: ExistingRecord[] = (data ?? []).map((t) => ({
+  return (data ?? []).map((t) => ({
     id: t.id,
     amount: t.amount,
     currency: t.currency_code,
@@ -283,6 +276,55 @@ export async function findDuplicateCandidates(params: {
     reference: null,
     documentHash: null,
   }));
+}
 
-  return findCandidates(params, existing);
+export async function findDuplicateCandidates(params: {
+  userId: string;
+  amount: string | null;
+  currency: string | null;
+  date: string | null;
+  merchant: string | null;
+  reference: string | null;
+  documentHash: string | null;
+}) {
+  return findCandidates(params, await loadRecentForDuplicates(params.userId));
+}
+
+export type ExtractionSummary = {
+  documentId: string;
+  status: string;
+  /** Records proposed by the reader. */
+  drafts: number;
+  /** Records the person has already saved from them. */
+  saved: number;
+};
+
+/** The newest extraction per document, for the documents list. */
+export async function listExtractionSummaries(
+  documentIds: readonly string[],
+): Promise<Map<string, ExtractionSummary>> {
+  const out = new Map<string, ExtractionSummary>();
+  if (documentIds.length === 0) return out;
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from('extraction_results')
+    .select('document_id, status, structured_data, corrected_data, created_at')
+    .in('document_id', [...documentIds])
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(`Could not load extractions: ${error.code}`);
+
+  for (const row of data ?? []) {
+    // Newest first: keep only the first row seen per document.
+    if (out.has(row.document_id)) continue;
+    const drafts = draftsFromFields(
+      (row.structured_data ?? {}) as Record<string, unknown>,
+    ).length;
+    const saved = Object.keys(
+      ((row.corrected_data as { saved?: Record<string, unknown> } | null)?.saved ??
+        {}) as Record<string, unknown>,
+    ).length;
+    out.set(row.document_id, { documentId: row.document_id, status: row.status, drafts, saved });
+  }
+  return out;
 }
