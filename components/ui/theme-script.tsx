@@ -10,7 +10,7 @@ export function ThemeScript() {
 (function () {
   try {
     var t = localStorage.getItem('hp-theme');
-    if (t === 'light' || t === 'dark') {
+    if (t === 'dark') {
       document.documentElement.setAttribute('data-theme', t);
     }
   } catch (e) {}

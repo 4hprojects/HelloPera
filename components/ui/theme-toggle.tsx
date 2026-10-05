@@ -2,13 +2,13 @@
 
 import { useCallback, useSyncExternalStore } from 'react';
 
-type Theme = 'light' | 'dark' | 'system';
+type Theme = 'dark' | 'system';
 
 const STORAGE_KEY = 'hp-theme';
 const EVENT = 'hp-theme-change';
 
 function isTheme(value: string | null): value is Theme {
-  return value === 'light' || value === 'dark' || value === 'system';
+  return value === 'dark' || value === 'system';
 }
 
 /**
@@ -40,15 +40,15 @@ function getServerSnapshot(): Theme {
 }
 
 /**
- * Three-state theme control — Phase 00 §11.
+ * Two-state theme control (Dark / System) — Phase 00 §11.
  *
  * `useSyncExternalStore` rather than an effect: localStorage is an external
  * store, and this is the pattern React provides for reconciling one with SSR
  * without a setState-in-effect cascade.
  *
  * "system" removes data-theme entirely so the prefers-color-scheme block in
- * globals.css takes over. An explicit choice stamps the attribute, which wins
- * in both directions.
+ * globals.css takes over. "dark" stamps the attribute, which wins over a
+ * light system preference.
  */
 export function ThemeToggle() {
   const theme = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
@@ -67,7 +67,6 @@ export function ThemeToggle() {
   }, []);
 
   const options: Array<{ value: Theme; label: string }> = [
-    { value: 'light', label: 'Light' },
     { value: 'dark', label: 'Dark' },
     { value: 'system', label: 'System' },
   ];
