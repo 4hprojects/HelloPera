@@ -58,14 +58,14 @@ beforeEach(() => {
   m.upload.mockResolvedValue(undefined);
   m.remove.mockResolvedValue(undefined);
 });
-it.each([100, 2 * 1024 * 1024, 8 * 1024 * 1024])(
+it.each([100, 2 * 1024 * 1024, 20 * 1024 * 1024])(
   'accepts a valid PDF of %i bytes',
   async (size) => {
     await expect(upload(size)).resolves.toMatchObject({ id: 'doc' });
   },
 );
 it('rejects oversized files before storage writes', async () => {
-  await expect(upload(8 * 1024 * 1024 + 1)).rejects.toThrow();
+  await expect(upload(20 * 1024 * 1024 + 1)).rejects.toThrow();
   expect(m.upload).not.toHaveBeenCalled();
 });
 it('does not report success if the ready database update fails', async () => {

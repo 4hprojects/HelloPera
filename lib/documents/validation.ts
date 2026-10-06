@@ -6,17 +6,31 @@
  * every check here reads the actual bytes.
  */
 
-export const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
-export const MAX_PDF_BYTES = 8 * 1024 * 1024;
+export const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
+export const MAX_PDF_BYTES = 20 * 1024 * 1024;
+
+/** The larger of the two, for checks made before the file type is known. */
+export const MAX_UPLOAD_BYTES = Math.max(MAX_IMAGE_BYTES, MAX_PDF_BYTES);
 
 /**
- * 8 MB, not the 10 MB the spec originally proposed.
+ * Above HelloDeploy's 10 MB proxy limit on purpose.
  *
- * HelloDeploy's nginx sets `client_max_body_size 10m` on every deployed app,
- * and multipart encoding adds overhead on top of the file itself. A 10 MB file
- * would be rejected by the proxy before the application ever saw it — as a
- * bare 413 with no useful message. See PLATFORM-HELLODEPLOY.md note B.
+ * nginx sets `client_max_body_size 10m` on every deployed app, so files never
+ * pass through HelloPera's own requests: the browser uploads straight to
+ * Supabase Storage with a signed upload URL, and the server then reads the
+ * stored bytes back and checks them here (PLATFORM-HELLODEPLOY.md note B).
+ *
+ * Images are this large only briefly. After the first successful read — or
+ * after seven days unread — the original is replaced with the OCR-grade JPEG
+ * (`normaliseForOcr`), which is all the reader ever uses.
+ *
+ * PDFs stay as uploaded: the container cannot render them. 20 MB keeps a PDF
+ * under the provider's 32 MB request limit after base64 encoding.
  */
+export function maxBytesFor(isPdf: boolean): number {
+  return isPdf ? MAX_PDF_BYTES : MAX_IMAGE_BYTES;
+}
+
 export const MAX_IMAGE_DIMENSION = 12_000;
 
 export type DetectedType =
@@ -98,7 +112,7 @@ export function validateUpload(params: {
   }
 
   const isPdf = detected === 'application/pdf';
-  const limit = isPdf ? MAX_PDF_BYTES : MAX_IMAGE_BYTES;
+  const limit = maxBytesFor(isPdf);
   if (size > limit) {
     const mb = Math.round(limit / 1024 / 1024);
     return {

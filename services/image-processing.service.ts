@@ -18,6 +18,14 @@ export const DISPLAY_WEBP_QUALITY = 85;
 export const THUMB_MAX_DIMENSION = 360;
 export const THUMB_WEBP_QUALITY = 75;
 
+/**
+ * The reader's own ceiling. Claude reads images at up to 2576px on the long
+ * edge and rejects images over about 5 MB, so a larger source buys nothing
+ * and a 25 MB phone photo would fail outright.
+ */
+export const OCR_MAX_DIMENSION = 2576;
+export const OCR_JPEG_QUALITY = 90;
+
 export type ProcessedImage = {
   display: Buffer;
   thumbnail: Buffer;
@@ -94,6 +102,32 @@ export async function processImage(bytes: Uint8Array): Promise<ProcessedImage> {
         ? 'That image format is not supported.'
         : 'We could not process that image.',
     );
+  }
+}
+
+/**
+ * The image the reader is sent, and the copy kept in place of the original.
+ *
+ * Because this is exactly what the provider sees, storing it instead of the
+ * upload loses nothing for a later re-read: running it again on its own
+ * output changes nothing (`withoutEnlargement`, already upright). JPEG
+ * rather than WebP because the reader is the consumer, and JPEG at q90 keeps
+ * small print legible where the display WebP at q85 does not (§62).
+ *
+ * Metadata is dropped, as in `processImage`, so GPS coordinates go too.
+ */
+export async function normaliseForOcr(bytes: Uint8Array): Promise<Buffer> {
+  try {
+    return await sharp(bytes)
+      .rotate()
+      .resize(OCR_MAX_DIMENSION, OCR_MAX_DIMENSION, {
+        fit: 'inside',
+        withoutEnlargement: true,
+      })
+      .jpeg({ quality: OCR_JPEG_QUALITY, mozjpeg: true })
+      .toBuffer();
+  } catch {
+    throw new ImageProcessingError('We could not prepare that image for reading.');
   }
 }
 

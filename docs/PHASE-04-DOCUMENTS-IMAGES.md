@@ -395,9 +395,17 @@ overhead is counted.
 Initial values:
 
 ```text
-Images:  8 MB
-PDFs:    8 MB
+Images:  25 MB
+PDFs:    20 MB
 ```
+
+Raised from 8 MB on 2026-10-06. Files now go from the browser straight to
+Storage with a signed upload URL (`incoming/<user_id>/<uuid>`), so the 10 MB
+proxy cap no longer applies; the server reads the stored bytes back and
+validates them before moving them into place. Large images are kept only
+briefly: after the first successful read, or after seven days unread, the
+original is replaced with the OCR-grade JPEG (2576px, q90) and
+`retention_status` becomes `optimized_only`.
 
 Enforce them **client-side before upload** as well as server-side, so an
 oversized file produces a real message rather than an opaque nginx 413 that

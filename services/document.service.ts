@@ -12,9 +12,18 @@ import {
   estimatePdfPageCount,
   hashContent,
   ImageProcessingError,
+  normaliseForOcr,
   processImage,
 } from '@/services/image-processing.service';
-import { removeDocumentObjects, uploadObject } from '@/services/storage.service';
+import {
+  createStagedUpload,
+  downloadObject,
+  isOwnStagedPath,
+  listStaleStagedObjects,
+  moveObject,
+  removeDocumentObjects,
+  uploadObject,
+} from '@/services/storage.service';
 import { log } from '@/lib/log';
 import { withServiceTiming } from '@/lib/performance/service-timing';
 
@@ -85,8 +94,10 @@ export async function uploadDocument(params: {
   filename: string | null;
   declaredMimeType: string | null;
   documentType: string;
+  /** Already in Storage from a direct upload: moved into place, not re-sent. */
+  stagedPath?: string;
 }): Promise<{ id: string; duplicateOf: string | null }> {
-  const { userId, bytes, filename, declaredMimeType, documentType } = params;
+  const { userId, bytes, filename, declaredMimeType, documentType, stagedPath } = params;
 
   const validation = validateUpload({
     bytes,
@@ -142,7 +153,8 @@ export async function uploadDocument(params: {
 
   try {
     // The full-quality source is retained for Phase 05 OCR and its retries.
-    await uploadObject({ path: originalPath, body: bytes, contentType: validation.type });
+    if (stagedPath) await moveObject(stagedPath, originalPath);
+    else await uploadObject({ path: originalPath, body: bytes, contentType: validation.type });
     uploaded.push(originalPath);
 
     if (validation.isPdf) {
@@ -221,6 +233,189 @@ export async function uploadDocument(params: {
     log.error('document processing failed', { document_id: documentId });
     throw new UploadError(message);
   }
+}
+
+/** Step one of a direct upload: where the browser should send the file. */
+export async function prepareUpload(
+  userId: string,
+): Promise<{ path: string; token: string }> {
+  try {
+    return await createStagedUpload(userId);
+  } catch {
+    throw new UploadError('We could not start the upload. Please try again.');
+  }
+}
+
+/**
+ * Step two: check what the browser actually stored, then ingest it.
+ *
+ * Nothing about the staged file is trusted — not its size, not its type. It
+ * is read back and goes through the same `validateUpload` as any other bytes.
+ * Whatever happens, the staged object does not outlive this call: it is
+ * either moved into place or removed.
+ */
+export async function finalizeUpload(params: {
+  userId: string;
+  stagedPath: string;
+  filename: string | null;
+  declaredMimeType: string | null;
+  documentType: string;
+}): Promise<{ id: string; duplicateOf: string | null }> {
+  // The token only allowed writing to a path we generated, but the path
+  // itself comes back from the browser — so it must be one of this user's.
+  if (!isOwnStagedPath(params.userId, params.stagedPath)) {
+    throw new UploadError('That upload is unavailable. Please try again.');
+  }
+
+  let bytes: Uint8Array;
+  try {
+    bytes = await downloadObject(params.stagedPath);
+  } catch {
+    throw new UploadError('We could not find the uploaded file. Please try again.');
+  }
+
+  try {
+    return await uploadDocument({ ...params, bytes });
+  } catch (error) {
+    // A no-op if the move already happened; otherwise it drops the rejected file.
+    await removeDocumentObjects([params.stagedPath]);
+    throw error;
+  }
+}
+
+export type ShrinkOutcome = 'shrunk' | 'not_worth_it' | 'failed';
+
+/** Below this, a JPEG copy is not worth losing a crisp PNG screenshot for. */
+const SHRINK_MIN_SAVING = 0.25;
+
+/**
+ * Replace a document's original with its OCR-grade JPEG.
+ *
+ * Order matters, as in `uploadDocument`: the new object is written, then the
+ * row points at it, then the old object goes. A failure at any step leaves
+ * the row pointing at a file that exists.
+ *
+ * The update is conditional on `original_retained` so two shrinks racing
+ * (a read and the sweep) can't both win. `original_size_bytes` keeps the
+ * uploaded size: the "space saved" figure on the documents page is measured
+ * against it.
+ *
+ * Never throws. Shrinking saves storage; it must not fail a read.
+ */
+export async function shrinkOriginal(params: {
+  documentId: string;
+  originalPath: string;
+  originalByteLength: number;
+  jpeg: Uint8Array;
+}): Promise<ShrinkOutcome> {
+  const { documentId, originalPath, originalByteLength, jpeg } = params;
+  if (jpeg.byteLength > originalByteLength * (1 - SHRINK_MIN_SAVING)) return 'not_worth_it';
+
+  const newPath = `${originalPath.slice(0, originalPath.lastIndexOf('/'))}/ocr.jpg`;
+  if (newPath === originalPath) return 'not_worth_it';
+
+  try {
+    await uploadObject({ path: newPath, body: jpeg, contentType: 'image/jpeg' });
+
+    const admin = createAdminClient();
+    const { data, error } = await admin
+      .from('documents')
+      .update({
+        original_path: newPath,
+        original_mime_type: 'image/jpeg',
+        retention_status: 'optimized_only',
+      })
+      .eq('id', documentId)
+      .eq('retention_status', 'original_retained')
+      .select('id');
+
+    if (error || !data?.length) {
+      await removeDocumentObjects([newPath]);
+      return 'failed';
+    }
+
+    await removeDocumentObjects([originalPath]);
+    log.info('document original shrunk', {
+      document_id: documentId,
+      before_bytes: originalByteLength,
+      after_bytes: jpeg.byteLength,
+    });
+    return 'shrunk';
+  } catch (error) {
+    log.warn('document shrink failed', {
+      document_id: documentId,
+      m: error instanceof Error ? error.message : 'unknown',
+    });
+    return 'failed';
+  }
+}
+
+const UNREAD_SHRINK_AFTER_DAYS = 7;
+const STAGED_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
+const SWEEP_BATCH = 20;
+
+/**
+ * Scheduled storage housekeeping, run from `/api/scheduler`.
+ *
+ *   - Images still kept at full size a week after upload — never read, or
+ *     only failed reads — are shrunk the same way a successful read does.
+ *   - Direct uploads the browser started but never finalised are removed.
+ *
+ * In Node rather than pg_cron because shrinking needs Sharp. Bounded per run
+ * so one call can't hold the scheduler request open; the next run continues.
+ * HEIC is skipped: the bundled libvips cannot decode it. PDFs are skipped:
+ * the container cannot render them.
+ */
+export async function sweepDocumentStorage(): Promise<{
+  shrunk: number;
+  staleUploadsRemoved: number;
+}> {
+  const admin = createAdminClient();
+  const cutoff = new Date(Date.now() - UNREAD_SHRINK_AFTER_DAYS * 86_400_000);
+
+  const { data: rows, error } = await admin
+    .from('documents')
+    .select('id, original_path')
+    .eq('retention_status', 'original_retained')
+    .eq('processing_status', 'ready')
+    .in('original_mime_type', ['image/jpeg', 'image/png', 'image/webp'])
+    .not('original_path', 'is', null)
+    .lt('created_at', cutoff.toISOString())
+    .order('created_at', { ascending: true })
+    .limit(SWEEP_BATCH)
+    .returns<Array<{ id: string; original_path: string }>>();
+  if (error) throw new Error(`Could not load documents to shrink: ${error.code}`);
+
+  let shrunk = 0;
+  for (const row of rows ?? []) {
+    try {
+      const bytes = await downloadObject(row.original_path);
+      const jpeg = await normaliseForOcr(bytes);
+      const outcome = await shrinkOriginal({
+        documentId: row.id,
+        originalPath: row.original_path,
+        originalByteLength: bytes.byteLength,
+        jpeg,
+      });
+      if (outcome === 'shrunk') shrunk += 1;
+      // Already small: mark it so the sweep stops picking it up. The stored
+      // file is unchanged, and it is no larger than the reader's copy.
+      else if (outcome === 'not_worth_it')
+        await admin
+          .from('documents')
+          .update({ retention_status: 'optimized_only' })
+          .eq('id', row.id)
+          .eq('retention_status', 'original_retained')
+          .eq('original_path', row.original_path);
+    } catch {
+      log.warn('document sweep: could not shrink', { document_id: row.id });
+    }
+  }
+
+  const stale = await listStaleStagedObjects(STAGED_STALE_AFTER_MS);
+  await removeDocumentObjects(stale);
+
+  return { shrunk, staleUploadsRemoved: stale.length };
 }
 
 export async function archiveDocument(userId: string, id: string, archived: boolean) {

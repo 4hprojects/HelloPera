@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { deliverPendingPushes } from '@/services/push-delivery.service';
+import { sweepDocumentStorage } from '@/services/document.service';
 import { log } from '@/lib/log';
 import { requestLogFields } from '@/lib/log/request-id';
 import { env } from '@/lib/env';
@@ -78,15 +79,34 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized.' }, { status: 401 });
   }
 
+  let pushes: Awaited<ReturnType<typeof deliverPendingPushes>> | null = null;
   try {
-    const result = await deliverPendingPushes();
-    log.info('scheduler: push delivery complete', { ...requestFields, ...result });
-    return NextResponse.json(result);
+    pushes = await deliverPendingPushes();
+    log.info('scheduler: push delivery complete', { ...requestFields, ...pushes });
   } catch (error) {
     log.error('scheduler: push delivery failed', {
       ...requestFields,
       m: error instanceof Error ? error.message : 'unknown',
     });
-    return NextResponse.json({ error: 'Delivery failed.' }, { status: 500 });
   }
+
+  // Storage housekeeping rides on the same schedule, after pushes because it
+  // is slower and nothing waits on it. Its own try, so neither job's failure
+  // stops the other.
+  let documents: Awaited<ReturnType<typeof sweepDocumentStorage>> | { error: string };
+  try {
+    documents = await sweepDocumentStorage();
+    log.info('scheduler: document sweep complete', { ...requestFields, ...documents });
+  } catch (error) {
+    documents = { error: 'Document sweep failed.' };
+    log.error('scheduler: document sweep failed', {
+      ...requestFields,
+      m: error instanceof Error ? error.message : 'unknown',
+    });
+  }
+
+  if (!pushes) {
+    return NextResponse.json({ error: 'Delivery failed.', documents }, { status: 500 });
+  }
+  return NextResponse.json({ ...pushes, documents });
 }

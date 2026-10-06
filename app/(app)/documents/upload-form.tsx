@@ -1,14 +1,40 @@
 'use client';
 
-import { useActionState, useEffect, useRef, useState } from 'react';
-import { uploadDocumentAction, type UploadState } from '@/app/actions/documents';
+import { useEffect, useRef, useState } from 'react';
+import {
+  finalizeUploadAction,
+  prepareUploadAction,
+  type UploadState,
+} from '@/app/actions/documents';
 import { FormAlert } from '@/components/auth/form-alert';
 import { Button } from '@/components/ui/button';
 import { SelectField } from '@/components/ui/field';
 import { Label } from '@/components/ui/label';
-import { MAX_IMAGE_BYTES } from '@/lib/documents/validation';
+import { BUCKET } from '@/lib/documents/bucket';
+import { maxBytesFor } from '@/lib/documents/validation';
+import { createClient } from '@/lib/supabase/client';
 
-const initial: UploadState = {};
+const MIME_BY_EXTENSION: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  heic: 'image/heic',
+  heif: 'image/heif',
+  pdf: 'application/pdf',
+};
+
+/**
+ * Some browsers send an empty type for HEIC, and the bucket refuses anything
+ * outside its allowed list. The server ignores this and reads the bytes.
+ */
+function contentTypeOf(file: File): string {
+  if (file.type) return file.type;
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+  return MIME_BY_EXTENSION[ext] ?? 'application/octet-stream';
+}
+
+type Phase = 'idle' | 'uploading' | 'processing';
 
 const TYPES = [
   { value: 'receipt', label: 'Receipt' },
@@ -24,25 +50,26 @@ const TYPES = [
 ];
 
 export function UploadForm({ initialType = 'receipt' }: { initialType?: string }) {
-  const [state, action, pending] = useActionState(uploadDocumentAction, initial);
+  const [state, setState] = useState<UploadState>({});
+  const [phase, setPhase] = useState<Phase>('idle');
   const [clientError, setClientError] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
+  const pending = phase !== 'idle';
 
   useEffect(() => {
     if (state.documentId) formRef.current?.reset();
   }, [state.documentId]);
 
-  /**
-   * Check the size before sending. HelloDeploy's nginx rejects anything over
-   * 10 MB with a bare 413 that never reaches the app, so without this the user
-   * sees a generic network failure with no explanation.
-   */
+  /** Check the size before sending, so an oversized file fails with a reason. */
   function onFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return setClientError(null);
-    if (file.size > MAX_IMAGE_BYTES) {
+    const isPdf = contentTypeOf(file) === 'application/pdf';
+    const limit = maxBytesFor(isPdf);
+    if (file.size > limit) {
       setClientError(
-        `That file is ${(file.size / 1024 / 1024).toFixed(1)} MB. The limit is 8 MB.`,
+        `That ${isPdf ? 'PDF' : 'image'} is ${(file.size / 1024 / 1024).toFixed(1)} MB. ` +
+          `The limit is ${limit / 1024 / 1024} MB.`,
       );
       event.target.value = '';
     } else {
@@ -50,14 +77,51 @@ export function UploadForm({ initialType = 'receipt' }: { initialType?: string }
     }
   }
 
+  /**
+   * Three steps, because the file can be larger than HelloDeploy's 10 MB
+   * request limit: ask for a one-time upload URL, send the file straight to
+   * Storage, then have the server check and process what arrived.
+   */
+  async function upload(formData: FormData) {
+    const file = formData.get('file');
+    if (!(file instanceof File) || file.size === 0) {
+      setState({ error: 'Choose a file to upload.' });
+      return;
+    }
+
+    setClientError(null);
+    setState({});
+    setPhase('uploading');
+    try {
+      const prepared = await prepareUploadAction(file.size);
+      if ('error' in prepared) return setState({ error: prepared.error });
+
+      const contentType = contentTypeOf(file);
+      const { error } = await createClient()
+        .storage.from(BUCKET)
+        .uploadToSignedUrl(prepared.path, prepared.token, file, { contentType });
+      if (error) {
+        return setState({ error: 'The upload did not finish. Please try again.' });
+      }
+
+      setPhase('processing');
+      setState(
+        await finalizeUploadAction({
+          stagedPath: prepared.path,
+          filename: file.name,
+          declaredMimeType: contentType,
+          documentType: String(formData.get('documentType') ?? 'other'),
+        }),
+      );
+    } catch {
+      setState({ error: 'Upload failed. Please check your connection and try again.' });
+    } finally {
+      setPhase('idle');
+    }
+  }
+
   return (
-    <form
-      ref={formRef}
-      action={(fd) => {
-        setClientError(null);
-        action(fd);
-      }}
-    >
+    <form ref={formRef} action={upload}>
       {clientError ? <FormAlert tone="error">{clientError}</FormAlert> : null}
       {state.error ? <FormAlert tone="error">{state.error}</FormAlert> : null}
       {state.success ? (
@@ -81,7 +145,7 @@ export function UploadForm({ initialType = 'receipt' }: { initialType?: string }
           className="w-full rounded-[var(--radius-hp)] border border-border-strong bg-surface px-3 py-2.5 text-sm text-text file:mr-3 file:rounded file:border-0 file:bg-surface-muted file:px-3 file:py-1.5 file:text-sm file:text-text"
         />
         <p className="hp-small mt-1 text-text-muted">
-          JPEG, PNG, WebP, HEIC or PDF. Up to 8 MB.
+          JPEG, PNG, WebP, HEIC or PDF. Images up to 25 MB, PDFs up to 20 MB.
         </p>
       </div>
 
@@ -99,7 +163,11 @@ export function UploadForm({ initialType = 'receipt' }: { initialType?: string }
       </SelectField>
 
       <Button type="submit" disabled={pending || Boolean(clientError)}>
-        {pending ? 'Uploading…' : 'Upload'}
+        {phase === 'uploading'
+          ? 'Uploading…'
+          : phase === 'processing'
+            ? 'Processing…'
+            : 'Upload'}
       </Button>
     </form>
   );

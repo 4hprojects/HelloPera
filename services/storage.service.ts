@@ -2,6 +2,7 @@ import 'server-only';
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { log } from '@/lib/log';
+import { BUCKET, STAGING_PREFIX } from '@/lib/documents/bucket';
 
 /**
  * Supabase Storage access — Phase 04 §37, §38.
@@ -13,7 +14,7 @@ import { log } from '@/lib/log';
  * leak.
  */
 
-export const BUCKET = 'hello-pera-documents';
+export { BUCKET };
 
 /**
  * Signed URLs expire quickly on purpose. They are bearer tokens: anyone
@@ -97,4 +98,69 @@ export async function removeDocumentObjects(paths: Array<string | null>): Promis
     // fail the user's request over them (§72).
     log.warn('orphan cleanup failed', { count: present.length });
   }
+}
+
+/**
+ * A one-time URL the browser can upload a single file to.
+ *
+ * Files go straight to Storage because HelloDeploy's proxy rejects request
+ * bodies over 10 MB. The path is generated here, and the token is good only
+ * for it, so the browser can't choose where its file lands. The bucket's
+ * `file_size_limit` is the hard ceiling on what it can send.
+ */
+export async function createStagedUpload(
+  userId: string,
+): Promise<{ path: string; token: string }> {
+  const path = `${STAGING_PREFIX}/${userId}/${crypto.randomUUID()}`;
+  const admin = createAdminClient();
+  const { data, error } = await admin.storage.from(BUCKET).createSignedUploadUrl(path);
+  if (error || !data) {
+    log.error('signed upload url failed', {});
+    throw new Error('Signed upload URL could not be created.');
+  }
+  return { path, token: data.token };
+}
+
+/** True when `path` is a staging path this user could have been given. */
+export function isOwnStagedPath(userId: string, path: string): boolean {
+  const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+  return new RegExp(`^${STAGING_PREFIX}/${userId}/${uuid}$`).test(path);
+}
+
+export async function downloadObject(path: string): Promise<Uint8Array> {
+  const admin = createAdminClient();
+  const { data, error } = await admin.storage.from(BUCKET).download(path);
+  if (error || !data) throw new Error('Storage download failed.');
+  return new Uint8Array(await data.arrayBuffer());
+}
+
+export async function moveObject(from: string, to: string): Promise<void> {
+  const admin = createAdminClient();
+  const { error } = await admin.storage.from(BUCKET).move(from, to);
+  if (error) throw new Error(`Storage move failed: ${error.message}`);
+}
+
+/**
+ * Staged files older than `olderThanMs`: uploads the browser started but never
+ * finalised. Storage lists one folder level at a time, so this walks
+ * `incoming/<userId>/` folder by folder, stopping at `limit` paths.
+ */
+export async function listStaleStagedObjects(
+  olderThanMs: number,
+  limit = 100,
+): Promise<string[]> {
+  const admin = createAdminClient();
+  const cutoff = Date.now() - olderThanMs;
+  const { data: users } = await admin.storage.from(BUCKET).list(STAGING_PREFIX, { limit });
+  const stale: string[] = [];
+  for (const user of users ?? []) {
+    const folder = `${STAGING_PREFIX}/${user.name}`;
+    const { data: files } = await admin.storage.from(BUCKET).list(folder, { limit });
+    for (const file of files ?? []) {
+      const created = file.created_at ? Date.parse(file.created_at) : NaN;
+      if (Number.isFinite(created) && created < cutoff) stale.push(`${folder}/${file.name}`);
+      if (stale.length >= limit) return stale;
+    }
+  }
+  return stale;
 }

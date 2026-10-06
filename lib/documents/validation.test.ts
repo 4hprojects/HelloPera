@@ -4,6 +4,8 @@ import {
   detectType,
   extensionFor,
   MAX_IMAGE_BYTES,
+  MAX_PDF_BYTES,
+  MAX_UPLOAD_BYTES,
   sanitiseFilename,
   validateDimensions,
   validateUpload,
@@ -101,16 +103,22 @@ describe('validateUpload — the extension is not evidence', () => {
 });
 
 describe('size limits reflect the platform, not a preference', () => {
-  it('is 8 MB, below nginx 10 MB cap with room for multipart overhead', () => {
-    expect(MAX_IMAGE_BYTES).toBe(8 * 1024 * 1024);
-    expect(MAX_IMAGE_BYTES).toBeLessThan(10 * 1024 * 1024);
+  it('is above the nginx 10 MB cap, so files must bypass the proxy', () => {
+    // Direct-to-Storage upload is what makes this possible; see validation.ts.
+    expect(MAX_IMAGE_BYTES).toBe(25 * 1024 * 1024);
+    expect(MAX_PDF_BYTES).toBe(20 * 1024 * 1024);
+    expect(MAX_UPLOAD_BYTES).toBe(MAX_IMAGE_BYTES);
+  });
+
+  it('keeps a PDF under the provider 32 MB request limit after base64', () => {
+    expect(Math.ceil(MAX_PDF_BYTES / 3) * 4).toBeLessThan(32 * 1024 * 1024);
   });
 
   it('accepts a file at the limit and rejects one past it', () => {
     expect(validateUpload({ bytes: JPEG, size: MAX_IMAGE_BYTES }).ok).toBe(true);
     const over = validateUpload({ bytes: JPEG, size: MAX_IMAGE_BYTES + 1 });
     expect(over.ok).toBe(false);
-    if (!over.ok) expect(over.message).toContain('8 MB');
+    if (!over.ok) expect(over.message).toContain('25 MB');
   });
 });
 

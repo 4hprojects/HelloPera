@@ -4,9 +4,11 @@ import { revalidatePath } from 'next/cache';
 import { requireUser } from '@/lib/auth/guards';
 import { log } from '@/lib/log';
 import type { ActionState } from '@/app/actions/auth';
+import { MAX_UPLOAD_BYTES } from '@/lib/documents/validation';
 import {
   archiveDocument,
-  uploadDocument,
+  finalizeUpload,
+  prepareUpload,
   UploadError,
 } from '@/services/document.service';
 
@@ -25,34 +27,51 @@ const DOCUMENT_TYPES = [
 
 export type UploadState = ActionState & { documentId?: string; duplicateOf?: string };
 
-export async function uploadDocumentAction(
-  _prev: UploadState,
-  formData: FormData,
-): Promise<UploadState> {
+/**
+ * Step one of an upload: a one-time URL the browser sends the file to.
+ *
+ * Files go straight to Storage because HelloDeploy's proxy rejects request
+ * bodies over 10 MB, and uploads may be up to 25 MB. The size is checked here
+ * only to fail early with a clear message; the real check runs on the stored
+ * bytes in `finalizeUploadAction`.
+ */
+export async function prepareUploadAction(
+  size: number,
+): Promise<{ path: string; token: string } | { error: string }> {
+  const { user } = await requireUser();
+  if (!Number.isFinite(size) || size <= 0) return { error: 'Choose a file to upload.' };
+  if (size > MAX_UPLOAD_BYTES) {
+    return {
+      error: `The file limit is ${MAX_UPLOAD_BYTES / 1024 / 1024} MB. Choose a smaller file.`,
+    };
+  }
+  try {
+    return await prepareUpload(user.id);
+  } catch (error) {
+    if (error instanceof UploadError) return { error: error.message };
+    return { error: 'Upload failed. Please try again.' };
+  }
+}
+
+/** Step two: check and ingest what the browser stored at `stagedPath`. */
+export async function finalizeUploadAction(input: {
+  stagedPath: string;
+  filename: string;
+  declaredMimeType: string;
+  documentType: string;
+}): Promise<UploadState> {
   const { user } = await requireUser();
 
-  const file = formData.get('file');
-  if (file instanceof File && file.size > 8 * 1024 * 1024)
-    return { error: 'The file limit is 8 MB. Choose a smaller file.' };
-  if (!(file instanceof File) || file.size === 0) {
-    return { error: 'Choose a file to upload.' };
-  }
-
-  const declaredType = String(formData.get('documentType') ?? 'other');
-  const documentType = (DOCUMENT_TYPES as readonly string[]).includes(declaredType)
-    ? declaredType
+  const documentType = (DOCUMENT_TYPES as readonly string[]).includes(input.documentType)
+    ? input.documentType
     : 'other';
 
   try {
-    // Read once into memory. The 8 MB cap makes this bounded, and the
-    // container filesystem is ephemeral so a temp file would buy nothing.
-    const bytes = new Uint8Array(await file.arrayBuffer());
-
-    const result = await uploadDocument({
+    const result = await finalizeUpload({
       userId: user.id,
-      bytes,
-      filename: file.name,
-      declaredMimeType: file.type || null,
+      stagedPath: String(input.stagedPath),
+      filename: String(input.filename ?? '') || null,
+      declaredMimeType: String(input.declaredMimeType ?? '') || null,
       documentType,
     });
 

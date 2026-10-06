@@ -11,6 +11,11 @@ import { findCandidates, type ExistingRecord } from '@/lib/ocr/duplicate';
 import { draftsFromFields } from '@/lib/ocr/schema';
 import { log } from '@/lib/log';
 import { isFlagEnabled } from '@/services/plan.service';
+import {
+  ImageProcessingError,
+  normaliseForOcr,
+} from '@/services/image-processing.service';
+import { shrinkOriginal } from '@/services/document.service';
 
 /**
  * OCR pipeline — Phase 05 §46.
@@ -149,6 +154,23 @@ export async function runExtraction(params: {
 
     const bytes = new Uint8Array(await file.arrayBuffer());
 
+    // Images are sent as the reader's own resolution, not as uploaded: the
+    // provider rejects anything over ~5 MB and reads at most 2576px anyway.
+    // PDFs go through untouched — the container has no renderer.
+    const isPdf = doc.original_mime_type === 'application/pdf';
+    let sent: { bytes: Uint8Array; mimeType: string };
+    try {
+      sent = isPdf
+        ? { bytes, mimeType: 'application/pdf' }
+        : { bytes: await normaliseForOcr(bytes), mimeType: 'image/jpeg' };
+    } catch (error) {
+      throw new OcrError(
+        error instanceof ImageProcessingError
+          ? error.message
+          : 'We could not open that document.',
+      );
+    }
+
     // §17 — counted here, once the provider call is committed to. Placed
     // AFTER the download so a storage failure (HelloPera's fault) does not
     // count, and BEFORE extract() so a provider error still does: it cost
@@ -161,8 +183,8 @@ export async function runExtraction(params: {
     await recordUsage(params.userId, 'ocr_jobs', params.timezone);
 
     const result = await activeProvider.extract({
-      bytes,
-      mimeType: doc.original_mime_type ?? 'application/octet-stream',
+      bytes: sent.bytes,
+      mimeType: sent.mimeType,
       defaultCurrency: params.defaultCurrency,
       timezone: params.timezone,
     });
@@ -206,6 +228,18 @@ export async function runExtraction(params: {
         duration_ms: result.durationMs,
       })
       .eq('id', job.id);
+
+    // The read succeeded, so the full-size upload has done its job. Keep the
+    // copy the reader was just given in its place; a retry sends the same
+    // bytes. Never fails the read — see shrinkOriginal.
+    if (!isPdf && doc.retention_status === 'original_retained') {
+      await shrinkOriginal({
+        documentId: doc.id,
+        originalPath: doc.original_path,
+        originalByteLength: bytes.byteLength,
+        jpeg: sent.bytes,
+      });
+    }
 
     // Structured logging only — never the extracted text or account numbers (§58).
     log.info('extraction completed', {
