@@ -157,10 +157,12 @@ export default function HomePage() {
           <div className="mt-8 grid gap-4 sm:grid-cols-3">
             {PILLARS.map((pillar) => (
               <Card key={pillar.title}>
-                <IconChip tone={pillar.tone} size={38}>
-                  <Icon name={pillar.icon} size={19} />
-                </IconChip>
-                <CardTitle className="mt-3">{pillar.title}</CardTitle>
+                <div className="flex items-center gap-3">
+                  <IconChip tone={pillar.tone} size={38}>
+                    <Icon name={pillar.icon} size={19} />
+                  </IconChip>
+                  <CardTitle>{pillar.title}</CardTitle>
+                </div>
                 <p className="hp-body mt-2 text-text-muted">{pillar.body}</p>
               </Card>
             ))}
