@@ -3,7 +3,9 @@ import { Amount } from '@/components/finance/amount';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/states';
-import { STATUS_LABELS, statusTone } from '@/lib/finance/obligation';
+import { STATUS_LABELS, statusTone, todayInTimezone } from '@/lib/finance/obligation';
+import { requireUser } from '@/lib/auth/guards';
+import { listRules } from '@/services/recurring-rule.service';
 import type { Obligation } from '@/services/obligation.service';
 import { buttonClass } from '@/components/ui/button';
 import { EditObligation } from '@/components/finance/edit-obligation';
@@ -38,6 +40,15 @@ export async function ObligationList({
           id: c.id,
           name: c.name,
         }));
+
+  // Rule cadence for repeating income, resolved once rather than per row.
+  const cadences = new Map<string, string>();
+  if (kind === 'expected_income') {
+    const { profile } = await requireUser();
+    for (const r of await listRules(todayInTimezone(profile.timezone))) {
+      cadences.set(r.id, r.cadence);
+    }
+  }
 
   if (obligations.length === 0) {
     return (
@@ -107,6 +118,10 @@ export async function ObligationList({
                         installmentCount: o.installment?.count ?? null,
                         installmentsPrior: o.installment?.prior ?? 0,
                         borrowedDate: o.borrowedDate,
+                        recurringRuleId: o.recurringRuleId,
+                        cadence: o.recurringRuleId
+                          ? (cadences.get(o.recurringRuleId) ?? null)
+                          : null,
                       }}
                       categories={categories}
                     />

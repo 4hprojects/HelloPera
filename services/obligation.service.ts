@@ -54,6 +54,8 @@ export type Obligation = {
   installment: { amount: Money; count: number; prior: number } | null;
   /** Whole installments covered by recorded payments. */
   paymentsMade: number;
+  /** Expected income only: the recurring rule that generated this record. */
+  recurringRuleId: string | null;
   createdAt: string;
 };
 
@@ -156,6 +158,7 @@ function toObligation(kind: ObligationKind, today: string, row: Row): Obligation
           installment.prior,
         )
       : 0,
+    recurringRuleId: (row.recurring_rule_id as string) ?? null,
     createdAt: String(row.created_at),
   };
 }
@@ -217,6 +220,81 @@ export async function updateObligation(
     p_borrowed_date: input.borrowedDate || null,
   });
   if (error) throw new ObligationEditError(obligationEditMessage(error.message));
+}
+
+/**
+ * "This and all later pay dates" — carry an edit forward to a repeating income.
+ *
+ * Updates the rule (so dates generated from now on use the new figures) and the
+ * later records that are still untouched. `status = 'open'` is the guard:
+ * anything partly or fully received, cancelled or archived is left alone, as is
+ * every earlier date. Dates are never shifted — a date change stays on the one
+ * record. `rebuildFutureOccurrences` cannot do this job because it only
+ * regenerates `expected_events`, never `expected_income`.
+ */
+export async function updateFutureExpectedIncome(
+  userId: string,
+  ruleId: string,
+  afterDate: string,
+  fields: {
+    name: string;
+    amount: string;
+    description: string;
+    categoryId: string | null;
+  },
+): Promise<void> {
+  const admin = createAdminClient();
+  const amount = toDecimalString(parseDecimal(fields.amount));
+
+  const rule = await admin
+    .from('recurring_rules')
+    .update({
+      name: fields.name,
+      source_name: fields.name,
+      amount,
+      description: fields.description || null,
+      category_id: fields.categoryId,
+    })
+    .eq('id', ruleId)
+    .eq('user_id', userId);
+  if (rule.error) throw new Error(`Could not update the rule: ${rule.error.code}`);
+
+  const rows = await admin
+    .from('expected_income')
+    .update({
+      source_name: fields.name,
+      amount,
+      description: fields.description || null,
+      category_id: fields.categoryId,
+    })
+    .eq('user_id', userId)
+    .eq('recurring_rule_id', ruleId)
+    .eq('status', 'open')
+    .eq('is_archived', false)
+    .gt('expected_date', afterDate);
+  if (rows.error) throw new Error(`Could not update later dates: ${rows.error.code}`);
+}
+
+/**
+ * Attach an existing one-off record to a freshly created rule, as that rule's
+ * occurrence on this date. Done before generation so the unique
+ * (recurring_rule_id, occurrence_date) index makes the generator skip the date
+ * instead of creating a duplicate beside it.
+ */
+export async function linkExpectedIncomeToRule(
+  userId: string,
+  id: string,
+  ruleId: string,
+  date: string,
+): Promise<void> {
+  const admin = createAdminClient();
+  const { error } = await admin
+    .from('expected_income')
+    .update({ recurring_rule_id: ruleId, occurrence_date: date })
+    .eq('id', id)
+    .eq('user_id', userId)
+    .is('recurring_rule_id', null);
+  if (error) throw new Error(`Could not link this record to its rule: ${error.code}`);
 }
 
 export async function createBill(

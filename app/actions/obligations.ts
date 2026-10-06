@@ -3,6 +3,8 @@
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { requireUser } from '@/lib/auth/guards';
+import { recordAuditEvent } from '@/lib/auth/audit';
+import { todayInTimezone } from '@/lib/finance/obligation';
 import { log } from '@/lib/log';
 import { assertWritesEnabled, WritesDisabledError } from '@/lib/ops/kill-switches';
 import type { ActionState } from '@/app/actions/auth';
@@ -15,6 +17,8 @@ import {
   updateExpectedIncomeSchema,
   updateReceivableSchema,
 } from '@/schemas/obligation.schema';
+import { createRecurringRuleSchema } from '@/schemas/recurring.schema';
+import { createRule, generateOccurrences } from '@/services/recurring-rule.service';
 import {
   recordObligationPayment,
   AllocationError,
@@ -22,8 +26,11 @@ import {
   createBill,
   createExpectedIncome,
   createReceivable,
+  getObligation,
+  linkExpectedIncomeToRule,
   listPaymentCandidates,
   ObligationEditError,
+  updateFutureExpectedIncome,
   updateObligation,
   type ObligationKind,
   type PaymentCandidate,
@@ -127,7 +134,7 @@ export async function createExpectedIncomeAction(
   _p: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const { user } = await requireUser();
+  const { user, profile } = await requireUser();
 
   // PHASE-14 §23 — the ledger freeze, enforced at the write.
   try {
@@ -136,6 +143,12 @@ export async function createExpectedIncomeAction(
     if (error instanceof WritesDisabledError) return { error: error.message };
     throw error;
   }
+
+  // A repeating income is a recurring rule; the generator then creates one
+  // expected-income record per pay date, each carrying this estimate.
+  if (formData.get('frequency'))
+    return createRecurringIncome(user.id, profile.timezone, formData);
+
   const parsed = createExpectedIncomeSchema.safeParse({
     sourceName: formData.get('sourceName'),
     description: formData.get('description') ?? '',
@@ -158,6 +171,63 @@ export async function createExpectedIncomeAction(
   revalidatePath('/expected-income');
   revalidatePath('/dashboard');
   revalidatePath('/analytics');
+  redirect('/expected-income?created=1');
+}
+
+async function createRecurringIncome(
+  userId: string,
+  timezone: string,
+  formData: FormData,
+): Promise<ActionState> {
+  const source = formData.get('sourceName');
+  const parsed = createRecurringRuleSchema.safeParse({
+    ruleType: 'expected_income',
+    name: source,
+    sourceName: source,
+    description: formData.get('description') ?? '',
+    amount: formData.get('amount'),
+    currencyCode: formData.get('currencyCode') || 'PHP',
+    frequency: formData.get('frequency'),
+    intervalCount: 1,
+    startDate: formData.get('expectedDate'),
+    endDate: formData.get('endDate') ?? '',
+    categoryId: formData.get('categoryId') || null,
+  });
+  if (!parsed.success) {
+    const errors = fieldErrorsFrom(parsed.error);
+    return {
+      fieldErrors: {
+        ...errors,
+        ...(errors.name ? { sourceName: errors.name } : {}),
+        ...(errors.startDate ? { expectedDate: errors.startDate } : {}),
+      },
+    };
+  }
+
+  try {
+    const id = await createRule(userId, parsed.data, todayInTimezone(timezone));
+    await recordAuditEvent({
+      eventType: 'recurring_rule_created',
+      actorUserId: userId,
+      entityType: 'recurring_rule',
+      entityId: id,
+      metadata: { rule_type: 'expected_income', frequency: parsed.data.frequency },
+    });
+    await generateOccurrences(userId);
+  } catch (error) {
+    log.error('recurring income create failed', {
+      m: error instanceof Error ? error.message : '?',
+    });
+    return { error: 'We could not create that. Please try again.' };
+  }
+  for (const path of [
+    '/expected-income',
+    '/recurring',
+    '/forecast',
+    '/dashboard',
+    '/analytics',
+  ])
+    revalidatePath(path);
   redirect('/expected-income?created=1');
 }
 
@@ -263,7 +333,7 @@ export async function updateObligationAction(
   _p: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  const { user } = await requireUser();
+  const { user, profile } = await requireUser();
   try {
     await assertWritesEnabled();
   } catch (error) {
@@ -328,8 +398,22 @@ export async function updateObligationAction(
     };
   }
 
+  // Validate any repeat change up front so a bad end date cannot leave the
+  // record edited but the rule uncreated.
+  const repeat =
+    kind === 'expected_income'
+      ? await planRepeatChange(
+          user.id,
+          todayInTimezone(profile.timezone),
+          formData,
+          input,
+        )
+      : null;
+  if (repeat && 'state' in repeat) return repeat.state;
+
   try {
     await updateObligation(user.id, kind, input);
+    await repeat?.run();
   } catch (error) {
     if (error instanceof ObligationEditError) return { error: error.message };
     log.error('obligation update failed', {
@@ -339,11 +423,93 @@ export async function updateObligationAction(
   }
 
   revalidatePath(ROUTES[kind]);
+  revalidatePath('/recurring');
   revalidatePath(`${ROUTES[kind]}/${input.id}`);
   revalidatePath('/forecast');
   revalidatePath('/dashboard');
   revalidatePath('/analytics');
   return { success: 'Changes saved.' };
+}
+
+type RepeatPlan = { state: ActionState } | { run: () => Promise<void> } | null;
+
+/**
+ * What the edit modal's repeat controls ask for, on top of the plain edit.
+ *
+ * A record that came from a rule is identified server-side, never from a form
+ * field, and "this and all later" carries the edit forward. A one-off record
+ * with a "Repeats" choice becomes the first occurrence of a new rule.
+ */
+async function planRepeatChange(
+  userId: string,
+  today: string,
+  formData: FormData,
+  input: {
+    id: string;
+    name: string;
+    amount: string;
+    date: string;
+    description?: string | null;
+    categoryId?: string | null;
+  },
+): Promise<RepeatPlan> {
+  const item = await getObligation('expected_income', input.id, today);
+  if (!item) return { state: { error: 'That item no longer exists.' } };
+
+  if (item.recurringRuleId) {
+    if (formData.get('scope') !== 'future') return null;
+    const ruleId = item.recurringRuleId;
+    return {
+      run: () =>
+        updateFutureExpectedIncome(userId, ruleId, item.date ?? today, {
+          name: input.name,
+          amount: input.amount,
+          description: input.description ?? '',
+          categoryId: input.categoryId ?? null,
+        }),
+    };
+  }
+
+  const frequency = formData.get('frequency');
+  if (!frequency) return null;
+  const parsed = createRecurringRuleSchema.safeParse({
+    ruleType: 'expected_income',
+    name: input.name,
+    sourceName: input.name,
+    description: input.description ?? '',
+    amount: input.amount,
+    currencyCode: item.currency,
+    frequency,
+    intervalCount: 1,
+    startDate: input.date,
+    endDate: formData.get('endDate') ?? '',
+    categoryId: input.categoryId ?? null,
+  });
+  if (!parsed.success) {
+    const errors = fieldErrorsFrom(parsed.error);
+    return {
+      state: {
+        fieldErrors: {
+          ...errors,
+          ...(errors.startDate ? { date: errors.startDate } : {}),
+        },
+      },
+    };
+  }
+  return {
+    run: async () => {
+      const ruleId = await createRule(userId, parsed.data, today);
+      await linkExpectedIncomeToRule(userId, input.id, ruleId, input.date);
+      await recordAuditEvent({
+        eventType: 'recurring_rule_created',
+        actorUserId: userId,
+        entityType: 'recurring_rule',
+        entityId: ruleId,
+        metadata: { rule_type: 'expected_income', frequency: parsed.data.frequency },
+      });
+      await generateOccurrences(userId);
+    },
+  };
 }
 
 /** The edit form uses generic `name` / `date` inputs for all three kinds. */

@@ -24,6 +24,15 @@ export const FREQUENCIES = [
 ] as const;
 export type Frequency = (typeof FREQUENCIES)[number];
 
+/** Wording for a "Repeats" choice on a form, where the interval is always 1. */
+export const FREQUENCY_OPTION_LABEL: Record<Frequency, string> = {
+  weekly: 'Every week',
+  biweekly: 'Every 2 weeks',
+  monthly: 'Every month',
+  quarterly: 'Every 3 months',
+  yearly: 'Every year',
+};
+
 export type RecurrenceRule = {
   frequency: Frequency;
   /** "every N" — §9. */

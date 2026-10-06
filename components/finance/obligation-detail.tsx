@@ -17,6 +17,7 @@ import { PaymentForm } from './payment-form';
 import { EditObligation } from './edit-obligation';
 import { listCategories } from '@/services/category.service';
 import { Amount } from './amount';
+import { getRule } from '@/services/recurring-rule.service';
 
 export async function ObligationDetail({
   kind,
@@ -40,6 +41,9 @@ export async function ObligationDetail({
           id: c.id,
           name: c.name,
         }));
+  const cadence = item.recurringRuleId
+    ? ((await getRule(item.recurringRuleId, today))?.cadence ?? null)
+    : null;
   const open = item.lifecycle !== 'cancelled' && item.remaining.minor > 0n;
   return (
     <div className="mx-auto max-w-xl space-y-4">
@@ -86,6 +90,8 @@ export async function ObligationDetail({
                 installmentCount: item.installment?.count ?? null,
                 installmentsPrior: item.installment?.prior ?? 0,
                 borrowedDate: item.borrowedDate,
+                recurringRuleId: item.recurringRuleId,
+                cadence,
               }}
               categories={categories}
             />

@@ -1,6 +1,7 @@
 'use client';
 
-import { useActionState } from 'react';
+import { useActionState, useState } from 'react';
+import Link from 'next/link';
 import { updateObligationAction } from '@/app/actions/obligations';
 import type { ActionState } from '@/app/actions/auth';
 import { FormAlert } from '@/components/auth/form-alert';
@@ -8,6 +9,7 @@ import { FormField } from '@/components/auth/form-field';
 import { Button } from '@/components/ui/button';
 import { SelectField, TextareaField } from '@/components/ui/field';
 import { EditModal, useCloseOnSuccess } from '@/components/ui/modal';
+import { FREQUENCIES, FREQUENCY_OPTION_LABEL } from '@/lib/recurring/schedule';
 
 export type EditableObligation = {
   id: string;
@@ -22,20 +24,26 @@ export type EditableObligation = {
   installmentCount: number | null;
   installmentsPrior: number;
   borrowedDate: string | null;
+  /** Expected income only: set when a recurring rule generated this record. */
+  recurringRuleId?: string | null;
+  /** "Monthly", from `describeRule`; shown beside the repeat controls. */
+  cadence?: string | null;
 };
 
 const initial: ActionState = {};
 
 const WORDING = {
-  bill: { name: 'Provider', date: 'Due date', title: 'Edit bill' },
+  bill: { name: 'Provider', amount: 'Amount', date: 'Due date', title: 'Edit bill' },
   receivable: {
     name: 'Who owes you',
+    amount: 'Amount',
     date: 'Due date (optional)',
     title: 'Edit receivable',
   },
   expected_income: {
     name: 'Source',
-    date: 'Expected date',
+    amount: 'Estimated amount',
+    date: 'Estimated date',
     title: 'Edit expected income',
   },
 } as const;
@@ -66,6 +74,7 @@ function Form({
   const [state, action, pending] = useActionState(updateObligationAction, initial);
   useCloseOnSuccess(state.success, close);
   const words = WORDING[item.kind];
+  const [frequency, setFrequency] = useState('');
 
   return (
     <form action={action} noValidate>
@@ -84,11 +93,15 @@ function Form({
       <FormField
         id={`amount-${item.id}`}
         name="amount"
-        label="Amount"
+        label={words.amount}
         inputMode="decimal"
         defaultValue={item.amount}
         required
-        hint="Cannot be less than what is already recorded against it."
+        hint={
+          item.kind === 'expected_income'
+            ? 'Pay came in different? Set the real amount here before you record it. Cannot be less than what is already recorded.'
+            : 'Cannot be less than what is already recorded against it.'
+        }
         error={state.fieldErrors?.amount}
       />
       {item.kind === 'receivable' ? (
@@ -137,6 +150,61 @@ function Form({
             defaultValue={item.installmentsPrior || ''}
             error={state.fieldErrors?.installmentsPrior}
           />
+        </>
+      ) : null}
+      {item.kind === 'expected_income' && item.recurringRuleId ? (
+        <fieldset className="mb-4">
+          <legend className="hp-small mb-1 font-medium text-text">
+            Repeats {item.cadence ? item.cadence.toLowerCase() : ''}
+          </legend>
+          <label className="flex min-h-11 items-center gap-2 text-sm">
+            <input type="radio" name="scope" value="this" defaultChecked />
+            Apply changes to this pay date only
+          </label>
+          <label className="flex min-h-11 items-center gap-2 text-sm">
+            <input type="radio" name="scope" value="future" />
+            Apply to this and all later pay dates
+          </label>
+          <p className="hp-small text-text-muted">
+            Dates stay as they are. To change how often it repeats or when it ends, edit
+            the{' '}
+            <Link
+              href={`/recurring/${item.recurringRuleId}`}
+              className="text-primary-text underline"
+            >
+              repeating rule
+            </Link>
+            .
+          </p>
+        </fieldset>
+      ) : null}
+      {item.kind === 'expected_income' && !item.recurringRuleId ? (
+        <>
+          <SelectField
+            id={`frequency-${item.id}`}
+            name="frequency"
+            label="Repeats"
+            value={frequency}
+            onChange={(e) => setFrequency(e.target.value)}
+            hint="Choose how often to repeat from this date. Each later pay date uses this estimate."
+            wrapClassName="mb-4"
+          >
+            <option value="">Does not repeat</option>
+            {FREQUENCIES.map((f) => (
+              <option key={f} value={f}>
+                {FREQUENCY_OPTION_LABEL[f]}
+              </option>
+            ))}
+          </SelectField>
+          {frequency ? (
+            <FormField
+              id={`endDate-${item.id}`}
+              name="endDate"
+              label="Ends (optional)"
+              type="date"
+              error={state.fieldErrors?.endDate}
+            />
+          ) : null}
         </>
       ) : null}
       {item.kind !== 'receivable' ? (
