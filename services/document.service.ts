@@ -154,7 +154,12 @@ export async function uploadDocument(params: {
   try {
     // The full-quality source is retained for Phase 05 OCR and its retries.
     if (stagedPath) await moveObject(stagedPath, originalPath);
-    else await uploadObject({ path: originalPath, body: bytes, contentType: validation.type });
+    else
+      await uploadObject({
+        path: originalPath,
+        body: bytes,
+        contentType: validation.type,
+      });
     uploaded.push(originalPath);
 
     if (validation.isPdf) {
@@ -309,7 +314,8 @@ export async function shrinkOriginal(params: {
   jpeg: Uint8Array;
 }): Promise<ShrinkOutcome> {
   const { documentId, originalPath, originalByteLength, jpeg } = params;
-  if (jpeg.byteLength > originalByteLength * (1 - SHRINK_MIN_SAVING)) return 'not_worth_it';
+  if (jpeg.byteLength > originalByteLength * (1 - SHRINK_MIN_SAVING))
+    return 'not_worth_it';
 
   const newPath = `${originalPath.slice(0, originalPath.lastIndexOf('/'))}/ocr.jpg`;
   if (newPath === originalPath) return 'not_worth_it';
@@ -418,12 +424,19 @@ export async function sweepDocumentStorage(): Promise<{
   return { shrunk, staleUploadsRemoved: stale.length };
 }
 
-export async function archiveDocument(userId: string, id: string, archived: boolean) {
+/** False when no row of the caller's matched: someone else's id, or none. */
+export async function archiveDocument(
+  userId: string,
+  id: string,
+  archived: boolean,
+): Promise<boolean> {
   const admin = createAdminClient();
-  const { error } = await admin
+  const { data, error } = await admin
     .from('documents')
     .update({ is_archived: archived })
     .eq('id', id)
-    .eq('user_id', userId);
+    .eq('user_id', userId)
+    .select('id');
   if (error) throw new Error(error.message);
+  return (data ?? []).length > 0;
 }

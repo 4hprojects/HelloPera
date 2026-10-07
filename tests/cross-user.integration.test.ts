@@ -482,12 +482,15 @@ describe.skipIf(!enabled)('cross-user isolation: B attacks A’s records', () =>
           outcome = `threw: ${error instanceof Error ? error.message : String(error)}`;
         }
         const unchanged = JSON.stringify(await snapshot()) === JSON.stringify(before);
+        // Refused out loud: an error result, or the not-found page. Reporting
+        // success while doing nothing is a failure even though no data moved.
+        const refused = outcome !== 'no error returned';
         const row = record({
           layer: 'action',
           attempt: name,
-          expected: 'A’s rows unchanged',
+          expected: 'refused, A unchanged',
           actual: `${unchanged ? 'unchanged' : 'CHANGED'}; ${outcome}`,
-          ok: unchanged,
+          ok: unchanged && refused,
         });
         expect(row.ok, `${name}: ${row.actual}`).toBe(true);
       }

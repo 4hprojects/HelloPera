@@ -1,6 +1,6 @@
 'use server';
 
-import { redirect } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { requireUser } from '@/lib/auth/guards';
 import { log } from '@/lib/log';
@@ -113,7 +113,8 @@ export async function archiveAccountAction(formData: FormData): Promise<void> {
   const archived = String(formData.get('archived') ?? '') === 'true';
   if (!id) return;
 
-  await archiveAccount(user.id, id, archived);
+  // Another user's id matches no row: answer as not found, never success.
+  if (!(await archiveAccount(user.id, id, archived))) notFound();
   revalidatePath('/accounts');
   revalidatePath('/dashboard');
   revalidatePath('/analytics');

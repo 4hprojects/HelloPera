@@ -1,6 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { notFound } from 'next/navigation';
 import { requireUser } from '@/lib/auth/guards';
 import { log } from '@/lib/log';
 import type { ActionState } from '@/app/actions/auth';
@@ -104,6 +105,6 @@ export async function archiveDocumentAction(formData: FormData): Promise<void> {
   const id = String(formData.get('id') ?? '');
   const archived = String(formData.get('archived') ?? '') === 'true';
   if (!id) return;
-  await archiveDocument(user.id, id, archived);
+  if (!(await archiveDocument(user.id, id, archived))) notFound();
   revalidatePath('/documents');
 }

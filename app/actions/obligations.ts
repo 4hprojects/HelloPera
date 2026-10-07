@@ -1,6 +1,6 @@
 'use server';
 
-import { redirect } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { requireUser } from '@/lib/auth/guards';
 import { recordAuditEvent } from '@/lib/auth/audit';
@@ -320,7 +320,7 @@ export async function cancelObligationAction(formData: FormData): Promise<void> 
   const id = String(formData.get('id') ?? '');
   if (!id || !(kind in ROUTES)) return;
 
-  await cancelObligation(user.id, kind, id);
+  if (!(await cancelObligation(user.id, kind, id))) notFound();
   revalidatePath(ROUTES[kind]);
   revalidatePath(`${ROUTES[kind]}/${id}`);
   revalidatePath('/forecast');

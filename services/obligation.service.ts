@@ -417,14 +417,21 @@ export async function allocatePayment(params: {
   return data as string;
 }
 
-export async function cancelObligation(userId: string, kind: ObligationKind, id: string) {
+/** False when no row of the caller's matched: someone else's id, or none. */
+export async function cancelObligation(
+  userId: string,
+  kind: ObligationKind,
+  id: string,
+): Promise<boolean> {
   const admin = createAdminClient();
-  const { error } = await admin
+  const { data, error } = await admin
     .from(TABLE[kind])
     .update({ status: 'cancelled' })
     .eq('id', id)
-    .eq('user_id', userId);
+    .eq('user_id', userId)
+    .select('id');
   if (error) throw new Error(error.message);
+  return (data ?? []).length > 0;
 }
 
 export async function recordObligationPayment(userId: string, input: RecordPaymentInput) {

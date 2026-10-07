@@ -210,14 +210,21 @@ export async function listLoanDetails(
   return out;
 }
 
-export async function archiveAccount(userId: string, id: string, archived: boolean) {
+/** False when no row of the caller's matched: someone else's id, or none. */
+export async function archiveAccount(
+  userId: string,
+  id: string,
+  archived: boolean,
+): Promise<boolean> {
   const admin = createAdminClient();
-  const { error } = await admin
+  const { data, error } = await admin
     .from('accounts')
     .update({ is_archived: archived })
     .eq('id', id)
-    .eq('user_id', userId); // ownership in the predicate, never from the form
+    .eq('user_id', userId) // ownership in the predicate, never from the form
+    .select('id');
   if (error) throw new Error(error.message);
+  return (data ?? []).length > 0;
 }
 
 export class AccountEditError extends Error {}
