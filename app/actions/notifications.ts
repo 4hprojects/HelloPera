@@ -11,6 +11,8 @@ import {
   markRead,
   updatePreferences,
 } from '@/services/notification.service';
+import { formRejected, REJECTED_FORM } from '@/lib/validation/form';
+import { FORMS } from '@/schemas/forms';
 
 /**
  * Notification actions — PHASE-08 §21, §50.
@@ -42,6 +44,14 @@ export async function markNotificationReadAction(
   _p: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (
+    formRejected(
+      formData,
+      FORMS.notifications.markNotificationRead,
+      'markNotificationReadAction',
+    )
+  )
+    return { error: REJECTED_FORM };
   await requireUser();
   const id = String(formData.get('id') ?? '');
   if (!id) return { error: 'That notification could not be found.' };
@@ -61,8 +71,16 @@ export async function markNotificationReadAction(
 
 export async function markAllNotificationsReadAction(
   _p: ActionState,
-  _formData: FormData,
+  formData: FormData,
 ): Promise<ActionState> {
+  if (
+    formRejected(
+      formData,
+      FORMS.notifications.markAllNotificationsRead,
+      'markAllNotificationsReadAction',
+    )
+  )
+    return { error: REJECTED_FORM };
   const { user } = await requireUser();
 
   let count = 0;
@@ -88,6 +106,14 @@ export async function updateNotificationPreferencesAction(
   _p: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (
+    formRejected(
+      formData,
+      FORMS.notifications.updateNotificationPreferences,
+      'updateNotificationPreferencesAction',
+    )
+  )
+    return { error: REJECTED_FORM };
   const { user, profile } = await requireUser();
 
   const parsed = notificationPreferencesSchema.safeParse({

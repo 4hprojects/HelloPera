@@ -8,6 +8,8 @@ import { RateLimitError } from '@/services/rate-limit.service';
 import { UsageLimitError } from '@/services/usage.service';
 import { ask, AssistantError } from '@/services/ai-assistant.service';
 import { toDisplay, type DisplayResult } from '@/lib/ai/answer';
+import { formRejected, REJECTED_FORM } from '@/lib/validation/form';
+import { FORMS } from '@/schemas/forms';
 
 /**
  * The assistant's only entry point — PHASE-12 §15, §42, §85.
@@ -35,6 +37,8 @@ export async function askAssistantAction(
   _previous: AssistantState,
   formData: FormData,
 ): Promise<AssistantState> {
+  if (formRejected(formData, FORMS.ai.askAssistant, 'askAssistantAction'))
+    return { error: REJECTED_FORM };
   const { user, profile } = await requireUser();
 
   const question = String(formData.get('question') ?? '');

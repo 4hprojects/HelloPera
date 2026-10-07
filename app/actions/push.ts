@@ -7,6 +7,8 @@ import type { ActionState } from '@/app/actions/auth';
 import { pushSubscriptionSchema } from '@/schemas/notification.schema';
 import { deletePushSubscription, savePushSubscription } from '@/services/push.service';
 import { getPreferences, updatePreferences } from '@/services/notification.service';
+import { formRejected, REJECTED_FORM } from '@/lib/validation/form';
+import { FORMS } from '@/schemas/forms';
 
 /**
  * Push subscription actions — PHASE-08 §21, §25, §26.
@@ -19,6 +21,8 @@ export async function subscribeToPushAction(
   _p: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (formRejected(formData, FORMS.push.subscribeToPush, 'subscribeToPushAction'))
+    return { error: REJECTED_FORM };
   const { user, profile } = await requireUser();
 
   const parsed = pushSubscriptionSchema.safeParse({
@@ -57,6 +61,8 @@ export async function unsubscribeFromPushAction(
   _p: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (formRejected(formData, FORMS.push.unsubscribeFromPush, 'unsubscribeFromPushAction'))
+    return { error: REJECTED_FORM };
   const { user } = await requireUser();
   const endpoint = String(formData.get('endpoint') ?? '');
   if (!endpoint) return { error: 'That device could not be found.' };

@@ -35,6 +35,8 @@ import {
   type ObligationKind,
   type PaymentCandidate,
 } from '@/services/obligation.service';
+import { formRejected, REJECTED_FORM } from '@/lib/validation/form';
+import { ACTION_ARGS, FORMS } from '@/schemas/forms';
 
 function fieldErrorsFrom(error: {
   issues: Array<{ path: PropertyKey[]; message: string }>;
@@ -57,6 +59,8 @@ export async function createBillAction(
   _p: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (formRejected(formData, FORMS.obligations.createBill, 'createBillAction'))
+    return { error: REJECTED_FORM };
   const { user } = await requireUser();
 
   // PHASE-14 §23 — the ledger freeze, enforced at the write.
@@ -96,6 +100,10 @@ export async function createReceivableAction(
   _p: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (
+    formRejected(formData, FORMS.obligations.createReceivable, 'createReceivableAction')
+  )
+    return { error: REJECTED_FORM };
   const { user } = await requireUser();
 
   // PHASE-14 §23 — the ledger freeze, enforced at the write.
@@ -134,6 +142,14 @@ export async function createExpectedIncomeAction(
   _p: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (
+    formRejected(
+      formData,
+      FORMS.obligations.createExpectedIncome,
+      'createExpectedIncomeAction',
+    )
+  )
+    return { error: REJECTED_FORM };
   const { user, profile } = await requireUser();
 
   // PHASE-14 §23 — the ledger freeze, enforced at the write.
@@ -244,6 +260,8 @@ export async function recordPaymentAction(
   _p: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (formRejected(formData, FORMS.obligations.recordPayment, 'recordPaymentAction'))
+    return { error: REJECTED_FORM };
   const { user } = await requireUser();
 
   // PHASE-14 §23 — the ledger freeze, enforced at the write.
@@ -289,6 +307,10 @@ export async function recordPaymentAction(
 }
 
 export async function cancelObligationAction(formData: FormData): Promise<void> {
+  if (
+    formRejected(formData, FORMS.obligations.cancelObligation, 'cancelObligationAction')
+  )
+    return;
   const { user } = await requireUser();
 
   // PHASE-14 §23. Void action: the throw reaches the error boundary rather
@@ -314,9 +336,9 @@ export async function searchPaymentCandidatesAction(input: {
   cursor?: string | null;
 }): Promise<{ items: PaymentCandidate[]; next: string | null; error?: string }> {
   await requireUser();
-  if (!['bill', 'receivable', 'expected_income'].includes(input.kind)) {
-    return { items: [], next: null, error: 'Unknown item type.' };
-  }
+  const parsed = ACTION_ARGS.searchPaymentCandidates.safeParse(input);
+  if (!parsed.success) return { items: [], next: null, error: 'Unknown item type.' };
+  input = parsed.data;
   try {
     return await listPaymentCandidates({
       kind: input.kind,
@@ -333,6 +355,10 @@ export async function updateObligationAction(
   _p: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (
+    formRejected(formData, FORMS.obligations.updateObligation, 'updateObligationAction')
+  )
+    return { error: REJECTED_FORM };
   const { user, profile } = await requireUser();
   try {
     await assertWritesEnabled();

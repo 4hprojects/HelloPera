@@ -25,6 +25,8 @@ import {
   setIncludeInForecast,
 } from '@/services/expected-event.service';
 import { assertWritesEnabled, WritesDisabledError } from '@/lib/ops/kill-switches';
+import { formRejected, REJECTED_FORM } from '@/lib/validation/form';
+import { FORMS } from '@/schemas/forms';
 
 /**
  * Recurring rules and expected events — PHASE-07 §48 to §50.
@@ -104,6 +106,14 @@ export async function createRecurringRuleAction(
   _p: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (
+    formRejected(
+      formData,
+      FORMS.recurring.createRecurringRule,
+      'createRecurringRuleAction',
+    )
+  )
+    return { error: REJECTED_FORM };
   const { user, profile } = await requireUser();
   const frozen = await requireFinancialWrites();
   if (frozen) return frozen;
@@ -142,6 +152,14 @@ export async function updateRecurringRuleAction(
   _p: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (
+    formRejected(
+      formData,
+      FORMS.recurring.updateRecurringRule,
+      'updateRecurringRuleAction',
+    )
+  )
+    return { error: REJECTED_FORM };
   const { user, profile } = await requireUser();
   const frozen = await requireFinancialWrites();
   if (frozen) return frozen;
@@ -178,6 +196,8 @@ export async function transitionRuleAction(
   _p: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (formRejected(formData, FORMS.recurring.transitionRule, 'transitionRuleAction'))
+    return { error: REJECTED_FORM };
   const { user, profile } = await requireUser();
   const frozen = await requireFinancialWrites();
   if (frozen) return frozen;
@@ -234,6 +254,8 @@ export async function expectedEventAction(
   _p: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (formRejected(formData, FORMS.recurring.expectedEvent, 'expectedEventAction'))
+    return { error: REJECTED_FORM };
   const { user } = await requireUser();
   const frozen = await requireFinancialWrites();
   if (frozen) return frozen;
@@ -290,8 +312,16 @@ export async function expectedEventAction(
  */
 export async function generateOccurrencesAction(
   _p: ActionState,
-  _formData: FormData,
+  formData: FormData,
 ): Promise<ActionState> {
+  if (
+    formRejected(
+      formData,
+      FORMS.recurring.generateOccurrences,
+      'generateOccurrencesAction',
+    )
+  )
+    return { error: REJECTED_FORM };
   const { user } = await requireUser();
   const frozen = await requireFinancialWrites();
   if (frozen) return frozen;

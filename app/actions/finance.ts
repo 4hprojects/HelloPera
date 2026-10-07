@@ -29,6 +29,8 @@ import {
   voidTransaction,
 } from '@/services/transaction.service';
 import type { ActionState } from '@/app/actions/auth';
+import { formRejected, REJECTED_FORM } from '@/lib/validation/form';
+import { FORMS } from '@/schemas/forms';
 
 function fieldErrorsFrom(error: {
   issues: Array<{ path: PropertyKey[]; message: string }>;
@@ -45,6 +47,8 @@ export async function createAccountAction(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (formRejected(formData, FORMS.finance.createAccount, 'createAccountAction'))
+    return { error: REJECTED_FORM };
   const { user } = await requireUser();
 
   // PHASE-14 §23 — the ledger freeze, enforced where the write happens rather
@@ -95,6 +99,8 @@ export async function createAccountAction(
 }
 
 export async function archiveAccountAction(formData: FormData): Promise<void> {
+  if (formRejected(formData, FORMS.finance.archiveAccount, 'archiveAccountAction'))
+    return;
   const { user } = await requireUser();
 
   // PHASE-14 §23. This action returns void, so there is no error object to
@@ -117,6 +123,8 @@ export async function createTransactionAction(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (formRejected(formData, FORMS.finance.createTransaction, 'createTransactionAction'))
+    return { error: REJECTED_FORM };
   const { user } = await requireUser();
 
   // PHASE-14 §23 — the ledger freeze, enforced where the write happens rather
@@ -183,6 +191,8 @@ export async function voidTransactionAction(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (formRejected(formData, FORMS.finance.voidTransaction, 'voidTransactionAction'))
+    return { error: REJECTED_FORM };
   const { user } = await requireUser();
 
   // PHASE-14 §23 — the ledger freeze, enforced where the write happens rather
@@ -226,6 +236,8 @@ export async function deleteAccountAction(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (formRejected(formData, FORMS.finance.deleteAccount, 'deleteAccountAction'))
+    return { error: REJECTED_FORM };
   const { user } = await requireUser();
   try {
     await assertWritesEnabled();
@@ -260,6 +272,8 @@ export async function updateAccountAction(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (formRejected(formData, FORMS.finance.updateAccount, 'updateAccountAction'))
+    return { error: REJECTED_FORM };
   const { user } = await requireUser();
   try {
     await assertWritesEnabled();
@@ -313,6 +327,8 @@ export async function updateTransactionAction(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (formRejected(formData, FORMS.finance.updateTransaction, 'updateTransactionAction'))
+    return { error: REJECTED_FORM };
   const { user } = await requireUser();
   try {
     await assertWritesEnabled();

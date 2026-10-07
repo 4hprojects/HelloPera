@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { getAuthResult } from '@/lib/auth/guards';
 import { createSignedUrl } from '@/services/storage.service';
 
@@ -9,6 +10,11 @@ import { createSignedUrl } from '@/services/storage.service';
  * two minutes, so a page cached or left open would otherwise show broken
  * images. This mints one per request instead.
  */
+const paramsSchema = z.strictObject({
+  id: z.uuid(),
+  which: z.enum(['display', 'thumbnail', 'original']),
+});
+
 export async function GET(
   _request: Request,
   context: { params: Promise<{ id: string; which: string }> },
@@ -22,10 +28,9 @@ export async function GET(
   }
   const { user } = auth.context;
 
-  const { id, which } = await context.params;
-  if (which !== 'display' && which !== 'thumbnail' && which !== 'original') {
-    return new NextResponse('Not found', { status: 404 });
-  }
+  const parsed = paramsSchema.safeParse(await context.params);
+  if (!parsed.success) return new NextResponse('Not found', { status: 404 });
+  const { id, which } = parsed.data;
 
   const url = await createSignedUrl({ userId: user.id, documentId: id, which });
   // Ownership failure and genuinely missing return the same 404: a

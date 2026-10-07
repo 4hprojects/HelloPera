@@ -7,6 +7,8 @@ import { log } from '@/lib/log';
 import { ENTITLEMENT_KEYS } from '@/lib/monetization/entitlements';
 import { METERED_FEATURES } from '@/lib/monetization/limits';
 import type { ActionState } from '@/app/actions/auth';
+import { formRejected, REJECTED_FORM } from '@/lib/validation/form';
+import { FORMS } from '@/schemas/forms';
 
 /**
  * Admin mutations — PHASE-13 §70, §72, §73, §74.
@@ -52,6 +54,8 @@ export async function setUserStatusAction(
   _previous: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (formRejected(formData, FORMS.admin.setUserStatus, 'setUserStatusAction'))
+    return { error: REJECTED_FORM };
   try {
     const userId = String(formData.get('userId') ?? '');
     const status = String(formData.get('status') ?? '');
@@ -95,6 +99,8 @@ export async function setUserRoleAction(
   _previous: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (formRejected(formData, FORMS.admin.setUserRole, 'setUserRoleAction'))
+    return { error: REJECTED_FORM };
   try {
     const userId = String(formData.get('userId') ?? '');
     const role = String(formData.get('role') ?? '');
@@ -129,6 +135,8 @@ export async function addSupportNoteAction(
   _previous: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (formRejected(formData, FORMS.admin.addSupportNote, 'addSupportNoteAction'))
+    return { error: REJECTED_FORM };
   try {
     const userId = String(formData.get('userId') ?? '');
     const note = String(formData.get('note') ?? '').trim();
@@ -157,6 +165,8 @@ export async function setFlagAction(
   _previous: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (formRejected(formData, FORMS.admin.setFlag, 'setFlagAction'))
+    return { error: REJECTED_FORM };
   try {
     const key = String(formData.get('key') ?? '');
     const enabled = String(formData.get('enabled') ?? '') === 'true';
@@ -184,6 +194,8 @@ export async function grantOverrideAction(
   _previous: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (formRejected(formData, FORMS.admin.grantOverride, 'grantOverrideAction'))
+    return { error: REJECTED_FORM };
   try {
     const userId = String(formData.get('userId') ?? '');
     const key = String(formData.get('entitlementKey') ?? '');
@@ -223,6 +235,8 @@ export async function revokeOverrideAction(
   _previous: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (formRejected(formData, FORMS.admin.revokeOverride, 'revokeOverrideAction'))
+    return { error: REJECTED_FORM };
   try {
     const overrideId = String(formData.get('overrideId') ?? '');
     const userId = String(formData.get('userId') ?? '');
@@ -246,6 +260,8 @@ export async function adjustUsageAction(
   _previous: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (formRejected(formData, FORMS.admin.adjustUsage, 'adjustUsageAction'))
+    return { error: REJECTED_FORM };
   try {
     const userId = String(formData.get('userId') ?? '');
     const featureKey = String(formData.get('featureKey') ?? '');
@@ -288,6 +304,8 @@ export async function repairBalanceAction(
   _previous: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (formRejected(formData, FORMS.admin.repairBalance, 'repairBalanceAction'))
+    return { error: REJECTED_FORM };
   try {
     const accountId = String(formData.get('accountId') ?? '');
     const userId = String(formData.get('userId') ?? '') || null;
@@ -316,6 +334,8 @@ export async function runIntegrityCheckAction(
   _previous: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (formRejected(formData, FORMS.admin.runIntegrityCheck, 'runIntegrityCheckAction'))
+    return { error: REJECTED_FORM };
   try {
     const result = await adminAction({
       event: 'integrity_check_run',

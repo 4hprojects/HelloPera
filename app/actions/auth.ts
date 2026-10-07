@@ -22,6 +22,8 @@ import {
   resetPasswordSchema,
   updateProfileSchema,
 } from '@/schemas/auth.schema';
+import { formRejected, REJECTED_FORM } from '@/lib/validation/form';
+import { FORMS } from '@/schemas/forms';
 
 /**
  * An untouched optional field arrives as '' from a form. The column is
@@ -106,6 +108,8 @@ export async function registerWithEmail(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (formRejected(formData, FORMS.auth.registerWithEmail, 'registerWithEmail'))
+    return { error: REJECTED_FORM };
   const parsed = registerSchema.safeParse({
     firstName: formData.get('firstName') ?? '',
     lastName: formData.get('lastName') ?? '',
@@ -165,6 +169,8 @@ export async function loginWithEmail(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (formRejected(formData, FORMS.auth.loginWithEmail, 'loginWithEmail'))
+    return { error: REJECTED_FORM };
   const parsed = loginSchema.safeParse({
     email: formData.get('email'),
     password: formData.get('password'),
@@ -263,6 +269,8 @@ export async function requestPasswordReset(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (formRejected(formData, FORMS.auth.requestPasswordReset, 'requestPasswordReset'))
+    return { error: REJECTED_FORM };
   const parsed = forgotPasswordSchema.safeParse({ email: formData.get('email') });
   if (!parsed.success) return { fieldErrors: fieldErrorsFrom(parsed.error) };
 
@@ -303,6 +311,8 @@ export async function resetPassword(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (formRejected(formData, FORMS.auth.resetPassword, 'resetPassword'))
+    return { error: REJECTED_FORM };
   const parsed = resetPasswordSchema.safeParse({
     password: formData.get('password'),
     confirmPassword: formData.get('confirmPassword'),
@@ -346,6 +356,8 @@ export async function updateProfile(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (formRejected(formData, FORMS.auth.updateProfile, 'updateProfile'))
+    return { error: REJECTED_FORM };
   const { user } = await requireUser();
 
   const parsed = updateProfileSchema.safeParse({

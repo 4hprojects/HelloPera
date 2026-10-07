@@ -12,6 +12,8 @@ import { createClient } from '@/lib/supabase/server';
 import { log } from '@/lib/log';
 import type { ActionState } from '@/app/actions/auth';
 import { AccountDeletionError, deleteAccount } from '@/services/account-deletion.service';
+import { formRejected, REJECTED_FORM } from '@/lib/validation/form';
+import { FORMS } from '@/schemas/forms';
 
 /**
  * Account deletion — master plan §54a gate item, PHASE-14 §69, §70.
@@ -28,6 +30,8 @@ export async function deleteAccountAction(
   _p: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (formRejected(formData, FORMS.account.deleteAccount, 'deleteAccountAction'))
+    return { error: REJECTED_FORM };
   const { user } = await requireUser();
 
   try {

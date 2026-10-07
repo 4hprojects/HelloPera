@@ -144,7 +144,9 @@ function PaymentFormInner({
             <div className="flex-1">
               <TextField
                 id="candidateSearch"
-                name="candidateSearch"
+                // Client-side search only. An empty name keeps it out of the
+                // payment submission, which rejects fields it does not read.
+                name=""
                 label="Search transactions"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}

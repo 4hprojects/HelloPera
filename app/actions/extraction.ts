@@ -20,11 +20,15 @@ import { getAccount } from '@/services/account.service';
 import { isoDate, positiveAmount } from '@/schemas/primitives';
 import { isFlagEnabled } from '@/services/plan.service';
 import { assertWritesEnabled, WritesDisabledError } from '@/lib/ops/kill-switches';
+import { formRejected, REJECTED_FORM } from '@/lib/validation/form';
+import { FORMS } from '@/schemas/forms';
 
 export async function runExtractionAction(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (formRejected(formData, FORMS.extraction.runExtraction, 'runExtractionAction'))
+    return { error: REJECTED_FORM };
   const { user, profile } = await requireUser();
   const documentId = String(formData.get('documentId') ?? '');
   if (!documentId) return { error: 'No document selected.' };
@@ -64,6 +68,10 @@ export async function runExtractionAction(
 }
 
 export async function discardExtractionAction(formData: FormData): Promise<void> {
+  if (
+    formRejected(formData, FORMS.extraction.discardExtraction, 'discardExtractionAction')
+  )
+    return;
   const { user } = await requireUser();
   const extractionId = String(formData.get('extractionId') ?? '');
   const documentId = String(formData.get('documentId') ?? '');
@@ -105,6 +113,8 @@ export async function confirmDraftsAction(
   _prev: DraftsState,
   formData: FormData,
 ): Promise<DraftsState> {
+  if (formRejected(formData, FORMS.extraction.confirmDrafts, 'confirmDraftsAction'))
+    return { error: REJECTED_FORM };
   const { user } = await requireUser();
 
   if (!(await isFlagEnabled('ocr_enabled'))) {

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { getAuthResult } from '@/lib/auth/guards';
 import { log } from '@/lib/log';
 import {
@@ -21,6 +22,8 @@ import {
 
 export const dynamic = 'force-dynamic';
 
+const querySchema = z.strictObject({ format: z.enum(['csv', 'json']).optional() });
+
 export async function GET(request: Request): Promise<NextResponse> {
   const auth = await getAuthResult();
   if (!auth.ok) {
@@ -30,8 +33,13 @@ export async function GET(request: Request): Promise<NextResponse> {
     );
   }
 
-  const format =
-    new URL(request.url).searchParams.get('format') === 'csv' ? 'csv' : 'json';
+  // Strict: an unknown or repeated query parameter is refused, not ignored.
+  const params = new URL(request.url).searchParams;
+  const query = querySchema.safeParse(Object.fromEntries(params));
+  if (!query.success || new Set(params.keys()).size !== params.size) {
+    return NextResponse.json({ error: 'Unsupported export options.' }, { status: 400 });
+  }
+  const format = query.data.format ?? 'json';
   const stamp = new Date().toISOString().slice(0, 10);
 
   try {

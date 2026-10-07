@@ -11,6 +11,8 @@ import {
   prepareUpload,
   UploadError,
 } from '@/services/document.service';
+import { formRejected, REJECTED_FORM } from '@/lib/validation/form';
+import { ACTION_ARGS, FORMS } from '@/schemas/forms';
 
 const DOCUMENT_TYPES = [
   'receipt',
@@ -39,7 +41,9 @@ export async function prepareUploadAction(
   size: number,
 ): Promise<{ path: string; token: string } | { error: string }> {
   const { user } = await requireUser();
-  if (!Number.isFinite(size) || size <= 0) return { error: 'Choose a file to upload.' };
+  if (!ACTION_ARGS.prepareUpload.safeParse(size).success) {
+    return { error: 'Choose a file to upload.' };
+  }
   if (size > MAX_UPLOAD_BYTES) {
     return {
       error: `The file limit is ${MAX_UPLOAD_BYTES / 1024 / 1024} MB. Choose a smaller file.`,
@@ -61,6 +65,9 @@ export async function finalizeUploadAction(input: {
   documentType: string;
 }): Promise<UploadState> {
   const { user } = await requireUser();
+  const parsed = ACTION_ARGS.finalizeUpload.safeParse(input);
+  if (!parsed.success) return { error: REJECTED_FORM };
+  input = parsed.data;
 
   const documentType = (DOCUMENT_TYPES as readonly string[]).includes(input.documentType)
     ? input.documentType
@@ -91,6 +98,8 @@ export async function finalizeUploadAction(input: {
 }
 
 export async function archiveDocumentAction(formData: FormData): Promise<void> {
+  if (formRejected(formData, FORMS.documents.archiveDocument, 'archiveDocumentAction'))
+    return;
   const { user } = await requireUser();
   const id = String(formData.get('id') ?? '');
   const archived = String(formData.get('archived') ?? '') === 'true';
