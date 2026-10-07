@@ -12,6 +12,8 @@ import type {
 } from '@/schemas/recurring.schema';
 import type { GenerationResult, RecurringRule, RuleStatus } from '@/types/recurring';
 import { assertWritesEnabled, WritesDisabledError } from '@/lib/ops/kill-switches';
+import { getAccount } from '@/services/account.service';
+import { assertCategoryUsable } from '@/services/category.service';
 
 /**
  * Recurring rules — PHASE-07 §7, §21 to §24, §37.
@@ -148,6 +150,22 @@ function optional(value: string | null | undefined): string | null {
 }
 
 /**
+ * The account and category ids on a rule come from the form, and the writes
+ * below use the admin client. Same session-client approach as `assertOwned`:
+ * an id the user cannot see is refused before anything is stored.
+ */
+async function assertLinksUsable(input: {
+  accountId?: string | null;
+  categoryId?: string | null;
+}): Promise<void> {
+  const accountId = optional(input.accountId);
+  if (accountId && !(await getAccount(accountId))) {
+    throw new Error('ACCOUNT_NOT_FOUND');
+  }
+  await assertCategoryUsable(input.categoryId);
+}
+
+/**
  * Adapter over `initialCursor` in lib/recurring/schedule.ts, where the rule and
  * its reasoning live so they can be unit-tested directly. (Service modules are
  * also testable: `vitest.config.ts` aliases `server-only` to its empty stub.)
@@ -181,6 +199,7 @@ export async function createRule(
   input: CreateRecurringRuleInput,
   today: string,
 ): Promise<string> {
+  await assertLinksUsable(input);
   const admin = createAdminClient();
 
   const cursor = initialCursor(input, today);
@@ -228,6 +247,7 @@ export async function updateRule(
   today: string,
 ): Promise<void> {
   await assertOwned(input.id);
+  await assertLinksUsable(input);
   const admin = createAdminClient();
 
   const cursor = initialCursor(input, today);

@@ -2,6 +2,7 @@ import 'server-only';
 
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { assertCategoryUsable } from '@/services/category.service';
 import { fromDatabase, parseDecimal, toDecimalString, type Money } from '@/lib/money';
 import {
   displayStatus,
@@ -301,6 +302,7 @@ export async function createBill(
   userId: string,
   input: CreateBillInput,
 ): Promise<string> {
+  await assertCategoryUsable(input.categoryId);
   const admin = createAdminClient();
   const { data, error } = await admin
     .from('bills')
@@ -350,6 +352,7 @@ export async function createExpectedIncome(
   userId: string,
   input: CreateExpectedIncomeInput,
 ): Promise<string> {
+  await assertCategoryUsable(input.categoryId);
   const admin = createAdminClient();
   const { data, error } = await admin
     .from('expected_income')
