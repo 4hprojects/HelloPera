@@ -1,4 +1,6 @@
+import 'server-only';
 import { z } from 'zod';
+import { readJwtRole, supabaseAnonKey, supabaseUrl } from './public';
 
 /**
  * Environment validation — Phase 00 §14.
@@ -15,61 +17,10 @@ import { z } from 'zod';
  *  2. A `service_role` key behind NEXT_PUBLIC_ ships full RLS-bypassing
  *     database access to every browser. It is indistinguishable from the anon
  *     key by eye; the difference is a claim inside the JWT.
+ *
+ * Server-only: this module reads the secrets. Client components import
+ * `./public` instead, which carries the NEXT_PUBLIC_ values and nothing else.
  */
-
-/** Decode a JWT payload without verifying it. Enough to read the role claim. */
-function readJwtRole(token: string): string | null {
-  const parts = token.split('.');
-  if (parts.length !== 3) return null;
-  const payload = parts[1];
-  if (!payload) return null;
-  try {
-    const padded = payload.replace(/-/g, '+').replace(/_/g, '/');
-    const json = Buffer.from(
-      padded + '='.repeat((4 - (padded.length % 4)) % 4),
-      'base64',
-    ).toString('utf8');
-    const claims: unknown = JSON.parse(json);
-    if (typeof claims === 'object' && claims !== null && 'role' in claims) {
-      const role = (claims as { role: unknown }).role;
-      return typeof role === 'string' ? role : null;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-const supabaseUrl = z
-  .string()
-  .min(1, 'NEXT_PUBLIC_SUPABASE_URL is required')
-  .url('NEXT_PUBLIC_SUPABASE_URL must be a valid URL')
-  .refine((value) => !/^https?:\/\/db\./i.test(value), {
-    message:
-      'NEXT_PUBLIC_SUPABASE_URL points at the database host. Remove the "db." prefix — ' +
-      'use https://<ref>.supabase.co (Dashboard > Settings > API > Project URL). ' +
-      'The db. host serves Postgres on 5432, not the REST/Auth API.',
-  })
-  .refine((value) => !value.endsWith('/'), {
-    message: 'NEXT_PUBLIC_SUPABASE_URL must not have a trailing slash.',
-  });
-
-const supabaseAnonKey = z
-  .string()
-  .min(1, 'NEXT_PUBLIC_SUPABASE_ANON_KEY is required')
-  .refine(
-    (value) => {
-      // Newer publishable keys are not JWTs; only role-check the JWT form.
-      if (value.startsWith('sb_secret_')) return false;
-      if (!value.startsWith('eyJ')) return true;
-      return readJwtRole(value) !== 'service_role';
-    },
-    {
-      message:
-        'NEXT_PUBLIC_SUPABASE_ANON_KEY carries role="service_role". That key bypasses ' +
-        'RLS and must never reach the browser. Use the anon/publishable key instead.',
-    },
-  );
 
 /**
  * Server-only. Bypasses RLS entirely, so it must never be prefixed

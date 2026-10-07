@@ -1,7 +1,7 @@
 'use client';
 
 import { createBrowserClient } from '@supabase/ssr';
-import { env } from '@/lib/env';
+import { publicEnv as env } from '@/lib/env/public';
 
 /**
  * Browser Supabase client.
