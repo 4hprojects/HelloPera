@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  clientIpFrom,
   POLICIES,
   RATE_LIMITED_ACTIONS,
   evaluate,
@@ -107,5 +108,62 @@ describe('retryAfterLabel', () => {
     expect(retryAfterLabel(60)).toBe('in a minute');
     expect(retryAfterLabel(61)).toBe('in about 2 minutes');
     expect(retryAfterLabel(600)).toBe('in about 10 minutes');
+  });
+});
+
+describe('clientIpFrom', () => {
+  const headers = (h: Record<string, string>) => new Headers(h);
+  const behindNginx = { trustedProxies: 1, trustCloudflare: false };
+
+  it('takes the entry our proxy appended, not the one the client wrote', () => {
+    // nginx `$proxy_add_x_forwarded_for`: client value first, real address last.
+    const h = headers({ 'x-forwarded-for': '1.1.1.1, 203.0.113.9' });
+    expect(clientIpFrom(h, behindNginx)).toBe('203.0.113.9');
+  });
+
+  it('cannot be steered by padding the header', () => {
+    const h = headers({ 'x-forwarded-for': '9.9.9.9, 8.8.8.8, 7.7.7.7, 203.0.113.9' });
+    expect(clientIpFrom(h, behindNginx)).toBe('203.0.113.9');
+  });
+
+  it('works when the proxy overwrites the header', () => {
+    expect(clientIpFrom(headers({ 'x-forwarded-for': '203.0.113.9' }), behindNginx)).toBe(
+      '203.0.113.9',
+    );
+  });
+
+  it('counts further right for each trusted proxy', () => {
+    const h = headers({ 'x-forwarded-for': 'spoof, 203.0.113.9, 172.68.0.1' });
+    expect(clientIpFrom(h, { trustedProxies: 2, trustCloudflare: false })).toBe(
+      '203.0.113.9',
+    );
+  });
+
+  it('ignores CF-Connecting-IP unless Cloudflare is trusted', () => {
+    const h = headers({
+      'cf-connecting-ip': '6.6.6.6',
+      'x-forwarded-for': '203.0.113.9',
+    });
+    expect(clientIpFrom(h, behindNginx)).toBe('203.0.113.9');
+    expect(clientIpFrom(h, { trustedProxies: 1, trustCloudflare: true })).toBe('6.6.6.6');
+  });
+
+  it('falls back to x-real-ip, then a shared bucket', () => {
+    expect(clientIpFrom(headers({ 'x-real-ip': '203.0.113.9' }), behindNginx)).toBe(
+      '203.0.113.9',
+    );
+    expect(clientIpFrom(headers({}), behindNginx)).toBe('unknown');
+  });
+});
+
+describe('paid-API policies fail closed', () => {
+  it('marks every action that calls a paid provider', () => {
+    expect(POLICIES.ai_question.failClosed).toBe(true);
+    expect(POLICIES.ocr_submit.failClosed).toBe(true);
+  });
+
+  it('keeps sign-in fail-open', () => {
+    expect(POLICIES.login.failClosed).toBeUndefined();
+    expect(POLICIES.register.failClosed).toBeUndefined();
   });
 });

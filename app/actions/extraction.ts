@@ -22,6 +22,7 @@ import { isFlagEnabled } from '@/services/plan.service';
 import { assertWritesEnabled, WritesDisabledError } from '@/lib/ops/kill-switches';
 import { formRejected, REJECTED_FORM } from '@/lib/validation/form';
 import { FORMS } from '@/schemas/forms';
+import { RateLimitError } from '@/services/rate-limit.service';
 
 export async function runExtractionAction(
   _prev: ActionState,
@@ -52,6 +53,7 @@ export async function runExtractionAction(
           `You can still add this transaction manually.`,
       };
     }
+    if (error instanceof RateLimitError) return { error: error.userMessage };
     if (error instanceof OcrError) return { error: error.message };
     log.error('extraction action failed', { document_id: documentId });
     return { error: 'We could not read that document.' };

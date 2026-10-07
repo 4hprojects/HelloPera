@@ -3,7 +3,9 @@ import 'server-only';
 import { headers } from 'next/headers';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { log } from '@/lib/log';
+import { env } from '@/lib/env';
 import {
+  clientIpFrom,
   POLICIES,
   rateLimitKey,
   retryAfterLabel,
@@ -21,11 +23,14 @@ import {
 
 export class RateLimitError extends Error {
   readonly retryAfterSeconds: number;
+  /** The limiter could not be checked and the action fails closed. */
+  readonly unavailable: boolean;
 
-  constructor(retryAfterSeconds: number) {
-    super('Rate limit exceeded');
+  constructor(retryAfterSeconds: number, unavailable = false) {
+    super(unavailable ? 'Rate limiter unavailable' : 'Rate limit exceeded');
     this.name = 'RateLimitError';
     this.retryAfterSeconds = retryAfterSeconds;
+    this.unavailable = unavailable;
   }
 
   /**
@@ -36,6 +41,9 @@ export class RateLimitError extends Error {
    * attacker and useless to the person who mistyped.
    */
   get userMessage(): string {
+    if (this.unavailable) {
+      return 'This is briefly unavailable. Please try again in a minute.';
+    }
     return `Too many attempts. Please try again ${retryAfterLabel(this.retryAfterSeconds)}.`;
   }
 }
@@ -44,31 +52,27 @@ export class RateLimitError extends Error {
  * §40 — the caller's IP, for limits not keyed to an identifier.
  *
  * Behind HelloDeploy's nginx the socket address is the proxy, so the forwarded
- * header is the only source. It is spoofable in principle; it is used here for
- * abuse dampening rather than authorisation, which is the appropriate weight
- * to put on it.
- *
- * Behind Cloudflare, `CF-Connecting-IP` is the real visitor and the first
- * `X-Forwarded-For` entry may be client-supplied. It is preferred when present.
- * It is only trustworthy if the origin is reachable through Cloudflare alone;
- * otherwise a direct caller can set it, which is the same weight as the above.
+ * header is the only source. The entry our own proxy added is used, never the
+ * leftmost one, which the client controls — reading that let anyone rotate
+ * fake IPs past every per-IP limit. See `clientIpFrom` and the
+ * TRUSTED_PROXY_COUNT / TRUST_CF_CONNECTING_IP settings.
  */
 export async function clientIp(): Promise<string> {
-  const h = await headers();
-  const cf = h.get('cf-connecting-ip');
-  if (cf) return cf.trim();
-  const forwarded = h.get('x-forwarded-for');
-  if (forwarded) return forwarded.split(',')[0]!.trim();
-  return h.get('x-real-ip') ?? 'unknown';
+  return clientIpFrom(await headers(), {
+    trustedProxies: env.TRUSTED_PROXY_COUNT,
+    trustCloudflare: env.TRUST_CF_CONNECTING_IP,
+  });
 }
 
 /**
  * Record an attempt and throw if it is over the limit.
  *
- * **Fails open.** If the limiter itself is unavailable, sign-in keeps working:
- * a database hiccup must not lock every user out of their own finances. The
- * failure is logged loudly, because a silently disabled rate limiter is worth
- * knowing about.
+ * **Fails open by default.** If the limiter itself is unavailable, sign-in
+ * keeps working: a database hiccup must not lock every user out of their own
+ * finances. The failure is logged loudly, because a silently disabled rate
+ * limiter is worth knowing about.
+ *
+ * Policies marked `failClosed` (the paid-API actions) refuse instead.
  */
 export async function enforceRateLimit(
   action: RateLimitedAction,
@@ -86,10 +90,13 @@ export async function enforceRateLimit(
     });
 
     if (error) {
-      log.error('rate limit: check failed, allowing through', {
-        action,
-        m: error.code,
-      });
+      log.error(
+        policy.failClosed
+          ? 'rate limit: check failed, refusing'
+          : 'rate limit: check failed, allowing through',
+        { action, m: error.code },
+      );
+      if (policy.failClosed) throw new RateLimitError(60, true);
       return;
     }
 
@@ -100,10 +107,13 @@ export async function enforceRateLimit(
     }
   } catch (error) {
     if (error instanceof RateLimitError) throw error;
-    log.error('rate limit: threw, allowing through', {
-      action,
-      m: error instanceof Error ? error.message : 'unknown',
-    });
+    log.error(
+      policy.failClosed
+        ? 'rate limit: threw, refusing'
+        : 'rate limit: threw, allowing through',
+      { action, m: error instanceof Error ? error.message : 'unknown' },
+    );
+    if (policy.failClosed) throw new RateLimitError(60, true);
   }
 }
 

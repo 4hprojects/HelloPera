@@ -84,6 +84,15 @@ const schema = z
     // product must run without them. The publisher id is public by design —
     // it appears in the ad script on every page — so NEXT_PUBLIC_ is correct
     // here rather than a leak.
+    // Proxies in front of the app that append to X-Forwarded-For. Rate limits
+    // key on the client IP, so this decides which entry is trustworthy.
+    TRUSTED_PROXY_COUNT: z.coerce.number().int().min(0).max(5).default(1),
+    // Only behind Cloudflare with the origin reachable through it alone.
+    TRUST_CF_CONNECTING_IP: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
+
     NEXT_PUBLIC_ADSENSE_CLIENT_ID: z
       .string()
       .regex(
@@ -125,6 +134,8 @@ function load(): Env {
     VAPID_SUBJECT: process.env.VAPID_SUBJECT,
     SCHEDULER_SECRET: process.env.SCHEDULER_SECRET,
     NEXT_PUBLIC_ADSENSE_CLIENT_ID: process.env.NEXT_PUBLIC_ADSENSE_CLIENT_ID,
+    TRUSTED_PROXY_COUNT: process.env.TRUSTED_PROXY_COUNT,
+    TRUST_CF_CONNECTING_IP: process.env.TRUST_CF_CONNECTING_IP,
   });
 
   if (!parsed.success) {
