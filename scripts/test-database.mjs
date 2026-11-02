@@ -915,14 +915,21 @@ try {
          values($1,$2,'pending_review','{"drafts":[{"target":"transaction"},{"target":"bill"},{"target":"transaction"}]}') returning id`,
         [u, docId],
       );
-      const draft = (i, who = u, type = 'transaction') =>
+      const draft = (i, who = u, type = 'transaction', entity = tid) =>
         db.query('select public.confirm_extraction_draft($1,$2,$3,$4,$5)', [
           who,
           ex,
           i,
           type,
-          tid,
+          entity,
         ]);
+      const billFor = (owner) =>
+        scalar(
+          "insert into public.bills(user_id,provider_name,amount,currency_code,due_date) values($1,'Draft bill',10,'PHP','2026-11-01') returning id",
+          [owner],
+        );
+      const ownBill = await billFor(u);
+      const foreignBill = await billFor(v);
       await draft(0);
       await assert.rejects(draft(0), /DRAFT_ALREADY_SAVED/);
       await assert.rejects(draft(1, v), /EXTRACTION_NOT_FOUND/);
@@ -934,7 +941,11 @@ try {
         'pending_review',
         'one of three saved: still pending',
       );
-      await draft(1, u, 'bill');
+      // The linked record must exist, be this user's, and be the claimed type.
+      await assert.rejects(draft(1, u, 'bill', tid), /ENTITY_NOT_FOUND/);
+      await assert.rejects(draft(1, u, 'bill', foreignBill), /ENTITY_NOT_FOUND/);
+      await assert.rejects(draft(1, u, 'bill', randomUUID()), /ENTITY_NOT_FOUND/);
+      await draft(1, u, 'bill', ownBill);
       await draft(2);
       assert.equal(
         await scalar('select status from public.extraction_results where id=$1', [ex]),
