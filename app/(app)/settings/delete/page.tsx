@@ -5,6 +5,7 @@ import { Card } from '@/components/ui/card';
 import { buttonClass } from '@/components/ui/button';
 import { DeleteAccountForm } from './delete-account-form';
 import { requireUser } from '@/lib/auth/guards';
+import { turnstileSiteKey } from '@/lib/env';
 import { getDeletionSummary } from '@/services/account-deletion.service';
 
 export const metadata: Metadata = { title: 'Delete account' };
@@ -90,7 +91,10 @@ export default async function DeleteAccountPage() {
 
       <Card>
         <h2 className="hp-h3 mb-3 text-text">Confirm</h2>
-        <DeleteAccountForm google={user.app_metadata?.provider === 'google'} />
+        <DeleteAccountForm
+          google={user.app_metadata?.provider === 'google'}
+          siteKey={turnstileSiteKey()}
+        />
       </Card>
     </div>
   );

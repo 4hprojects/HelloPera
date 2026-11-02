@@ -3,7 +3,8 @@
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { headers } from 'next/headers';
-import { appUrl } from '@/lib/env';
+import { appUrl, turnstileSiteKey } from '@/lib/env';
+import { CAPTCHA_REQUIRED_MESSAGE, captchaFrom } from '@/lib/auth/captcha';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getCurrentUser } from '@/lib/auth/session';
@@ -60,6 +61,9 @@ export type ActionState = {
  */
 function friendlyAuthError(message: string): string {
   const m = message.toLowerCase();
+  // Before the generic token/invalid match below, which would otherwise call
+  // a failed security check an expired link.
+  if (m.includes('captcha')) return 'The security check failed. Please try again.';
   if (m.includes('invalid login credentials')) return 'Invalid email or password.';
   if (m.includes('email not confirmed'))
     return 'Please verify your email before signing in.';
@@ -115,6 +119,9 @@ export async function registerWithEmail(
   });
   if (!parsed.success) return { fieldErrors: fieldErrorsFrom(parsed.error) };
 
+  const captcha = captchaFrom(formData, Boolean(turnstileSiteKey()));
+  if (!captcha.ok) return { error: CAPTCHA_REQUIRED_MESSAGE };
+
   // Master plan §54a gate item. Applied AFTER validation, so a malformed form
   // does not consume someone's budget, and before the provider call, so abuse
   // never reaches it.
@@ -140,6 +147,7 @@ export async function registerWithEmail(
       // has to split a string for an account created through this form.
       data: nameMetadata(parsed.data.firstName, parsed.data.lastName),
       emailRedirectTo: `${origin}/auth/callback?next=/dashboard`,
+      captchaToken: captcha.token,
     },
   });
 
@@ -171,6 +179,9 @@ export async function loginWithEmail(
   });
   if (!parsed.success) return { fieldErrors: fieldErrorsFrom(parsed.error) };
 
+  const captcha = captchaFrom(formData, Boolean(turnstileSiteKey()));
+  if (!captcha.ok) return { error: CAPTCHA_REQUIRED_MESSAGE };
+
   // The tightest limit, keyed by both email and IP: the first stops one
   // account being ground down, the second stops one source spraying many
   // accounts — which the per-email limit alone would never see.
@@ -185,6 +196,7 @@ export async function loginWithEmail(
   const { data, error } = await supabase.auth.signInWithPassword({
     email: parsed.data.email,
     password: parsed.data.password,
+    options: { captchaToken: captcha.token },
   });
 
   if (error) {
@@ -218,6 +230,11 @@ export async function loginWithEmail(
   redirect('/dashboard');
 }
 
+/**
+ * No CAPTCHA here: Supabase does not accept a captchaToken for OAuth, and
+ * Google runs its own abuse checks on the sign-in itself. A Turnstile gate in
+ * front of this button would be client-side only, so trivially skipped.
+ */
 export async function loginWithGoogle(): Promise<ActionState> {
   const supabase = await createClient();
   const origin = await originUrl();
@@ -266,6 +283,9 @@ export async function requestPasswordReset(
   const parsed = forgotPasswordSchema.safeParse({ email: formData.get('email') });
   if (!parsed.success) return { fieldErrors: fieldErrorsFrom(parsed.error) };
 
+  const captcha = captchaFrom(formData, Boolean(turnstileSiteKey()));
+  if (!captcha.ok) return { error: CAPTCHA_REQUIRED_MESSAGE };
+
   // Scarcer than the others: each attempt emails someone who may not have
   // asked for it, so this limit protects the inbox owner as much as the
   // server.
@@ -281,6 +301,7 @@ export async function requestPasswordReset(
 
   const { error } = await supabase.auth.resetPasswordForEmail(parsed.data.email, {
     redirectTo: `${origin}/auth/callback?next=/reset-password`,
+    captchaToken: captcha.token,
   });
 
   if (error) log.warn('password reset request failed', { code: error.code ?? 'unknown' });

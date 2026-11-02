@@ -6,6 +6,7 @@ import type { ActionState } from '@/app/actions/auth';
 import { FormAlert } from '@/components/auth/form-alert';
 import { FormField } from '@/components/auth/form-field';
 import { Button } from '@/components/ui/button';
+import { Turnstile } from '@/components/auth/turnstile';
 
 const initial: ActionState = {};
 
@@ -17,7 +18,13 @@ const initial: ActionState = {};
  * not the one above it). Either alone is too easy to do by accident or by
  * someone passing an unlocked laptop.
  */
-export function DeleteAccountForm({ google = false }: { google?: boolean }) {
+export function DeleteAccountForm({
+  google = false,
+  siteKey,
+}: {
+  google?: boolean;
+  siteKey: string | undefined;
+}) {
   const [state, action, pending] = useActionState(deleteAccountAction, initial);
 
   return (
@@ -55,6 +62,9 @@ export function DeleteAccountForm({ google = false }: { google?: boolean }) {
           required
           error={state.fieldErrors?.confirmation}
         />
+
+        {/* Google re-authenticates through OAuth, which takes no CAPTCHA. */}
+        {!google && <Turnstile siteKey={siteKey} resetSignal={state} />}
 
         <Button
           type="submit"

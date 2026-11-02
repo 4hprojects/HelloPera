@@ -27,7 +27,9 @@ const CSP = [
   // Next.js injects inline bootstrap scripts. Removing 'unsafe-inline' means
   // threading a nonce through the document — worth doing, not launch-blocking,
   // and recorded as such in CSP-NOTES.
-  "script-src 'self' 'unsafe-inline' https://pagead2.googlesyndication.com",
+  // challenges.cloudflare.com is Turnstile on the auth forms: its script here,
+  // its challenge iframe under frame-src.
+  "script-src 'self' 'unsafe-inline' https://pagead2.googlesyndication.com https://challenges.cloudflare.com",
   "style-src 'self' 'unsafe-inline'",
   // `blob:` is for document previews rendered before upload (Phase 04).
   "img-src 'self' data: blob: https://*.supabase.co https://*.googlesyndication.com https://*.doubleclick.net",
@@ -36,7 +38,7 @@ const CSP = [
   // listing it would imply the browser talks to Anthropic, which would mean the
   // API key was client-side.
   `connect-src 'self' ${supabaseOrigins().join(' ')}`,
-  'frame-src https://googleads.g.doubleclick.net https://tpc.googlesyndication.com',
+  'frame-src https://googleads.g.doubleclick.net https://tpc.googlesyndication.com https://challenges.cloudflare.com',
   // Duplicates X-Frame-Options: DENY on purpose — the header for older
   // browsers, the directive for newer ones.
   "frame-ancestors 'none'",

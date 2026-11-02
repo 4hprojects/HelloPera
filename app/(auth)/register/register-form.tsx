@@ -7,11 +7,18 @@ import { FormField } from '@/components/auth/form-field';
 import { GoogleButton } from '@/components/auth/google-button';
 import { PasswordField } from '@/components/auth/password-field';
 import { Button } from '@/components/ui/button';
+import { Turnstile } from '@/components/auth/turnstile';
 import { MIN_LENGTH } from '@/lib/auth/password-strength';
 
 const initial: ActionState = {};
 
-export function RegisterForm({ cancelled = false }: { cancelled?: boolean }) {
+export function RegisterForm({
+  cancelled = false,
+  siteKey,
+}: {
+  cancelled?: boolean;
+  siteKey: string | undefined;
+}) {
   const [state, action, pending] = useActionState(registerWithEmail, initial);
 
   // Lifted so the confirm field can compare against it. Only the confirm field
@@ -99,6 +106,7 @@ export function RegisterForm({ cancelled = false }: { cancelled?: boolean }) {
           />
         </div>
 
+        <Turnstile siteKey={siteKey} resetSignal={state} />
         <Button type="submit" disabled={pending} className="mt-2 w-full" size="lg">
           {pending ? 'Creating account…' : 'Create account'}
         </Button>

@@ -67,12 +67,12 @@ straight to enforcement on a live site is how a CSP takes down a checkout.
     "default-src 'self'",
     // Next.js injects inline bootstrap scripts; 'unsafe-inline' is required
     // unless nonces are wired through, which is a larger change.
-    "script-src 'self' 'unsafe-inline' https://pagead2.googlesyndication.com",
+    "script-src 'self' 'unsafe-inline' https://pagead2.googlesyndication.com https://challenges.cloudflare.com",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https://*.supabase.co https://*.googlesyndication.com https://*.doubleclick.net",
     "font-src 'self' data:",
     "connect-src 'self' https://<ref>.supabase.co wss://<ref>.supabase.co",
-    "frame-src https://googleads.g.doubleclick.net https://tpc.googlesyndication.com",
+    "frame-src https://googleads.g.doubleclick.net https://tpc.googlesyndication.com https://challenges.cloudflare.com",
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",
@@ -90,6 +90,9 @@ Notes that matter:
 - **`'unsafe-inline'` in `script-src`** is a real weakening. Removing it means
   threading a nonce through the Next.js document, which is worth doing but is
   not a launch-blocking change.
+- **`challenges.cloudflare.com`** is Cloudflare Turnstile on the auth forms:
+  its script under `script-src`, its challenge iframe under `frame-src`. It
+  needs nothing in `connect-src`.
 - **Do not add `api.anthropic.com`.** OCR runs server-side; putting it in the
   CSP would suggest the browser talks to it, which it must never do — that
   would mean the API key was client-side.
