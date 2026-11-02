@@ -1022,6 +1022,48 @@ try {
         'one link per distinct record (the same transaction is linked once)',
       );
     }
+    // Categories: a record may use a system category or its owner's own.
+    {
+      const category = (owner) =>
+        scalar(
+          "insert into public.categories(user_id,name,type) values($1,'Mine','expense') returning id",
+          [owner],
+        );
+      const mine = await category(u);
+      const theirs = await category(v);
+      const system = await scalar(
+        "insert into public.categories(name,type,is_system) values('Shared','expense',true) returning id",
+      );
+      const bill = (cat) =>
+        db.query(
+          "insert into public.bills(user_id,provider_name,amount,currency_code,due_date,category_id) values($1,'Cat',1,'PHP','2026-11-01',$2)",
+          [u, cat],
+        );
+      await bill(mine);
+      await bill(system);
+      await assert.rejects(bill(theirs), /CATEGORY_NOT_FOUND/);
+      await assert.rejects(
+        db.query(
+          "insert into public.expected_income(user_id,source_name,amount,currency_code,expected_date,category_id) values($1,'Cat',1,'PHP','2026-11-01',$2)",
+          [u, theirs],
+        ),
+        /CATEGORY_NOT_FOUND/,
+      );
+      await assert.rejects(
+        db.query(
+          "insert into public.recurring_rules(user_id,rule_type,name,amount,currency_code,frequency,interval_count,start_date,next_occurrence_date,provider_name,category_id) values($1,'bill','Cat',1,'PHP','monthly',1,'2026-11-01','2026-11-01','Cat',$2)",
+          [u, theirs],
+        ),
+        /CATEGORY_NOT_FOUND/,
+      );
+      await assert.rejects(
+        db.query('update public.transactions set category_id=$2 where id=$1', [
+          tid,
+          theirs,
+        ]),
+        /CATEGORY_NOT_FOUND/,
+      );
+    }
     console.log('PASS: transactions, obligations and accounts can be edited safely');
   }
   {
