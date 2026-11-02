@@ -2,6 +2,8 @@
 
 Audit date: **1 October 2026**. Baseline: `d3b03ad1937dbbcf82aa30e6a75daa6971d43273`, including the pre-existing, uncommitted change to `services/rate-limit.service.ts`.
 
+**Re-audited 3 November 2026:** see [09-audit-2026-11-03.md](09-audit-2026-11-03.md) for current statuses. The phase table below records the 1 October state.
+
 **Launch readiness remains unverified.** Local checks are useful evidence, but do not establish that the deployed application, email, backups, storage or monitoring work. This folder contains analysis and future implementation tasks; it does not record those tasks as implemented.
 
 ## Reading order
@@ -16,6 +18,7 @@ Audit date: **1 October 2026**. Baseline: `d3b03ad1937dbbcf82aa30e6a75daa6971d43
 | [Phase 4: launch and operations](06-phase-4-launch-and-operations.md)                     | Collect deployment, recovery and operational evidence                        |
 | [Phase 5: deferred capabilities](07-phase-5-deferred-capabilities.md)                     | Enable providers only after their own acceptance gates                       |
 | [Validation and evidence](08-validation-and-evidence.md)                                  | Distinguish executed checks from required future verification                |
+| [Re-audit, 3 November 2026](09-audit-2026-11-03.md)                                       | Current statuses, P0 fixes, new tasks HP-027 to HP-038, and priority order   |
 
 ## Priority and status rules
 
