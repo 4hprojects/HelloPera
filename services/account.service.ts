@@ -243,6 +243,9 @@ function accountEditMessage(message: string): string {
   if (message.includes('LOAN_LENDER_REQUIRED')) return 'Enter the lender.';
   if (message.includes('LOAN_PAYMENT_REQUIRED'))
     return 'Enter the payment amount, frequency and next due date.';
+  if (message.includes('LOAN_NEXT_DUE_IN_PAST')) {
+    return 'A new payment schedule must start today or later. Set the next due date.';
+  }
   if (message.includes('LOAN_PRINCIPAL_BELOW_BALANCE')) {
     return 'Original amount cannot be less than what you owe now.';
   }
