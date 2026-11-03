@@ -66,7 +66,7 @@ export async function getAccount(id: string): Promise<Account | null> {
  *
  * Thin wrapper over `lib/analytics/position.summarisePositions`, which is
  * where the arithmetic lives so it can be unit-tested directly. (Service modules are
- * also testable: `vitest.config.ts` aliases `server-only` to its empty stub.)
+ * also testable: `vitest.config.mts` aliases `server-only` to its empty stub.)
  *
  * Note the default: this includes archived accounts, because the accounts
  * page shows them. The dashboard calls `summarisePositions` directly and

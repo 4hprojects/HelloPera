@@ -330,7 +330,7 @@ P0: none demonstrated. P1 items are free-launch gates; P2 items may be scheduled
 **Area:** Developer workflow · **Responsible role:** Maintainer · **Estimate:** M
 **Dependencies:** Relevant Phase 1 changes settled
 
-**Evidence / reproduction:** [README](../README.md), [old checklist](../docs/PROJECT-AUDIT-CHECKLIST.md), [payment action](../app/actions/obligations.ts), [Vitest config](../vitest.config.ts), [readiness record](../docs/LAUNCH-IMPLEMENTATION.md). Local default runtime was Node 20 despite .nvmrc=22.
+**Evidence / reproduction:** [README](../README.md), [old checklist](../docs/PROJECT-AUDIT-CHECKLIST.md), [payment action](../app/actions/obligations.ts), [Vitest config](../vitest.config.mts), [readiness record](../docs/LAUNCH-IMPLEMENTATION.md). Local default runtime was Node 20 despite .nvmrc=22.
 
 **Impact:** Conflicting guidance causes mistaken regressions and overstates readiness.
 
