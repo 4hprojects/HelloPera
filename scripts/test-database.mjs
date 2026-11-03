@@ -218,6 +218,36 @@ try {
     ),
     /ACCOUNT_DELETION_IN_PROGRESS/,
   );
+  // HP-035: staged uploads and the tables added after the guard loop.
+  await assert.rejects(
+    db.query(
+      "insert into storage.objects(bucket_id,name) values('hello-pera-documents',$1)",
+      [`incoming/${a}/${randomUUID()}`],
+    ),
+    /ACCOUNT_DELETION_IN_PROGRESS/,
+  );
+  for (const table of ['loan_details', 'account_details']) {
+    await assert.rejects(
+      db.query(`insert into public.${table}(account_id,user_id) values($1,$2)`, [
+        account,
+        a,
+      ]),
+      /ACCOUNT_DELETION_IN_PROGRESS/,
+      table,
+    );
+  }
+  assert.equal(
+    await scalar(
+      `select count(*)::int from information_schema.columns c
+       join information_schema.tables t on t.table_schema=c.table_schema and t.table_name=c.table_name
+       where c.table_schema='public' and c.column_name='user_id' and t.table_type='BASE TABLE'
+         and c.table_name not in ('account_deletions','deletion_challenges')
+         and not exists (select 1 from pg_trigger g where g.tgname='reject_writes_during_deletion'
+           and g.tgrelid=format('public.%I',c.table_name)::regclass)`,
+    ),
+    0,
+    'every user-owned table carries the deletion guard',
+  );
   await db.query(
     'insert into public.audit_logs(actor_user_id,target_user_id,event_type,metadata) values($1,$1,\'account_deletion_requested\',\'{"email":"a@example.test"}\')',
     [a],
