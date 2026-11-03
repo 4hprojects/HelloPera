@@ -1129,6 +1129,34 @@ try {
     console.log('PASS: transactions, obligations and accounts can be edited safely');
   }
   {
+    // HP-004: the largest amount the schemas accept round-trips exactly, and
+    // one cent more is refused by the column, not rounded.
+    const p = randomUUID();
+    await db.query("insert into auth.users(id,email) values($1,'max-p@example.test')", [
+      p,
+    ]);
+    const big = await scalar(
+      "insert into public.bills(user_id,provider_name,amount,currency_code,due_date) values($1,'Max',$2,'PHP','2024-02-29') returning amount::text",
+      [p, '9999999999999999.99'],
+    );
+    assert.equal(big, '9999999999999999.99');
+    await assert.rejects(
+      db.query(
+        "insert into public.bills(user_id,provider_name,amount,currency_code,due_date) values($1,'Over',$2,'PHP','2026-01-01')",
+        [p, '10000000000000000.00'],
+      ),
+      /numeric field overflow/,
+    );
+    await assert.rejects(
+      db.query(
+        "insert into public.bills(user_id,provider_name,amount,currency_code,due_date) values($1,'Leap',1,'PHP','2023-02-29')",
+        [p],
+      ),
+      /date/,
+    );
+    console.log('PASS: money and date limits match the schemas at the column');
+  }
+  {
     // Deleting a document takes its extraction and links with it, and leaves
     // the records saved from it.
     const d = randomUUID();
