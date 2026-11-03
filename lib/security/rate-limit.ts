@@ -49,6 +49,8 @@ export const RATE_LIMITED_ACTIONS = [
   'document_upload',
   // HP-031. One draft save creates up to 30 records.
   'draft_save',
+  // HP-032. Each export reads the user's whole history.
+  'data_export',
 ] as const;
 export type RateLimitedAction = (typeof RATE_LIMITED_ACTIONS)[number];
 
@@ -100,6 +102,8 @@ export const POLICIES: Record<RateLimitedAction, RateLimitPolicy> = {
   document_upload: { limit: 30, windowSeconds: 60 * 60 },
   // One save per uploaded document, so the same ceiling as uploads.
   draft_save: { limit: 30, windowSeconds: 60 * 60 },
+  // A CSV and a JSON copy, plus a few retries.
+  data_export: { limit: 10, windowSeconds: 60 * 60 },
 };
 
 export type RateLimitResult = {

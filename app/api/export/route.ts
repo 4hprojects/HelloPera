@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAuthResult } from '@/lib/auth/guards';
 import { log } from '@/lib/log';
+import { enforceRateLimit, RateLimitError } from '@/services/rate-limit.service';
 import {
   ExportError,
   buildExport,
@@ -26,7 +27,26 @@ export async function GET(request: Request): Promise<NextResponse> {
   if (!auth.ok) {
     return NextResponse.json(
       { error: auth.reason === 'unauthenticated' ? 'Unauthorized' : 'Forbidden' },
-      { status: auth.reason === 'unauthenticated' ? 401 : 403 },
+      {
+        status: auth.reason === 'unauthenticated' ? 401 : 403,
+        headers: { 'Cache-Control': 'no-store' },
+      },
+    );
+  }
+
+  try {
+    await enforceRateLimit('data_export', `user:${auth.context.user.id}`);
+  } catch (error) {
+    if (!(error instanceof RateLimitError)) throw error;
+    return NextResponse.json(
+      { error: error.userMessage },
+      {
+        status: 429,
+        headers: {
+          'Cache-Control': 'no-store',
+          'Retry-After': String(error.retryAfterSeconds),
+        },
+      },
     );
   }
 

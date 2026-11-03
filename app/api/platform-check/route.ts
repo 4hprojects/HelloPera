@@ -1,4 +1,5 @@
 import sharp from 'sharp';
+import { reuseFor } from '@/lib/utils/reuse-for';
 
 /**
  * Platform verification probe — Phase 00 §20.
@@ -33,7 +34,21 @@ import sharp from 'sharp';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+type Probe = { body: Record<string, unknown>; status: number };
+
+/**
+ * HP-032. The route is public and each run encodes three images, so one
+ * result serves every caller for a minute. The binary either loads in this
+ * container or it does not, so a minute-old answer is as good as a new one.
+ */
+const probe = reuseFor(60_000, check);
+
 export async function GET() {
+  const { body, status } = await probe();
+  return Response.json(body, { status, headers: { 'cache-control': 'no-store' } });
+}
+
+async function check(): Promise<Probe> {
   const started = Date.now();
 
   try {
@@ -61,24 +76,27 @@ export async function GET() {
 
     const meta = await sharp(display).metadata();
 
-    return Response.json({
-      ok: true,
-      checkedAt: new Date().toISOString(),
-      durationMs: Date.now() - started,
-      runtime: {
-        node: process.version,
-        platform: `${process.platform}-${process.arch}`,
-        libvips: sharp.versions.vips,
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        checkedAt: new Date().toISOString(),
+        durationMs: Date.now() - started,
+        runtime: {
+          node: process.version,
+          platform: `${process.platform}-${process.arch}`,
+          libvips: sharp.versions.vips,
+        },
+        sharp: {
+          sourcePngBytes: source.length,
+          displayWebpBytes: display.length,
+          thumbnailWebpBytes: thumbnail.length,
+          displayFormat: meta.format ?? null,
+          displayWidth: meta.width ?? null,
+          displayHeight: meta.height ?? null,
+        },
       },
-      sharp: {
-        sourcePngBytes: source.length,
-        displayWebpBytes: display.length,
-        thumbnailWebpBytes: thumbnail.length,
-        displayFormat: meta.format ?? null,
-        displayWidth: meta.width ?? null,
-        displayHeight: meta.height ?? null,
-      },
-    });
+    };
   } catch (error) {
     // Safe error only — no stack trace to the client (Phase 00 §24).
     const message = error instanceof Error ? error.message : 'unknown error';
@@ -91,8 +109,9 @@ export async function GET() {
         timestamp: new Date().toISOString(),
       }),
     );
-    return Response.json(
-      {
+    return {
+      status: 500,
+      body: {
         ok: false,
         checkedAt: new Date().toISOString(),
         runtime: {
@@ -105,7 +124,6 @@ export async function GET() {
           'is missing from .next/standalone. Fallback: @jsquash/webp (WASM). ' +
           'See docs/PLATFORM-HELLODEPLOY.md note A.',
       },
-      { status: 500 },
-    );
+    };
   }
 }
