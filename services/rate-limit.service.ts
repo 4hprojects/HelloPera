@@ -52,9 +52,16 @@ export class RateLimitError extends Error {
  * `X-Forwarded-For` entry may be client-supplied. It is preferred when present.
  * It is only trustworthy if the origin is reachable through Cloudflare alone;
  * otherwise a direct caller can set it, which is the same weight as the above.
+ *
+ * HP-015. `TRUSTED_CLIENT_IP_HEADER` names the one header to trust, for a
+ * deployment whose origin is locked so only that proxy can reach it
+ * (`docs/DEPLOYMENT.md`). The fallback chain is then skipped, so a header the
+ * proxy does not set cannot be supplied instead. Unset, the chain below stays.
  */
 export async function clientIp(): Promise<string> {
   const h = await headers();
+  const trusted = process.env.TRUSTED_CLIENT_IP_HEADER?.trim().toLowerCase();
+  if (trusted) return h.get(trusted)?.split(',')[0]?.trim() || 'unknown';
   const cf = h.get('cf-connecting-ip');
   if (cf) return cf.trim();
   const forwarded = h.get('x-forwarded-for');

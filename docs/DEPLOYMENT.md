@@ -78,6 +78,24 @@ new build; restarting an existing image cannot change its browser configuration.
 Runtime secrets can rotate on redeploy; rollback uses current runtime secrets and
 the old image's public snapshot. Keep database changes backward compatible.
 
+### Origin lock and client IP (HP-015)
+
+Rate limits key unauthenticated requests by client IP, read from
+`CF-Connecting-IP` behind Cloudflare. A request that reaches the origin directly,
+not through Cloudflare, can set that header to any value and get a fresh limit
+on every request. To close that:
+
+1. Allow inbound 80/443 on the origin only from
+   [Cloudflare's published ranges](https://www.cloudflare.com/ips/), in the host
+   firewall or the provider's security group. Alternatively, use Cloudflare
+   Tunnel or Authenticated Origin Pulls.
+2. Check it from outside Cloudflare: `curl -sk --resolve hellopera.online:443:<origin-ip> https://hellopera.online/api/health` must fail to connect.
+3. Then set `TRUSTED_CLIENT_IP_HEADER=cf-connecting-ip` (runtime). The app then
+   trusts only that header and ignores `X-Forwarded-For` and `X-Real-IP`.
+
+Until step 2 passes, leave the variable unset. The default chain still prefers
+`CF-Connecting-IP`.
+
 ## 3. GitHub configuration
 
 Environments **staging** and **production** are configured and restricted to `main`.
