@@ -55,75 +55,69 @@ export function SiteHeader() {
   return (
     <header className="border-b border-border bg-surface">
       {/*
-        Two rows on a phone, one from `sm` up.
+        Two rows below `lg`, one from `lg` up (HP-024).
 
-        Measured, not guessed: at 320px the logo is ~140px and the theme
-        toggle ~165px, so logo + toggle + call-to-action needs ~395px in the
-        288px a 320px viewport leaves after the gutters. The old single row
-        overflowed at every phone width — the landing page scrolled sideways
-        by 237px — which is exactly the audience this product is built for.
+        Measured at 375 and 768px: logo, nav, theme toggle and both buttons
+        need about 725px on one line, and the nav wrapped inside whatever was
+        left, stranding "Help" on a line of its own (a 213px header on a
+        phone). So below `lg` the logo and the actions share the first row
+        and the nav gets the full width of the second. On a phone the theme
+        toggle moves to the footer: the nav alone fills the row.
 
-        So the container wraps, and explicit `order` puts the nav and the
-        toggle on their own line below the logo and the CTA. Row one is then
-        ~250px and row two ~235px, both inside 288. From `sm` the order
-        returns to logo / nav / toggle / CTA on one line.
+        Sign in is hidden on a phone by a wrapper, not by a class on the
+        link: `buttonClass` sets `inline-flex`, which overrode `hidden`.
       */}
-      <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
+      <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-x-4 px-4 py-2 lg:flex-nowrap lg:py-3">
         <Link href="/" className="order-1 shrink-0 rounded">
           <AppLogo />
         </Link>
 
-        <div className="order-3 flex w-full items-center justify-between gap-3 sm:order-2 sm:w-auto sm:flex-1 sm:justify-center">
-          {/*
-            §11, §66 — driven by the route registry rather than a hand-kept
-            list, which is why /pricing once shipped unreachable: it existed as
-            a page and appeared in neither the header nor the footer.
+        {/*
+          §11, §66 — driven by the route registry rather than a hand-kept
+          list, which is why /pricing once shipped unreachable: it existed as
+          a page and appeared in neither the header nor the footer.
+        */}
+        <nav
+          aria-label="Site"
+          className="order-3 flex w-full justify-between gap-x-4 sm:justify-start sm:gap-x-6 lg:order-2 lg:w-auto lg:flex-1 lg:justify-center"
+        >
+          {nav.map((item) => {
+            const current = pathname === item.path;
+            return (
+              <Link
+                key={item.path}
+                href={item.path}
+                aria-current={current ? 'page' : undefined}
+                className={
+                  current
+                    ? 'inline-flex min-h-11 items-center hp-small font-semibold text-text'
+                    : 'inline-flex min-h-11 items-center hp-small text-text-muted hover:text-text'
+                }
+              >
+                {item.label}
+              </Link>
+            );
+          })}
+        </nav>
 
-            Visible at every width. It was `hidden sm:flex`, which left phone
-            visitors with no navigation at all.
-          */}
-          <nav
-            aria-label="Site"
-            className="flex flex-wrap gap-x-4 gap-y-1 sm:justify-center sm:gap-5"
-          >
-            {nav.map((item) => {
-              const current = pathname === item.path;
-              return (
-                <Link
-                  key={item.path}
-                  href={item.path}
-                  aria-current={current ? 'page' : undefined}
-                  className={
-                    current
-                      ? 'inline-flex min-h-11 items-center hp-small font-semibold text-text'
-                      : 'inline-flex min-h-11 items-center hp-small text-text-muted hover:text-text'
-                  }
-                >
-                  {item.label}
-                </Link>
-              );
-            })}
-          </nav>
-
-          <div className="shrink-0">
+        <div className="order-2 flex shrink-0 items-center gap-2 sm:gap-3 lg:order-3">
+          <div className="hidden sm:block">
             <ThemeToggle />
           </div>
-        </div>
-
-        <div className="order-2 flex shrink-0 items-center gap-2 sm:order-3 sm:gap-3">
           {showSignIn ? (
-            <Link
-              href="/login"
-              className={buttonClass(
-                // Ghost beside Get started, primary when it stands alone —
-                // a lone ghost button reads as disabled.
-                bothShown ? 'ghost' : 'primary',
-                'sm',
-                bothShown ? 'hidden sm:inline-flex' : undefined,
-              )}
-            >
-              Sign in
-            </Link>
+            <span className={bothShown ? 'hidden sm:inline-flex' : 'inline-flex'}>
+              <Link
+                href="/login"
+                className={buttonClass(
+                  // Ghost beside Get started, primary when it stands alone —
+                  // a lone ghost button reads as disabled.
+                  bothShown ? 'ghost' : 'primary',
+                  'sm',
+                )}
+              >
+                Sign in
+              </Link>
+            </span>
           ) : null}
           {showRegister ? (
             <Link href="/register" className={buttonClass('primary', 'sm')}>

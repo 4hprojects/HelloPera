@@ -66,12 +66,61 @@ test('dark theme remains readable and navigation targets are touch-sized', async
   page,
 }) => {
   await page.goto('/features');
+  // On a phone the theme toggle is in the footer, under the consent banner.
+  // A fresh context always gets the banner, after hydration, so wait for it
+  // and answer it as a visitor would.
+  await page.getByRole('button', { name: 'Only what is needed' }).click();
   await page.getByRole('button', { name: 'Dark', exact: true }).click();
   const audit = await new AxeBuilder({ page })
     .withTags(['wcag2a', 'wcag2aa', 'wcag21aa'])
     .analyze();
   expect(audit.violations.map((v) => v.id)).toEqual([]);
-  const targets = page.locator('header nav a, header button');
+  const targets = page.locator('header nav a:visible, header button:visible');
   for (const target of await targets.all())
     expect((await target.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+});
+
+test('header and consent banner stay compact at every width', async ({ page }) => {
+  // HP-024: at 375 and 768px the nav wrapped, stranding one link on a line of
+  // its own, and the consent banner covered a fifth of a phone screen.
+  await page.goto('/features');
+  const header = await page.locator('header:has(nav[aria-label="Site"])').boundingBox();
+  expect(header?.height ?? 0).toBeLessThanOrEqual(130);
+  const tops = await page
+    .locator('header nav[aria-label="Site"] a')
+    .evaluateAll((links) => links.map((a) => Math.round(a.getBoundingClientRect().top)));
+  expect(new Set(tops).size, 'site nav fits on one row').toBe(1);
+  const banner = page.getByRole('region', { name: 'Cookie choices' });
+  await expect(banner).toBeVisible();
+  const box = await banner.boundingBox();
+  const viewport = page.viewportSize()?.height ?? 800;
+  expect(box?.height ?? 0).toBeLessThanOrEqual(viewport * 0.16);
+  await expect(page.getByRole('group', { name: 'Colour theme' })).toBeVisible();
+});
+
+test('manifest, sitemap and robots describe the public site', async ({ request }) => {
+  const manifest = await request.get('/manifest.webmanifest');
+  expect(manifest.ok()).toBe(true);
+  const body = (await manifest.json()) as {
+    name?: string;
+    start_url?: string;
+    icons?: Array<{ src: string; sizes?: string }>;
+  };
+  expect(body.name).toBeTruthy();
+  expect(body.start_url).toBeTruthy();
+  expect(body.icons?.some((i) => i.sizes === '512x512')).toBe(true);
+  for (const icon of body.icons ?? []) {
+    expect((await request.get(icon.src)).ok(), icon.src).toBe(true);
+  }
+
+  const sitemap = await (await request.get('/sitemap.xml')).text();
+  for (const path of ['/features', '/pricing', '/privacy']) {
+    expect(sitemap, path).toContain(path);
+  }
+  for (const path of ['/dashboard', '/admin', '/settings']) {
+    expect(sitemap, path).not.toContain(path);
+  }
+
+  const robots = await (await request.get('/robots.txt')).text();
+  expect(robots).toMatch(/Sitemap:/i);
 });

@@ -77,23 +77,35 @@ export function ConsentBanner() {
     <div
       role="region"
       aria-label="Cookie choices"
-      className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface p-4 shadow-lg"
+      className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface px-4 py-3 shadow-lg"
     >
-      <div className="mx-auto flex max-w-5xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      {/*
+        Compact on a phone (HP-024): it covered about a fifth of a 812px
+        screen. Same choice, same equal-weight buttons, fewer words.
+      */}
+      <div className="mx-auto flex max-w-5xl flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
         <p className="hp-small text-text-muted">
-          We use cookies that are needed to sign you in. With your permission we would
-          also measure which pages are useful.{' '}
+          Cookies keep you signed in. May we also measure which pages are useful?{' '}
           <Link href="/privacy" className="text-primary-text underline">
             How we handle your data
           </Link>
-          .
         </p>
         <div className="flex shrink-0 gap-2">
           {/* Equal weight, one click each. */}
-          <Button variant="ghost" size="sm" onClick={() => decide(rejectAll())}>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="flex-auto whitespace-nowrap sm:flex-none"
+            onClick={() => decide(rejectAll())}
+          >
             Only what is needed
           </Button>
-          <Button variant="primary" size="sm" onClick={() => decide(grantAll())}>
+          <Button
+            variant="primary"
+            size="sm"
+            className="flex-auto whitespace-nowrap sm:flex-none"
+            onClick={() => decide(grantAll())}
+          >
             Accept
           </Button>
         </div>
