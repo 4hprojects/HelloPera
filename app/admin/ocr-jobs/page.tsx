@@ -4,6 +4,7 @@ import { PageHeader } from '@/components/ui/page-header';
 import { Cell, DataTable, StatusText } from '@/components/admin/data-table';
 import { requireAdmin } from '@/lib/auth/guards';
 import { listOcrJobs } from '@/services/admin.service';
+import { Unavailable } from '@/components/admin/unavailable';
 
 export const metadata: Metadata = { title: 'OCR jobs · Admin' };
 
@@ -28,7 +29,8 @@ export default async function AdminOcrJobsPage({
 }) {
   await requireAdmin();
   const { status } = await searchParams;
-  const jobs = await listOcrJobs({ status });
+  const result = await listOcrJobs({ status });
+  const jobs = result.state === 'ok' ? result.data : [];
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -54,32 +56,36 @@ export default async function AdminOcrJobsPage({
         ))}
       </div>
 
-      <DataTable
-        headers={['Job', 'User', 'Provider', 'Status', 'Attempts', 'Error', 'Created']}
-        rowCount={jobs.length}
-        empty="No jobs match."
-      >
-        {jobs.map((job) => (
-          <tr key={job.id}>
-            <Cell>{job.id.slice(0, 8)}</Cell>
-            <Cell>
-              <Link
-                href={`/admin/users/${job.userId}`}
-                className="text-primary-text underline"
-              >
-                {job.userId.slice(0, 8)}
-              </Link>
-            </Cell>
-            <Cell>{job.provider ?? '—'}</Cell>
-            <Cell>
-              <StatusText value={job.status} />
-            </Cell>
-            <Cell numeric>{job.attemptCount}</Cell>
-            <Cell>{job.errorCode ?? '—'}</Cell>
-            <Cell>{new Date(job.createdAt).toLocaleString()}</Cell>
-          </tr>
-        ))}
-      </DataTable>
+      {result.state === 'unavailable' ? (
+        <Unavailable what="OCR jobs" reference={result.reference} />
+      ) : (
+        <DataTable
+          headers={['Job', 'User', 'Provider', 'Status', 'Attempts', 'Error', 'Created']}
+          rowCount={jobs.length}
+          empty="No jobs match."
+        >
+          {jobs.map((job) => (
+            <tr key={job.id}>
+              <Cell>{job.id.slice(0, 8)}</Cell>
+              <Cell>
+                <Link
+                  href={`/admin/users/${job.userId}`}
+                  className="text-primary-text underline"
+                >
+                  {job.userId.slice(0, 8)}
+                </Link>
+              </Cell>
+              <Cell>{job.provider ?? '—'}</Cell>
+              <Cell>
+                <StatusText value={job.status} />
+              </Cell>
+              <Cell numeric>{job.attemptCount}</Cell>
+              <Cell>{job.errorCode ?? '—'}</Cell>
+              <Cell>{new Date(job.createdAt).toLocaleString()}</Cell>
+            </tr>
+          ))}
+        </DataTable>
+      )}
 
       {/* §27 — retry is code, but it cannot run without a provider key. Saying
           so beats a button that fails. */}

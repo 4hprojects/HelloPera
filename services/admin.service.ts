@@ -36,20 +36,8 @@ import type { UserRole, UserStatus } from '@/types/auth';
 type Row = Record<string, unknown>;
 const str = (v: unknown): string | null => (typeof v === 'string' ? v : null);
 
-/** Every read here degrades to an empty answer rather than a broken page. */
-async function safely<T>(label: string, fallback: T, run: () => Promise<T>): Promise<T> {
-  try {
-    return await run();
-  } catch (error) {
-    log.error(`admin: ${label} failed`, {
-      m: error instanceof Error ? error.message : 'unknown',
-    });
-    return fallback;
-  }
-}
-
 /**
- * Like `safely`, but a failure is reported as unavailable with a reference that
+ * Every admin read. A failure is reported as unavailable with a reference that
  * is also logged, never as an empty answer. Returned Supabase errors are thrown
  * by the callers so they reach this wrapper.
  */
@@ -170,10 +158,10 @@ export async function listUsers(params: {
   search?: string;
   status?: UserStatus;
   limit?: number;
-}): Promise<AdminUser[]> {
+}): Promise<Availability<AdminUser[]>> {
   const admin = createAdminClient();
 
-  return safely('user list', [], async () => {
+  return guarded('user list', async () => {
     let query = admin
       .from('profiles')
       .select('id, email, full_name, role, status, created_at, timezone')
@@ -224,16 +212,19 @@ export type AdminUserDetail = {
   recordCounts: { transactions: number; accounts: number; documents: number };
 };
 
-export async function getUserDetail(userId: string): Promise<AdminUserDetail | null> {
+export async function getUserDetail(
+  userId: string,
+): Promise<Availability<AdminUserDetail | null>> {
   const admin = createAdminClient();
 
-  return safely('user detail', null, async () => {
-    const { data: profile } = await admin
+  return guarded('user detail', async () => {
+    const { data: profile, error: profileError } = await admin
       .from('profiles')
       .select('id, email, full_name, role, status, created_at, timezone')
       .eq('id', userId)
       .maybeSingle();
 
+    if (profileError) throw new Error(profileError.code);
     if (!profile) return null;
 
     const [sub, usage, overrides, notes, events, tx, accounts, documents] =
@@ -277,6 +268,11 @@ export async function getUserDetail(userId: string): Promise<AdminUserDetail | n
           .select('id', { count: 'exact', head: true })
           .eq('user_id', userId),
       ]);
+
+    // A failed part must not read as "none": no notes, zero transactions.
+    for (const part of [sub, usage, overrides, notes, events, tx, accounts, documents]) {
+      if (part.error) throw new Error(part.error.code);
+    }
 
     const planRow = sub.data?.plans as Row | undefined;
 
@@ -333,13 +329,14 @@ export type AdminFlag = {
   updatedBy: string | null;
 };
 
-export async function listFlags(): Promise<AdminFlag[]> {
+export async function listFlags(): Promise<Availability<AdminFlag[]>> {
   const admin = createAdminClient();
-  return safely('flags', [], async () => {
-    const { data } = await admin
+  return guarded('flags', async () => {
+    const { data, error } = await admin
       .from('feature_flags')
       .select('key, enabled, config, updated_at, updated_by')
       .order('key');
+    if (error) throw new Error(error.code);
     return ((data ?? []) as Row[]).map((r) => ({
       key: String(r.key),
       enabled: r.enabled === true,
@@ -366,9 +363,11 @@ export type AdminOcrJob = {
   completedAt: string | null;
 };
 
-export async function listOcrJobs(params: { status?: string; limit?: number } = {}) {
+export async function listOcrJobs(
+  params: { status?: string; limit?: number } = {},
+): Promise<Availability<AdminOcrJob[]>> {
   const admin = createAdminClient();
-  return safely<AdminOcrJob[]>('ocr jobs', [], async () => {
+  return guarded('ocr jobs', async () => {
     let query = admin
       .from('ocr_jobs')
       // §24 — "Do not show raw OCR text in list view." There is no raw text in
@@ -381,7 +380,8 @@ export async function listOcrJobs(params: { status?: string; limit?: number } = 
 
     if (params.status) query = query.eq('status', params.status);
 
-    const { data } = await query;
+    const { data, error } = await query;
+    if (error) throw new Error(error.code);
     return ((data ?? []) as Row[]).map((r) => ({
       id: String(r.id),
       userId: String(r.user_id),
@@ -546,9 +546,9 @@ export async function listAuditLog(params: {
   eventType?: string;
   entityType?: string;
   limit?: number;
-}): Promise<AdminAuditRow[]> {
+}): Promise<Availability<AdminAuditRow[]>> {
   const admin = createAdminClient();
-  return safely<AdminAuditRow[]>('audit log', [], async () => {
+  return guarded('audit log', async () => {
     let query = admin
       .from('audit_logs')
       .select(
@@ -560,7 +560,8 @@ export async function listAuditLog(params: {
     if (params.eventType) query = query.eq('event_type', params.eventType);
     if (params.entityType) query = query.eq('entity_type', params.entityType);
 
-    const { data } = await query;
+    const { data, error } = await query;
+    if (error) throw new Error(error.code);
     return ((data ?? []) as Row[]).map((r) => ({
       id: String(r.id),
       eventType: String(r.event_type),

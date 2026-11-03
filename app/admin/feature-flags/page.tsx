@@ -11,12 +11,13 @@ import {
   flagInfo,
   type FlagInfo,
 } from '@/lib/admin/flag-catalog';
-import { listFlags } from '@/services/admin.service';
+import { listFlags, type AdminFlag } from '@/services/admin.service';
+import { Unavailable } from '@/components/admin/unavailable';
 import { setFlagAction } from '@/app/actions/admin';
 
 export const metadata: Metadata = { title: 'Feature switches · Admin' };
 
-type Flag = Awaited<ReturnType<typeof listFlags>>[number];
+type Flag = AdminFlag;
 
 /**
  * /admin/feature-flags — PHASE-13 §33 to §36.
@@ -34,9 +35,18 @@ type Flag = Awaited<ReturnType<typeof listFlags>>[number];
  */
 export default async function AdminFlagsPage() {
   await requireAdmin();
-  const flags = await listFlags();
+  const result = await listFlags();
+  // Switch positions that could not be read are not shown as "off".
+  if (result.state === 'unavailable') {
+    return (
+      <div className="mx-auto max-w-3xl">
+        <PageHeader title="Feature switches" />
+        <Unavailable what="Feature switches" reference={result.reference} />
+      </div>
+    );
+  }
 
-  const rows = flags.map((flag) => ({ flag, info: flagInfo(flag.key) }));
+  const rows = result.data.map((flag) => ({ flag, info: flagInfo(flag.key) }));
   const live = rows.filter((r) => r.info.connected);
   const inactive = rows.filter((r) => !r.info.connected);
 
