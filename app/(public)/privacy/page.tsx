@@ -23,11 +23,14 @@ export const metadata: Metadata = {
  *    null`, so the row persists with no user attached.
  *  - OCR → Anthropic, only when the user asks for it.
  *  - Advertising → not running; `ads_enabled_global` is false.
+ *  - Bot check → Cloudflare Turnstile in invisible mode on the auth forms.
+ *    Invisible mode requires this page to reference Cloudflare's Turnstile
+ *    Privacy Addendum.
  *
  * Nothing here is aspirational. If a claim stops being true, this page is
  * wrong and must change with it.
  */
-const UPDATED = '14 September 2026';
+const UPDATED = '3 November 2026';
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -125,6 +128,24 @@ export default function PrivacyPage() {
         </P>
       </Section>
 
+      <Section title="Bot protection">
+        <P>
+          The sign-in, sign-up, password reset and account deletion forms use Cloudflare
+          Turnstile to check that a person, not a bot, is submitting them. The check runs
+          in the background and collects information about your browser and device to do
+          so. Cloudflare&rsquo;s handling of that information is described in the{' '}
+          <a
+            href="https://www.cloudflare.com/turnstile-privacy-policy/"
+            className="text-primary-text underline"
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            Turnstile Privacy Addendum
+          </a>
+          .
+        </P>
+      </Section>
+
       <Section title="Getting your data back">
         <P>
           You can export everything at any time from your settings, as CSV or JSON. The
@@ -158,7 +179,8 @@ export default function PrivacyPage() {
       <Section title="Where your data is held">
         <P>
           {BRAND.name} stores data with Supabase. Document reading is performed by
-          Anthropic. Both process data on our instructions and for no other purpose.
+          Anthropic, and the bot check on our forms by Cloudflare. Each processes data on
+          our instructions and for no other purpose.
         </P>
       </Section>
 
