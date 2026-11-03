@@ -727,8 +727,9 @@ export async function listIntegrityFindings(
       entityType: String(r.entity_type),
       entityId: String(r.entity_id),
       detail: String(r.detail ?? ''),
-      // numeric arrives as a string; left as one, because parseFloat on money
-      // is how rounding errors enter a report about rounding errors.
+      // The RPC returns money as text (HP-005) and it stays a string, because
+      // parseFloat on money is how rounding errors enter a report about
+      // rounding errors.
       expected: r.expected === null ? null : String(r.expected),
       actual: r.actual === null ? null : String(r.actual),
     }));

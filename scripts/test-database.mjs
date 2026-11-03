@@ -6,19 +6,23 @@ import { randomUUID } from 'node:crypto';
 const db = new PGlite();
 try {
   await db.exec(await readFile('tests/database/bootstrap.sql', 'utf8'));
-  for (const file of (await readdir('supabase/migrations'))
+  const files = (await readdir('supabase/migrations'))
     .filter((f) => f.endsWith('.sql'))
-    .sort()) {
+    .sort();
+  const apply = async (file) => {
     try {
       await db.exec(await readFile(`supabase/migrations/${file}`, 'utf8'));
     } catch (error) {
       throw new Error(`${file}: ${error.message}`);
     }
-  }
-  for (const file of (await readdir('supabase/migrations'))
-    .filter((f) => f.startsWith('20260923'))
-    .sort()) {
-    await db.exec(await readFile(`supabase/migrations/${file}`, 'utf8'));
+  };
+  // The 20260923 launch migrations must be safe to re-apply. They are run a
+  // second time straight after the first, before later migrations redefine
+  // the functions they create, so the re-run cannot undo those later changes.
+  const launch = files.filter((f) => f.startsWith('20260923'));
+  for (const file of files) {
+    await apply(file);
+    if (file === launch.at(-1)) for (const again of launch) await apply(again);
   }
   console.log('PASS: all migrations execute on isolated PostgreSQL');
   const scalar = async (sql, params = []) =>
@@ -842,6 +846,17 @@ try {
       ),
       '100.00x4',
     );
+    // HP-005: money leaves read_obligations as text, installments included.
+    const [read] = await scalar(
+      "select public.read_obligations('bill',true,false,null,null,$1)",
+      [bill],
+    );
+    assert.equal(read.installment_amount, '100.00');
+    assert.equal(read.amount, '400.00');
+    assert.equal(
+      await scalar("select jsonb_typeof(public.read_obligations('receivable'))"),
+      'array',
+    );
     await assert.rejects(terms(400, 500, 4), /INSTALLMENT_INVALID/);
     await assert.rejects(terms(400, 100, null), /INSTALLMENT_INVALID/);
     await assert.rejects(terms(400, null, 4), /INSTALLMENT_INVALID/);
@@ -1112,6 +1127,40 @@ try {
       );
     }
     console.log('PASS: transactions, obligations and accounts can be edited safely');
+  }
+  {
+    // HP-005: integrity findings carry money as text, not a rounded number.
+    const z = randomUUID();
+    await db.query("insert into auth.users(id,email) values($1,'int-z@example.test')", [
+      z,
+    ]);
+    const acct = await scalar(
+      "select public.create_account($1,'Drift','cash','asset','PHP',1000.10)",
+      [z],
+    );
+    await db.query('update public.accounts set current_balance=999.90 where id=$1', [
+      acct,
+    ]);
+    const finding = (
+      await db.query(
+        "select expected, actual, pg_typeof(expected)::text as t from public.check_financial_integrity($1) where check_name='account_balance'",
+        [z],
+      )
+    ).rows[0];
+    assert.deepEqual(finding, { expected: '1000.10', actual: '999.90', t: 'text' });
+    assert.equal(
+      await scalar(
+        "select has_function_privilege('authenticated','public.check_financial_integrity(uuid)','execute')",
+      ),
+      false,
+    );
+    assert.equal(
+      await scalar(
+        "select has_function_privilege('authenticated','public.financial_integrity_findings(uuid)','execute')",
+      ),
+      false,
+    );
+    console.log('PASS: integrity findings and obligation reads carry money as text');
   }
   {
     // HP-034: edits cannot misfile an entry, move a linked entry's amount, or
