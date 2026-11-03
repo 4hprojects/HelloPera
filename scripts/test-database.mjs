@@ -6,19 +6,23 @@ import { randomUUID } from 'node:crypto';
 const db = new PGlite();
 try {
   await db.exec(await readFile('tests/database/bootstrap.sql', 'utf8'));
-  for (const file of (await readdir('supabase/migrations'))
+  const files = (await readdir('supabase/migrations'))
     .filter((f) => f.endsWith('.sql'))
-    .sort()) {
+    .sort();
+  const apply = async (file) => {
     try {
       await db.exec(await readFile(`supabase/migrations/${file}`, 'utf8'));
     } catch (error) {
       throw new Error(`${file}: ${error.message}`);
     }
-  }
-  for (const file of (await readdir('supabase/migrations'))
-    .filter((f) => f.startsWith('20260923'))
-    .sort()) {
-    await db.exec(await readFile(`supabase/migrations/${file}`, 'utf8'));
+  };
+  // The 20260923 launch migrations must be safe to re-apply. They are run a
+  // second time straight after the first, before later migrations redefine
+  // the functions they create, so the re-run cannot undo those later changes.
+  const launch = files.filter((f) => f.startsWith('20260923'));
+  for (const file of files) {
+    await apply(file);
+    if (file === launch.at(-1)) for (const again of launch) await apply(again);
   }
   console.log('PASS: all migrations execute on isolated PostgreSQL');
   const scalar = async (sql, params = []) =>
@@ -218,6 +222,36 @@ try {
     ),
     /ACCOUNT_DELETION_IN_PROGRESS/,
   );
+  // HP-035: staged uploads and the tables added after the guard loop.
+  await assert.rejects(
+    db.query(
+      "insert into storage.objects(bucket_id,name) values('hello-pera-documents',$1)",
+      [`incoming/${a}/${randomUUID()}`],
+    ),
+    /ACCOUNT_DELETION_IN_PROGRESS/,
+  );
+  for (const table of ['loan_details', 'account_details']) {
+    await assert.rejects(
+      db.query(`insert into public.${table}(account_id,user_id) values($1,$2)`, [
+        account,
+        a,
+      ]),
+      /ACCOUNT_DELETION_IN_PROGRESS/,
+      table,
+    );
+  }
+  assert.equal(
+    await scalar(
+      `select count(*)::int from information_schema.columns c
+       join information_schema.tables t on t.table_schema=c.table_schema and t.table_name=c.table_name
+       where c.table_schema='public' and c.column_name='user_id' and t.table_type='BASE TABLE'
+         and c.table_name not in ('account_deletions','deletion_challenges')
+         and not exists (select 1 from pg_trigger g where g.tgname='reject_writes_during_deletion'
+           and g.tgrelid=format('public.%I',c.table_name)::regclass)`,
+    ),
+    0,
+    'every user-owned table carries the deletion guard',
+  );
   await db.query(
     'insert into public.audit_logs(actor_user_id,target_user_id,event_type,metadata) values($1,$1,\'account_deletion_requested\',\'{"email":"a@example.test"}\')',
     [a],
@@ -323,6 +357,23 @@ try {
     await assert.rejects(
       db.query('select public.assert_financial_writes_enabled()'),
       /FINANCIAL_WRITES_DISABLED/,
+    );
+    // HP-025: the tables refuse writes themselves while the ledger is frozen,
+    // whichever path writes. Deletes stay possible.
+    await assert.rejects(
+      db.query(
+        "insert into public.bills(user_id,provider_name,amount,currency_code,due_date) values($1,'Frozen',1,'PHP','2026-09-23')",
+        [b],
+      ),
+      /FINANCIAL_WRITES_DISABLED/,
+    );
+    await db.query("delete from public.bills where provider_name='never-there'");
+    await db.query(
+      "insert into public.feature_flags(key,enabled) values('financial_writes_enabled',true)",
+    );
+    await db.query(
+      "insert into public.bills(user_id,provider_name,amount,currency_code,due_date) values($1,'Thawed',1,'PHP','2026-09-23')",
+      [b],
     );
     console.log(
       'PASS: scheduled generation fails closed when financial writes are off or unreadable',
@@ -795,6 +846,17 @@ try {
       ),
       '100.00x4',
     );
+    // HP-005: money leaves read_obligations as text, installments included.
+    const [read] = await scalar(
+      "select public.read_obligations('bill',true,false,null,null,$1)",
+      [bill],
+    );
+    assert.equal(read.installment_amount, '100.00');
+    assert.equal(read.amount, '400.00');
+    assert.equal(
+      await scalar("select jsonb_typeof(public.read_obligations('receivable'))"),
+      'array',
+    );
     await assert.rejects(terms(400, 500, 4), /INSTALLMENT_INVALID/);
     await assert.rejects(terms(400, 100, null), /INSTALLMENT_INVALID/);
     await assert.rejects(terms(400, null, 4), /INSTALLMENT_INVALID/);
@@ -1065,6 +1127,227 @@ try {
       );
     }
     console.log('PASS: transactions, obligations and accounts can be edited safely');
+  }
+  {
+    // HP-005: integrity findings carry money as text, not a rounded number.
+    const z = randomUUID();
+    await db.query("insert into auth.users(id,email) values($1,'int-z@example.test')", [
+      z,
+    ]);
+    const acct = await scalar(
+      "select public.create_account($1,'Drift','cash','asset','PHP',1000.10)",
+      [z],
+    );
+    await db.query('update public.accounts set current_balance=999.90 where id=$1', [
+      acct,
+    ]);
+    const finding = (
+      await db.query(
+        "select expected, actual, pg_typeof(expected)::text as t from public.check_financial_integrity($1) where check_name='account_balance'",
+        [z],
+      )
+    ).rows[0];
+    assert.deepEqual(finding, { expected: '1000.10', actual: '999.90', t: 'text' });
+    assert.equal(
+      await scalar(
+        "select has_function_privilege('authenticated','public.check_financial_integrity(uuid)','execute')",
+      ),
+      false,
+    );
+    assert.equal(
+      await scalar(
+        "select has_function_privilege('authenticated','public.financial_integrity_findings(uuid)','execute')",
+      ),
+      false,
+    );
+    console.log('PASS: integrity findings and obligation reads carry money as text');
+  }
+  {
+    // HP-034: edits cannot misfile an entry, move a linked entry's amount, or
+    // touch an archived account.
+    const w = randomUUID();
+    await db.query("insert into auth.users(id,email) values($1,'edit-w@example.test')", [
+      w,
+    ]);
+    const acct = await scalar(
+      "select public.create_account($1,'Wallet','cash','asset','PHP',1000)",
+      [w],
+    );
+    const tid = await scalar(
+      "insert into public.transactions(user_id,type,amount,currency_code,transaction_date,source_account_id,status) values($1,'expense',100,'PHP','2026-10-01',$2,'confirmed') returning id",
+      [w, acct],
+    );
+    await db.query('select public.recalculate_account_balance($1)', [acct]);
+    const cat = (type) =>
+      scalar(
+        'insert into public.categories(user_id,name,type) values($1,$2,$3) returning id',
+        [w, `Edit ${type}`, type],
+      );
+    const [incomeCat, expenseCat, bothCat] = [
+      await cat('income'),
+      await cat('expense'),
+      await cat('both'),
+    ];
+    const edit = (amount, category = null, notes = '') =>
+      db.query(
+        "select public.update_transaction($1,$2,$3,'2026-10-01',$4,null,null,$5)",
+        [w, tid, amount, category, notes],
+      );
+    await assert.rejects(edit(100, incomeCat), /CATEGORY_TYPE_MISMATCH/);
+    await edit(100, expenseCat);
+    await edit(100, bothCat);
+
+    const event = await scalar(
+      "insert into public.expected_events(user_id,event_type,name,amount,currency_code,scheduled_date,status,actual_transaction_id) values($1,'expense','Planned',100,'PHP','2026-10-01','fulfilled',$2) returning id",
+      [w, tid],
+    );
+    await assert.rejects(edit(120, bothCat), /TRANSACTION_LINKED/);
+    await edit(100, bothCat, 'notes only');
+    await db.query('delete from public.expected_events where id=$1', [event]);
+
+    await db.query('update public.accounts set is_archived=true where id=$1', [acct]);
+    await assert.rejects(edit(120, bothCat), /ACCOUNT_ARCHIVED/);
+    await edit(100, bothCat, 'still describable');
+    assert.equal(
+      await scalar('select current_balance::text from public.accounts where id=$1', [
+        acct,
+      ]),
+      '900.00',
+    );
+    await assert.rejects(
+      db.query("select public.update_account_details($1,$2,'Renamed')", [w, acct]),
+      /ACCOUNT_ARCHIVED/,
+    );
+    const bank = await scalar(
+      "select public.create_account($1,'Bank','bank','asset','PHP',0)",
+      [w],
+    );
+    await db.query("select public.upsert_bank_details($1,$2,'1234','savings')", [
+      w,
+      bank,
+    ]);
+    await db.query('update public.accounts set is_archived=true where id=$1', [bank]);
+    await assert.rejects(
+      db.query("select public.upsert_bank_details($1,$2,'9999','savings')", [w, bank]),
+      /ACCOUNT_ARCHIVED/,
+    );
+    console.log(
+      'PASS: edits refuse mismatched categories, linked amounts and archived accounts',
+    );
+  }
+  {
+    // HP-033: "this and all later" changes the rule, its untouched later pay
+    // dates and the audit log together, and leaves edited dates alone.
+    const [u, v] = [randomUUID(), randomUUID()];
+    await db.query(
+      "insert into auth.users(id,email) values($1,'inc-u@example.test'),($2,'inc-v@example.test')",
+      [u, v],
+    );
+    const rule = await scalar(
+      "insert into public.recurring_rules(user_id,rule_type,name,source_name,amount,currency_code,frequency,interval_count,start_date,next_occurrence_date) values($1,'expected_income','Salary','Salary',1000,'PHP','monthly',1,'2026-01-15','2026-01-15') returning id",
+      [u],
+    );
+    const row = (date, extra = {}) =>
+      scalar(
+        `insert into public.expected_income(user_id,source_name,amount,currency_code,expected_date,status,recurring_rule_id,occurrence_date)
+         values($1,$2,$3,'PHP',$4,$5,$6,$4) returning id`,
+        [
+          u,
+          extra.name ?? 'Salary',
+          extra.amount ?? 1000,
+          date,
+          extra.status ?? 'open',
+          rule,
+        ],
+      );
+    const earlier = await row('2026-01-15');
+    const later = await row('2026-02-15');
+    const edited = await row('2026-03-15', { amount: 1500 });
+    const received = await row('2026-04-15', { status: 'paid' });
+    const call = (amount, owner = u) =>
+      db.query(
+        "select public.update_future_expected_income($1,$2,'2026-01-15','Salary+',$3,'net','00000000-0000-4000-8000-000000000000'::uuid) as n",
+        [owner, rule, amount],
+      );
+    // A category that does not exist fails the FK after the row updates ran:
+    // the whole call must roll back.
+    await assert.rejects(call(1200));
+    const amountOf = (id) =>
+      scalar('select amount::text from public.expected_income where id=$1', [id]);
+    assert.equal(await amountOf(later), '1000.00');
+    assert.equal(
+      await scalar('select amount::text from public.recurring_rules where id=$1', [rule]),
+      '1000.00',
+    );
+    await assert.rejects(call(0), /AMOUNT_INVALID/);
+    await assert.rejects(call(1200, v), /RULE_NOT_FOUND/);
+
+    const ok = (owner = u) =>
+      db.query(
+        "select public.update_future_expected_income($1,$2,'2026-01-15','Salary+',1200,'net',null) as n",
+        [owner, rule],
+      );
+    assert.equal((await ok()).rows[0].n, 1);
+    assert.equal(await amountOf(earlier), '1000.00');
+    assert.equal(await amountOf(later), '1200.00');
+    assert.equal(await amountOf(edited), '1500.00');
+    assert.equal(await amountOf(received), '1000.00');
+    assert.equal(
+      await scalar('select source_name from public.expected_income where id=$1', [later]),
+      'Salary+',
+    );
+    // Replaying the same edit changes nothing more and stays consistent.
+    assert.equal((await ok()).rows[0].n, 1);
+    assert.equal(await amountOf(later), '1200.00');
+    assert.equal(
+      await scalar(
+        "select count(*)::int from public.audit_logs where entity_id=$1 and event_type='recurring_rule_updated'",
+        [rule],
+      ),
+      2,
+    );
+    await db.query(
+      "update public.feature_flags set enabled=false where key='financial_writes_enabled'",
+    );
+    await assert.rejects(ok(), /FINANCIAL_WRITES_DISABLED/);
+    await db.query(
+      "update public.feature_flags set enabled=true where key='financial_writes_enabled'",
+    );
+    console.log(
+      'PASS: later pay dates follow the rule atomically and keep their own edits',
+    );
+  }
+  {
+    // HP-031: storage usage counts stored and staged objects of one user only.
+    const [u, v] = [randomUUID(), randomUUID()];
+    await db.query(
+      "insert into auth.users(id,email) values($1,'quota-u@example.test'),($2,'quota-v@example.test')",
+      [u, v],
+    );
+    const put = (name, size, bucket = 'hello-pera-documents') =>
+      db.query('insert into storage.objects(bucket_id,name,metadata) values($1,$2,$3)', [
+        bucket,
+        name,
+        JSON.stringify({ size }),
+      ]);
+    await put(`${u}/2026/11/doc/original.jpg`, 1000);
+    await put(`${u}/2026/11/doc/display.webp`, 200);
+    await put(`incoming/${u}/staged`, 30);
+    await put(`${v}/2026/11/doc/original.jpg`, 5000);
+    await put(`incoming/${v}/staged`, 7);
+    await put(`${u}/elsewhere`, 9999, 'other-bucket');
+    const used = async (id) =>
+      Number(await scalar('select public.user_storage_bytes($1)', [id]));
+    assert.equal(await used(u), 1230);
+    assert.equal(await used(v), 5007);
+    assert.equal(await used(randomUUID()), 0);
+    assert.equal(
+      await scalar(
+        "select has_function_privilege('authenticated','public.user_storage_bytes(uuid)','execute')",
+      ),
+      false,
+    );
+    console.log('PASS: document storage usage is per user and service-only');
   }
   {
     // Browser roles may only read: no write privilege on any public table or

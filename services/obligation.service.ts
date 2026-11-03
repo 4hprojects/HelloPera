@@ -2,6 +2,7 @@ import 'server-only';
 
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { insertOwned, type CreateOptions } from '@/services/insert-owned';
 import { fromDatabase, parseDecimal, toDecimalString, type Money } from '@/lib/money';
 import {
   displayStatus,
@@ -17,6 +18,8 @@ import type {
   CreateExpectedIncomeInput,
   CreateReceivableInput,
 } from '@/schemas/obligation.schema';
+
+export type { CreateOptions };
 
 export type ObligationKind = 'bill' | 'receivable' | 'expected_income';
 
@@ -225,12 +228,12 @@ export async function updateObligation(
 /**
  * "This and all later pay dates" — carry an edit forward to a repeating income.
  *
- * Updates the rule (so dates generated from now on use the new figures) and the
- * later records that are still untouched. `status = 'open'` is the guard:
- * anything partly or fully received, cancelled or archived is left alone, as is
- * every earlier date. Dates are never shifted — a date change stays on the one
- * record. `rebuildFutureOccurrences` cannot do this job because it only
- * regenerates `expected_events`, never `expected_income`.
+ * One call to `update_future_expected_income`, so the rule, its later pay
+ * dates and the audit row change together or not at all. A later date is
+ * carried forward only while it still holds what the rule generated: one the
+ * user edited on its own keeps its edit, as does anything partly or fully
+ * received, cancelled or archived, and every earlier date. Dates are never
+ * shifted — a date change stays on the one record.
  */
 export async function updateFutureExpectedIncome(
   userId: string,
@@ -244,35 +247,16 @@ export async function updateFutureExpectedIncome(
   },
 ): Promise<void> {
   const admin = createAdminClient();
-  const amount = toDecimalString(parseDecimal(fields.amount));
-
-  const rule = await admin
-    .from('recurring_rules')
-    .update({
-      name: fields.name,
-      source_name: fields.name,
-      amount,
-      description: fields.description || null,
-      category_id: fields.categoryId,
-    })
-    .eq('id', ruleId)
-    .eq('user_id', userId);
-  if (rule.error) throw new Error(`Could not update the rule: ${rule.error.code}`);
-
-  const rows = await admin
-    .from('expected_income')
-    .update({
-      source_name: fields.name,
-      amount,
-      description: fields.description || null,
-      category_id: fields.categoryId,
-    })
-    .eq('user_id', userId)
-    .eq('recurring_rule_id', ruleId)
-    .eq('status', 'open')
-    .eq('is_archived', false)
-    .gt('expected_date', afterDate);
-  if (rows.error) throw new Error(`Could not update later dates: ${rows.error.code}`);
+  const { error } = await admin.rpc('update_future_expected_income', {
+    p_user_id: userId,
+    p_rule_id: ruleId,
+    p_after_date: afterDate,
+    p_name: fields.name,
+    p_amount: toDecimalString(parseDecimal(fields.amount)),
+    p_description: fields.description,
+    p_category_id: fields.categoryId,
+  });
+  if (error) throw new Error(`Could not update later dates: ${error.code}`);
 }
 
 /**
@@ -297,68 +281,30 @@ export async function linkExpectedIncomeToRule(
   if (error) throw new Error(`Could not link this record to its rule: ${error.code}`);
 }
 
-/**
- * Optional caller-chosen id for a create.
- *
- * A retry that sends the same id lands on the row the first attempt made,
- * instead of a second record. The document draft flow derives one per draft.
- */
-export type CreateOptions = { id?: string };
-
-/**
- * Insert one owned row and return its id.
- *
- * With `id`, a unique violation on a row this user already owns under that id
- * is the same request arriving twice, so the existing id is returned. Any
- * other failure, including that id belonging to someone else, is an error.
- */
-async function insertOwned(
-  table: string,
-  userId: string,
-  row: Record<string, unknown>,
-  id: string | undefined,
-): Promise<string> {
-  const admin = createAdminClient();
-  const { data, error } = await admin
-    .from(table)
-    .insert({ ...(id ? { id } : {}), user_id: userId, ...row })
-    .select('id')
-    .single<{ id: string }>();
-  if (!error) return data.id;
-  if (id && error.code === '23505') {
-    const { data: existing } = await admin
-      .from(table)
-      .select('id')
-      .eq('id', id)
-      .eq('user_id', userId)
-      .maybeSingle<{ id: string }>();
-    if (existing) return existing.id;
-  }
-  throw new Error(error.message);
-}
-
 export async function createBill(
   userId: string,
   input: CreateBillInput,
   options: CreateOptions = {},
 ): Promise<string> {
-  return insertOwned(
-    'bills',
-    userId,
-    {
-      provider_name: input.providerName,
-      description: input.description || null,
-      amount: input.amount,
-      currency_code: input.currencyCode,
-      due_date: input.dueDate,
-      category_id: input.categoryId ?? null,
-      notes: input.notes || null,
-      installment_amount: input.installmentAmount ?? null,
-      installment_count: input.installmentCount ?? null,
-      installments_prior: input.installmentsPrior ?? 0,
-    },
-    options.id,
-  );
+  return (
+    await insertOwned(
+      'bills',
+      userId,
+      {
+        provider_name: input.providerName,
+        description: input.description || null,
+        amount: input.amount,
+        currency_code: input.currencyCode,
+        due_date: input.dueDate,
+        category_id: input.categoryId ?? null,
+        notes: input.notes || null,
+        installment_amount: input.installmentAmount ?? null,
+        installment_count: input.installmentCount ?? null,
+        installments_prior: input.installmentsPrior ?? 0,
+      },
+      options.id,
+    )
+  ).id;
 }
 
 export async function createReceivable(
@@ -366,20 +312,22 @@ export async function createReceivable(
   input: CreateReceivableInput,
   options: CreateOptions = {},
 ): Promise<string> {
-  return insertOwned(
-    'receivables',
-    userId,
-    {
-      party_name: input.partyName,
-      description: input.description || null,
-      amount: input.amount,
-      currency_code: input.currencyCode,
-      borrowed_date: input.borrowedDate || null,
-      due_date: input.dueDate || null,
-      notes: input.notes || null,
-    },
-    options.id,
-  );
+  return (
+    await insertOwned(
+      'receivables',
+      userId,
+      {
+        party_name: input.partyName,
+        description: input.description || null,
+        amount: input.amount,
+        currency_code: input.currencyCode,
+        borrowed_date: input.borrowedDate || null,
+        due_date: input.dueDate || null,
+        notes: input.notes || null,
+      },
+      options.id,
+    )
+  ).id;
 }
 
 export async function createExpectedIncome(
@@ -387,20 +335,22 @@ export async function createExpectedIncome(
   input: CreateExpectedIncomeInput,
   options: CreateOptions = {},
 ): Promise<string> {
-  return insertOwned(
-    'expected_income',
-    userId,
-    {
-      source_name: input.sourceName,
-      description: input.description || null,
-      amount: input.amount,
-      currency_code: input.currencyCode,
-      expected_date: input.expectedDate,
-      category_id: input.categoryId ?? null,
-      notes: input.notes || null,
-    },
-    options.id,
-  );
+  return (
+    await insertOwned(
+      'expected_income',
+      userId,
+      {
+        source_name: input.sourceName,
+        description: input.description || null,
+        amount: input.amount,
+        currency_code: input.currencyCode,
+        expected_date: input.expectedDate,
+        category_id: input.categoryId ?? null,
+        notes: input.notes || null,
+      },
+      options.id,
+    )
+  ).id;
 }
 
 export class AllocationError extends Error {}

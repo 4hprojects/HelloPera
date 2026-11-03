@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { BUCKET } from '@/services/storage.service';
 import { log } from '@/lib/log';
 import { requestLogFields } from '@/lib/log/request-id';
+import { reuseFor } from '@/lib/utils/reuse-for';
 
 /**
  * Readiness — PHASE-14 §29, §30, §32.
@@ -56,10 +57,31 @@ async function within<T>(
   }
 }
 
+type Readiness = { database: boolean; storage: boolean };
+
+/**
+ * HP-032. Public, and each check makes two backend calls, so one check serves
+ * every caller for five seconds. That bounds the backend cost per instance no
+ * matter how often the route is hit, and is still far shorter than any probe
+ * interval. A failure logs with the fields of the request that ran the check.
+ */
+let lastRequestFields: { request_id?: string } = {};
+const readiness = reuseFor(5_000, () => check(lastRequestFields));
+
 export async function GET(request: Request): Promise<NextResponse> {
+  lastRequestFields = requestLogFields(request.headers);
+  const { database, storage } = await readiness();
+  const ready = database && storage;
+
+  return NextResponse.json(
+    { status: ready ? 'ready' : 'not_ready', database, storage },
+    { status: ready ? 200 : 503, headers: { 'cache-control': 'no-store' } },
+  );
+}
+
+async function check(requestFields: { request_id?: string }): Promise<Readiness> {
   let database = false;
   let storage = false;
-  const requestFields = requestLogFields(request.headers);
 
   try {
     const admin = createAdminClient();
@@ -97,10 +119,5 @@ export async function GET(request: Request): Promise<NextResponse> {
     });
   }
 
-  const ready = database && storage;
-
-  return NextResponse.json(
-    { status: ready ? 'ready' : 'not_ready', database, storage },
-    { status: ready ? 200 : 503, headers: { 'cache-control': 'no-store' } },
-  );
+  return { database, storage };
 }

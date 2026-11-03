@@ -3,7 +3,14 @@ import sharp from 'sharp';
 
 vi.mock('server-only', () => ({}));
 
-import { normaliseForOcr, OCR_MAX_DIMENSION } from './image-processing.service';
+import {
+  DISPLAY_MAX_DIMENSION,
+  ImageProcessingError,
+  normaliseForOcr,
+  OCR_MAX_DIMENSION,
+  processImage,
+  THUMB_MAX_DIMENSION,
+} from './image-processing.service';
 
 const png = (width: number, height: number) =>
   sharp({ create: { width, height, channels: 3, background: '#88aacc' } })
@@ -29,5 +36,22 @@ describe('normaliseForOcr', { timeout: 30_000 }, () => {
     const once = await normaliseForOcr(await png(3000, 2000));
     const twice = await sharp(await normaliseForOcr(once)).metadata();
     expect([twice.width, twice.height]).toEqual([OCR_MAX_DIMENSION, 1717]);
+  });
+});
+
+describe('processImage', { timeout: 30_000 }, () => {
+  it('makes both renditions from one decode, sized and without metadata', async () => {
+    const out = await processImage(await png(3000, 2000));
+    expect([out.width, out.height]).toEqual([DISPLAY_MAX_DIMENSION, 1200]);
+    expect(out.displaySize).toBe(out.display.length);
+
+    const thumb = await sharp(out.thumbnail).metadata();
+    expect(thumb.format).toBe('webp');
+    expect([thumb.width, thumb.height]).toEqual([THUMB_MAX_DIMENSION, 240]);
+    expect(thumb.exif).toBeUndefined();
+  });
+
+  it('refuses an image over the pixel limit before decoding it', async () => {
+    await expect(processImage(await png(8000, 7000))).rejects.toThrow(ImageProcessingError);
   });
 });

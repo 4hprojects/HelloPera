@@ -12,9 +12,12 @@ import { FREQUENCIES, FREQUENCY_OPTION_LABEL } from '@/lib/recurring/schedule';
 const initial: ActionState = {};
 
 export function NewExpectedIncomeForm({
+  requestId,
   defaultCurrency,
   categories,
 }: {
+  /** One per page load: a double submit then creates one record, not two. */
+  requestId: string;
   defaultCurrency: string;
   categories: Array<{ id: string; name: string }>;
 }) {
@@ -75,6 +78,7 @@ export function NewExpectedIncomeForm({
           </option>
         ))}
       </SelectField>
+      <input type="hidden" name="requestId" value={requestId} />
       <input type="hidden" name="currencyCode" value={defaultCurrency} />
       <p className="hp-small mb-4 text-text-muted">
         Expected income is a plan, not a balance. It affects nothing until it arrives.

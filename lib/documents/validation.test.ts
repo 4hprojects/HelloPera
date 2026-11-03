@@ -131,6 +131,16 @@ describe('validateDimensions', () => {
     expect(validateDimensions(4032, 3024)).toBeNull();
   });
 
+  it('allows a 48 MP phone photo', () => {
+    expect(validateDimensions(8064, 6048)).toBeNull();
+  });
+
+  it('rejects an image within the side limit but over the pixel limit', () => {
+    const result = validateDimensions(8000, 7000);
+    expect(result?.ok).toBe(false);
+    if (result && !result.ok) expect(result.message).toContain('50 megapixels');
+  });
+
   it('ignores unknown dimensions', () => {
     expect(validateDimensions(undefined, undefined)).toBeNull();
   });

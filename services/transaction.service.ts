@@ -6,6 +6,7 @@ import { fromDatabase, type Money } from '@/lib/money';
 import { analyticsClass } from '@/lib/finance/balance';
 import { takeLookaheadPage } from '@/lib/pagination/lookahead';
 import { withServiceTiming } from '@/lib/performance/service-timing';
+import { WritesDisabledError } from '@/lib/ops/kill-switches';
 import type { Direction, TransactionStatus, TransactionType } from '@/lib/finance/types';
 import type {
   CreateTransactionInput,
@@ -128,6 +129,10 @@ export async function getTransaction(id: string): Promise<Transaction | null> {
  * The RPCs raise stable codes precisely so this mapping is not guesswork.
  */
 function friendlyError(message: string): string {
+  // The database's own copy of the ledger freeze (HP-025), for a write that
+  // started before the switch was flipped.
+  if (message.includes('FINANCIAL_WRITES_DISABLED'))
+    return new WritesDisabledError().message;
   if (message.includes('ACCOUNT_NOT_FOUND')) return 'That account is unavailable.';
   if (message.includes('ACCOUNT_ARCHIVED')) return 'That account is archived.';
   if (message.includes('CURRENCY_MISMATCH')) {
@@ -141,9 +146,12 @@ function friendlyError(message: string): string {
   if (message.includes('TRANSACTION_NOT_FOUND'))
     return 'That transaction no longer exists.';
   if (message.includes('TRANSACTION_LINKED')) {
-    return 'This transaction settles a bill or receivable, so its amount is locked. Void it and record a corrected one.';
+    return 'This transaction settles a bill, receivable or planned payment, so its amount is locked. Void it and record a corrected one.';
   }
   if (message.includes('CATEGORY_NOT_FOUND')) return 'That category is unavailable.';
+  if (message.includes('CATEGORY_TYPE_MISMATCH')) {
+    return 'Choose a category for this kind of entry: an income category for income, an expense category for spending.';
+  }
   if (message.includes('AMOUNT_NOT_POSITIVE')) return 'Amount must be greater than zero.';
   if (message.includes('INCOME_REQUIRES_ASSET')) {
     return 'Income must go into an account you own, not one you owe on. Money arriving on a credit card is a refund or a transfer.';

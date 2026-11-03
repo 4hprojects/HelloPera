@@ -7,6 +7,8 @@ const m = vi.hoisted(() => ({
   move: vi.fn(),
   download: vi.fn(),
   shrinkUpdate: vi.fn(),
+  used: vi.fn(),
+  stage: vi.fn(),
 }));
 
 vi.mock('@/lib/supabase/admin', () => ({
@@ -37,13 +39,20 @@ vi.mock('@/services/storage.service', () => ({
   },
   moveObject: m.move,
   downloadObject: m.download,
-  createStagedUpload: vi.fn(),
+  createStagedUpload: m.stage,
+  storageUsedBytes: m.used,
   listStaleStagedObjects: vi.fn(),
   isOwnStagedPath: (userId: string, path: string) =>
     path.startsWith(`incoming/${userId}/`),
 }));
 
-import { finalizeUpload, shrinkOriginal } from './document.service';
+import { MAX_STORAGE_BYTES } from '@/lib/documents/validation';
+import {
+  finalizeUpload,
+  prepareUpload,
+  shrinkOriginal,
+  STORAGE_FULL_MESSAGE,
+} from './document.service';
 
 const ORIGINAL = 'user/2026/10/doc/original.jpg';
 
@@ -53,6 +62,8 @@ beforeEach(() => {
   m.upload.mockResolvedValue(undefined);
   m.remove.mockResolvedValue(undefined);
   m.shrinkUpdate.mockResolvedValue({ data: [{ id: 'doc' }], error: null });
+  m.used.mockResolvedValue(0);
+  m.stage.mockResolvedValue({ path: 'incoming/user/abc', token: 't' });
 });
 
 describe('shrinkOriginal', () => {
@@ -110,9 +121,39 @@ describe('finalizeUpload', () => {
     expect(m.download).not.toHaveBeenCalled();
   });
 
+  it('removes a staged file that takes the user over the quota', async () => {
+    m.download.mockResolvedValue(new Uint8Array(10));
+    m.used.mockResolvedValue(MAX_STORAGE_BYTES + 1);
+    await expect(finalize('incoming/user/abc')).rejects.toThrow(STORAGE_FULL_MESSAGE);
+    expect(m.remove).toHaveBeenCalledWith(['incoming/user/abc']);
+    expect(m.upload).not.toHaveBeenCalled();
+  });
+
   it('removes a staged file whose bytes are not a supported type', async () => {
     m.download.mockResolvedValue(new TextEncoder().encode('not an image'));
     await expect(finalize('incoming/user/abc')).rejects.toThrow(/not supported/);
     expect(m.remove).toHaveBeenCalledWith(['incoming/user/abc']);
+  });
+});
+
+describe('prepareUpload', () => {
+  it('stages an upload that fits in the quota', async () => {
+    m.used.mockResolvedValue(MAX_STORAGE_BYTES - 100);
+    await expect(prepareUpload('user', 100)).resolves.toEqual({
+      path: 'incoming/user/abc',
+      token: 't',
+    });
+  });
+
+  it('refuses an upload that would pass the quota, before staging it', async () => {
+    m.used.mockResolvedValue(MAX_STORAGE_BYTES - 100);
+    await expect(prepareUpload('user', 101)).rejects.toThrow(STORAGE_FULL_MESSAGE);
+    expect(m.stage).not.toHaveBeenCalled();
+  });
+
+  it('refuses to stage when usage cannot be read', async () => {
+    m.used.mockRejectedValue(new Error('rpc down'));
+    await expect(prepareUpload('user', 1)).rejects.toThrow(/could not start/);
+    expect(m.stage).not.toHaveBeenCalled();
   });
 });

@@ -5,6 +5,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import {
   buildObjectPath,
   extensionFor,
+  MAX_STORAGE_BYTES,
   sanitiseFilename,
   validateUpload,
 } from '@/lib/documents/validation';
@@ -22,6 +23,7 @@ import {
   listStaleStagedObjects,
   moveObject,
   removeDocumentObjects,
+  storageUsedBytes,
   uploadObject,
 } from '@/services/storage.service';
 import { log } from '@/lib/log';
@@ -235,10 +237,25 @@ export async function uploadDocument(params: {
   }
 }
 
-/** Step one of a direct upload: where the browser should send the file. */
+export const STORAGE_FULL_MESSAGE = `Your document storage is full (${MAX_STORAGE_BYTES / 1024 / 1024 / 1024} GB). Contact support to make room.`;
+
+/**
+ * Step one of a direct upload: where the browser should send the file.
+ *
+ * `size` is the browser's claim, so this is only the early refusal. The
+ * stored bytes are counted again in `finalizeUpload`.
+ */
 export async function prepareUpload(
   userId: string,
+  size: number,
 ): Promise<{ path: string; token: string }> {
+  let used: number;
+  try {
+    used = await storageUsedBytes(userId);
+  } catch {
+    throw new UploadError('We could not start the upload. Please try again.');
+  }
+  if (used + size > MAX_STORAGE_BYTES) throw new UploadError(STORAGE_FULL_MESSAGE);
   try {
     return await createStagedUpload(userId);
   } catch {
@@ -275,6 +292,11 @@ export async function finalizeUpload(params: {
   }
 
   try {
+    // The staged object is already counted, so this holds even when the
+    // browser understated its size to prepareUpload.
+    if ((await storageUsedBytes(params.userId)) > MAX_STORAGE_BYTES) {
+      throw new UploadError(STORAGE_FULL_MESSAGE);
+    }
     return await uploadDocument({ ...params, bytes });
   } catch (error) {
     // A no-op if the move already happened; otherwise it drops the rejected file.

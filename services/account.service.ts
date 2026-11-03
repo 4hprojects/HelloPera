@@ -240,6 +240,9 @@ export async function deleteAccount(userId: string, id: string) {
 
 function accountEditMessage(message: string): string {
   if (message.includes('ACCOUNT_NOT_FOUND')) return 'That account no longer exists.';
+  if (message.includes('ACCOUNT_ARCHIVED')) {
+    return 'This account is archived. Restore it to make changes.';
+  }
   if (message.includes('LOAN_LENDER_REQUIRED')) return 'Enter the lender.';
   if (message.includes('LOAN_PAYMENT_REQUIRED'))
     return 'Enter the payment amount, frequency and next due date.';

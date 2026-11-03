@@ -5,6 +5,7 @@ import { SelectField, TextField } from '@/components/ui/field';
 import { Cell, DataTable, StatusText } from '@/components/admin/data-table';
 import { requireAdmin } from '@/lib/auth/guards';
 import { listUsers } from '@/services/admin.service';
+import { Unavailable } from '@/components/admin/unavailable';
 import type { UserStatus } from '@/types/auth';
 
 export const metadata: Metadata = { title: 'Users · Admin' };
@@ -25,7 +26,8 @@ export default async function AdminUsersPage({
       ? (params.status as UserStatus)
       : undefined;
 
-  const users = await listUsers({ search: params.q, status });
+  const result = await listUsers({ search: params.q, status });
+  const users = result.state === 'ok' ? result.data : [];
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -61,31 +63,35 @@ export default async function AdminUsersPage({
         </button>
       </form>
 
-      <DataTable
-        headers={['Email', 'Name', 'Role', 'Status', 'Joined', '']}
-        rowCount={users.length}
-        empty="No accounts match that search."
-      >
-        {users.map((user) => (
-          <tr key={user.id}>
-            <Cell>{user.email ?? '—'}</Cell>
-            <Cell>{user.fullName ?? '—'}</Cell>
-            <Cell>{user.role}</Cell>
-            <Cell>
-              <StatusText value={user.status} />
-            </Cell>
-            <Cell>{new Date(user.createdAt).toLocaleDateString()}</Cell>
-            <Cell>
-              <Link
-                href={`/admin/users/${user.id}`}
-                className="text-primary-text underline"
-              >
-                Open
-              </Link>
-            </Cell>
-          </tr>
-        ))}
-      </DataTable>
+      {result.state === 'unavailable' ? (
+        <Unavailable what="The user list" reference={result.reference} />
+      ) : (
+        <DataTable
+          headers={['Email', 'Name', 'Role', 'Status', 'Joined', '']}
+          rowCount={users.length}
+          empty="No accounts match that search."
+        >
+          {users.map((user) => (
+            <tr key={user.id}>
+              <Cell>{user.email ?? '—'}</Cell>
+              <Cell>{user.fullName ?? '—'}</Cell>
+              <Cell>{user.role}</Cell>
+              <Cell>
+                <StatusText value={user.status} />
+              </Cell>
+              <Cell>{new Date(user.createdAt).toLocaleDateString()}</Cell>
+              <Cell>
+                <Link
+                  href={`/admin/users/${user.id}`}
+                  className="text-primary-text underline"
+                >
+                  Open
+                </Link>
+              </Cell>
+            </tr>
+          ))}
+        </DataTable>
+      )}
     </div>
   );
 }

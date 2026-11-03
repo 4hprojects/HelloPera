@@ -2,7 +2,7 @@ import 'server-only';
 
 import sharp, { type Metadata } from 'sharp';
 import { createHash } from 'node:crypto';
-import { validateDimensions } from '@/lib/documents/validation';
+import { MAX_IMAGE_PIXELS, validateDimensions } from '@/lib/documents/validation';
 
 /**
  * Image processing — Phase 04 §19–25.
@@ -11,6 +11,20 @@ import { validateDimensions } from '@/lib/documents/validation';
  * ephemeral and is never the system of record (§5), so writing temp files
  * would add cleanup obligations for no benefit at these sizes.
  */
+
+/**
+ * One image at a time, and no cache. Each decode can take about 200 MB
+ * (`MAX_IMAGE_PIXELS`); libvips' default thread pool and operation cache would
+ * multiply that by the core count and keep it after the request.
+ */
+sharp.concurrency(1);
+sharp.cache(false);
+
+/**
+ * Passed to every decode. sharp refuses anything larger before allocating, so
+ * a small file that declares huge dimensions never reaches the decoder.
+ */
+const INPUT = { limitInputPixels: MAX_IMAGE_PIXELS } as const;
 
 /** Configurable, centralised (§69). Never scatter these across components. */
 export const DISPLAY_MAX_DIMENSION = 1800;
@@ -53,11 +67,15 @@ export function hashContent(bytes: Uint8Array): string {
  *     photographed at home otherwise carries the user's home address (§25).
  *   - `withoutEnlargement` prevents upscaling a small screenshot into a larger,
  *     blurrier file.
+ *
+ * The upload is decoded once. `metadata()` reads only the header, and the
+ * thumbnail is made from the display rendition, which is already upright and
+ * far smaller than the original.
  */
 export async function processImage(bytes: Uint8Array): Promise<ProcessedImage> {
   let metadata: Metadata;
   try {
-    metadata = await sharp(bytes).metadata();
+    metadata = await sharp(bytes, INPUT).metadata();
   } catch {
     throw new ImageProcessingError('We could not read that image.');
   }
@@ -68,17 +86,16 @@ export async function processImage(bytes: Uint8Array): Promise<ProcessedImage> {
   }
 
   try {
-    const display = await sharp(bytes)
+    const { data: display, info } = await sharp(bytes, INPUT)
       .rotate()
       .resize(DISPLAY_MAX_DIMENSION, DISPLAY_MAX_DIMENSION, {
         fit: 'inside',
         withoutEnlargement: true,
       })
       .webp({ quality: DISPLAY_WEBP_QUALITY })
-      .toBuffer();
+      .toBuffer({ resolveWithObject: true });
 
-    const thumbnail = await sharp(bytes)
-      .rotate()
+    const thumbnail = await sharp(display)
       .resize(THUMB_MAX_DIMENSION, THUMB_MAX_DIMENSION, {
         fit: 'inside',
         withoutEnlargement: true,
@@ -86,13 +103,11 @@ export async function processImage(bytes: Uint8Array): Promise<ProcessedImage> {
       .webp({ quality: THUMB_WEBP_QUALITY })
       .toBuffer();
 
-    const out = await sharp(display).metadata();
-
     return {
       display,
       thumbnail,
-      width: out.width ?? 0,
-      height: out.height ?? 0,
+      width: info.width,
+      height: info.height,
       displaySize: display.length,
       thumbnailSize: thumbnail.length,
     };
@@ -118,7 +133,7 @@ export async function processImage(bytes: Uint8Array): Promise<ProcessedImage> {
  */
 export async function normaliseForOcr(bytes: Uint8Array): Promise<Buffer> {
   try {
-    return await sharp(bytes)
+    return await sharp(bytes, INPUT)
       .rotate()
       .resize(OCR_MAX_DIMENSION, OCR_MAX_DIMENSION, {
         fit: 'inside',

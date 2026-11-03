@@ -52,6 +52,12 @@
 --   43. 20261103000100 confirm draft entity check
 --   44. 20261103000200 loan schedule sync
 --   45. 20261103000300 category ownership
+--   46. 20261103000400 document storage quota
+--   47. 20261103000500 future expected income
+--   48. 20261103000600 edit guards
+--   49. 20261103000700 deletion guards newer tables
+--   50. 20261103000800 freeze financial writes
+--   51. 20261103000900 money as text
 --
 -- Prefer `npm run db:migrate` where you have DATABASE_URL: it applies each
 -- file in its own transaction and records what ran. This bundle is for the
@@ -8007,3 +8013,529 @@ begin
   end loop;
 end;
 $$;
+
+
+-- ======================================================================
+-- 20261103000400_document_storage_quota.sql
+-- ======================================================================
+
+-- HP-031: the bytes a user holds in document storage, for the upload quota.
+--
+-- Counted from storage.objects rather than the documents table, so it includes
+-- staged uploads under incoming/<uid>/ that were never finalised, and the
+-- shrunk original rather than the size recorded at upload. Storage keeps the
+-- object size in metadata->>'size'. Paths are <uid>/... for stored renditions
+-- and incoming/<uid>/... while staged, and `name` is collated "C" in
+-- Supabase, so both prefix matches use the (bucket_id, name) index.
+
+create or replace function public.user_storage_bytes(p_user_id uuid)
+returns bigint language sql stable security definer set search_path = '' as $$
+  select coalesce(sum((o.metadata->>'size')::bigint), 0)::bigint
+  from storage.objects o
+  where o.bucket_id = 'hello-pera-documents'
+    and (o.name like p_user_id::text || '/%'
+      or o.name like 'incoming/' || p_user_id::text || '/%');
+$$;
+
+revoke all on function public.user_storage_bytes from public, anon, authenticated;
+grant execute on function public.user_storage_bytes to service_role;
+
+
+-- ======================================================================
+-- 20261103000500_future_expected_income.sql
+-- ======================================================================
+
+-- HP-033: "this and all later pay dates" as one audited transaction.
+--
+-- It was two separate writes from the app (the rule, then the later rows), so
+-- a failure between them left the rule and its pay dates disagreeing, and no
+-- audit row was written. It also overwrote later dates the user had edited by
+-- hand, because every open later row was updated.
+--
+-- A later row is now carried forward only while it still holds what the rule
+-- generated: the same source, amount, description and category as the rule
+-- before this edit (see generate_occurrence). A row edited on its own keeps
+-- its edit, as does anything received, cancelled or archived, and every date
+-- on or before p_after_date.
+
+create or replace function public.update_future_expected_income(
+  p_user_id     uuid,
+  p_rule_id     uuid,
+  p_after_date  date,
+  p_name        text,
+  p_amount      numeric,
+  p_description text,
+  p_category_id uuid
+) returns integer language plpgsql security definer set search_path = '' as $$
+declare
+  r       public.recurring_rules%rowtype;
+  v_name  text := nullif(btrim(coalesce(p_name, '')), '');
+  v_desc  text := nullif(btrim(coalesce(p_description, '')), '');
+  v_count integer;
+begin
+  perform public.assert_financial_writes_enabled();
+
+  select * into r from public.recurring_rules
+  where id = p_rule_id and user_id = p_user_id and rule_type = 'expected_income'
+  for update;
+  if r.id is null then raise exception 'RULE_NOT_FOUND' using errcode = 'P0002'; end if;
+  if v_name is null then raise exception 'NAME_REQUIRED' using errcode = 'P0001'; end if;
+  if p_amount is null or p_amount <= 0 then
+    raise exception 'AMOUNT_INVALID' using errcode = 'P0001';
+  end if;
+
+  update public.expected_income e
+    set source_name = v_name, amount = p_amount,
+        description = v_desc, category_id = p_category_id
+  where e.user_id = p_user_id
+    and e.recurring_rule_id = p_rule_id
+    and e.status = 'open'
+    and e.is_archived = false
+    and e.expected_date > p_after_date
+    and e.source_name = coalesce(r.source_name, r.name)
+    and e.amount = r.amount
+    and e.description is not distinct from r.description
+    and e.category_id is not distinct from r.category_id;
+  get diagnostics v_count = row_count;
+
+  update public.recurring_rules
+    set name = v_name, source_name = v_name, amount = p_amount,
+        description = v_desc, category_id = p_category_id, updated_at = now()
+  where id = p_rule_id;
+
+  insert into public.audit_logs
+    (actor_user_id, target_user_id, entity_type, entity_id, event_type,
+     before_data, after_data, metadata)
+  values
+    (p_user_id, p_user_id, 'recurring_rule', p_rule_id, 'recurring_rule_updated',
+     jsonb_build_object('name', r.name, 'amount', r.amount::text,
+                        'description', r.description, 'category_id', r.category_id),
+     jsonb_build_object('name', v_name, 'amount', p_amount::numeric(18,2)::text,
+                        'description', v_desc, 'category_id', p_category_id),
+     jsonb_build_object('scope', 'future', 'after_date', p_after_date,
+                        'rows_updated', v_count));
+
+  return v_count;
+end;
+$$;
+
+revoke all on function public.update_future_expected_income from public, anon, authenticated;
+grant execute on function public.update_future_expected_income to service_role;
+
+
+-- ======================================================================
+-- 20261103000600_edit_guards.sql
+-- ======================================================================
+
+-- HP-034: close the gaps in editing entries and accounts.
+--
+--   * update_transaction moved an archived account's balance when the amount
+--     changed. It now refuses, as create_transaction always has.
+--   * Its "linked" lock ignored expected_events.actual_transaction_id, so an
+--     entry that fulfilled a forecast event could change amount under it.
+--   * It accepted a category of the wrong type (an income category on an
+--     expense). A changed category must now match income or expense.
+--   * update_account_details and upsert_bank_details edited archived
+--     accounts. Archiving freezes an account, so both refuse.
+--
+-- The bodies are otherwise those of 20261004000700, 20261103000200 and
+-- 20261004001100.
+
+create or replace function public.update_transaction(
+  p_user_id     uuid,
+  p_id          uuid,
+  p_amount      numeric,
+  p_date        date,
+  p_category_id uuid default null,
+  p_merchant    text default null,
+  p_description text default null,
+  p_notes       text default null
+) returns void language plpgsql security definer set search_path = '' as $$
+declare
+  v_tx       public.transactions%rowtype;
+  v_linked   boolean;
+  v_cat_type text;
+begin
+  select * into v_tx from public.transactions
+  where id = p_id and user_id = p_user_id
+  for update;
+
+  if v_tx.id is null then
+    raise exception 'TRANSACTION_NOT_FOUND' using errcode = 'P0002';
+  end if;
+  if v_tx.status = 'voided' then
+    raise exception 'TRANSACTION_VOIDED' using errcode = 'P0001';
+  end if;
+  if v_tx.type = 'opening_balance' then
+    raise exception 'TRANSACTION_NOT_EDITABLE' using errcode = 'P0001';
+  end if;
+  if p_amount is null or p_amount <= 0 then
+    raise exception 'AMOUNT_NOT_POSITIVE' using errcode = 'P0001';
+  end if;
+  if p_date is null then
+    raise exception 'DATE_REQUIRED' using errcode = 'P0001';
+  end if;
+
+  if p_category_id is not null and not exists (
+    select 1 from public.categories c
+    where c.id = p_category_id and c.is_active
+      and (c.is_system or c.user_id = p_user_id)
+  ) then
+    raise exception 'CATEGORY_NOT_FOUND' using errcode = 'P0001';
+  end if;
+
+  -- A changed category must suit the entry: an income category on an
+  -- expense would misfile it in every report. Checked only on a change, so
+  -- an older entry with a mismatched category can still be edited otherwise.
+  if p_category_id is distinct from v_tx.category_id and p_category_id is not null
+     and v_tx.type in ('income', 'expense') then
+    select c.type into v_cat_type from public.categories c where c.id = p_category_id;
+    if v_cat_type not in (v_tx.type, 'both') then
+      raise exception 'CATEGORY_TYPE_MISMATCH' using errcode = 'P0001';
+    end if;
+  end if;
+
+  if p_amount <> v_tx.amount then
+    select exists (select 1 from public.bill_payments where transaction_id = p_id)
+        or exists (select 1 from public.receivable_payments where transaction_id = p_id)
+        or exists (select 1 from public.expected_income_receipts where transaction_id = p_id)
+        or exists (select 1 from public.expected_events where actual_transaction_id = p_id)
+      into v_linked;
+    if v_linked then
+      raise exception 'TRANSACTION_LINKED' using errcode = 'P0001';
+    end if;
+    -- An archived account's balance is frozen: nothing may move it.
+    if exists (
+      select 1 from public.accounts a
+      where a.id in (v_tx.source_account_id, v_tx.destination_account_id)
+        and a.is_archived
+    ) then
+      raise exception 'ACCOUNT_ARCHIVED' using errcode = 'P0001';
+    end if;
+  end if;
+
+  update public.transactions
+  set amount           = p_amount,
+      transaction_date = p_date,
+      category_id      = p_category_id,
+      merchant_name    = nullif(btrim(coalesce(p_merchant, '')), ''),
+      description      = nullif(btrim(coalesce(p_description, '')), ''),
+      notes            = nullif(btrim(coalesce(p_notes, '')), '')
+  where id = p_id;
+
+  if p_amount <> v_tx.amount then
+    if v_tx.source_account_id is not null then
+      perform public.recalculate_account_balance(v_tx.source_account_id);
+    end if;
+    if v_tx.destination_account_id is not null then
+      perform public.recalculate_account_balance(v_tx.destination_account_id);
+    end if;
+  end if;
+
+  insert into public.audit_logs
+    (actor_user_id, target_user_id, entity_type, entity_id, event_type,
+     before_data, after_data)
+  values
+    (p_user_id, p_user_id, 'transaction', p_id, 'transaction_updated',
+     jsonb_build_object('amount', v_tx.amount, 'date', v_tx.transaction_date,
+                        'category_id', v_tx.category_id),
+     jsonb_build_object('amount', p_amount, 'date', p_date,
+                        'category_id', p_category_id));
+end;
+$$;
+
+revoke all on function public.update_transaction from public, anon, authenticated;
+grant execute on function public.update_transaction to service_role;
+
+create or replace function public.update_account_details(
+  p_user_id           uuid,
+  p_id                uuid,
+  p_name              text,
+  p_institution_name  text default null,
+  p_payment_amount    numeric default null,
+  p_payment_frequency text default null,
+  p_next_due_date     date default null,
+  p_principal         numeric default null,
+  p_interest_rate_apr numeric default null,
+  p_term_months       integer default null
+) returns void language plpgsql security definer set search_path = '' as $$
+declare
+  v_acc   public.accounts%rowtype;
+  v_ld    public.loan_details%rowtype;
+  v_name  text := nullif(btrim(coalesce(p_name, '')), '');
+  v_inst  text := nullif(btrim(coalesce(p_institution_name, '')), '');
+  v_today date;
+begin
+  select * into v_acc from public.accounts
+  where id = p_id and user_id = p_user_id for update;
+  if v_acc.id is null then raise exception 'ACCOUNT_NOT_FOUND' using errcode = 'P0002'; end if;
+  if v_acc.is_archived then raise exception 'ACCOUNT_ARCHIVED' using errcode = 'P0001'; end if;
+  if v_name is null then raise exception 'NAME_REQUIRED' using errcode = 'P0001'; end if;
+
+  if v_acc.type = 'loan' then
+    if v_inst is null then raise exception 'LOAN_LENDER_REQUIRED' using errcode = 'P0001'; end if;
+    if p_payment_amount is null or p_payment_amount <= 0
+       or p_payment_frequency is null or p_next_due_date is null then
+      raise exception 'LOAN_PAYMENT_REQUIRED' using errcode = 'P0001';
+    end if;
+    if p_principal is not null and p_principal < v_acc.current_balance then
+      raise exception 'LOAN_PRINCIPAL_BELOW_BALANCE' using errcode = 'P0001';
+    end if;
+
+    select * into v_ld from public.loan_details where account_id = p_id for update;
+
+    update public.loan_details
+      set payment_amount = p_payment_amount, payment_frequency = p_payment_frequency,
+          next_due_date = p_next_due_date, principal = p_principal,
+          interest_rate_apr = p_interest_rate_apr, term_months = p_term_months
+      where account_id = p_id;
+
+    if v_ld.recurring_rule_id is not null then
+      select (now() at time zone coalesce(p.timezone, 'Asia/Manila'))::date
+        into v_today from public.profiles p where p.id = p_user_id;
+      v_today := coalesce(v_today, current_date);
+
+      if v_ld.payment_frequency is distinct from p_payment_frequency
+         or v_ld.next_due_date is distinct from p_next_due_date then
+        -- A new schedule starts at its next due date. One in the past would
+        -- make the generator back-fill overdue bills that were never due.
+        if p_next_due_date < v_today then
+          raise exception 'LOAN_NEXT_DUE_IN_PAST' using errcode = 'P0001';
+        end if;
+        delete from public.bills where id in (
+          select public.untouched_rule_bills(p_user_id, v_ld.recurring_rule_id, v_today));
+        update public.recurring_rules
+          set name = v_name || ' payment', amount = p_payment_amount,
+              frequency = p_payment_frequency, interval_count = 1,
+              day_of_month = null, day_of_week = null,
+              start_date = p_next_due_date, next_occurrence_date = p_next_due_date,
+              provider_name = v_inst, updated_at = now()
+          where id = v_ld.recurring_rule_id and user_id = p_user_id;
+      else
+        if v_ld.payment_amount is distinct from p_payment_amount then
+          update public.bills set amount = p_payment_amount
+            where id in (
+              select public.untouched_rule_bills(p_user_id, v_ld.recurring_rule_id, v_today));
+        end if;
+        update public.recurring_rules
+          set name = v_name || ' payment', amount = p_payment_amount,
+              provider_name = v_inst, updated_at = now()
+          where id = v_ld.recurring_rule_id and user_id = p_user_id;
+      end if;
+    end if;
+  end if;
+
+  update public.accounts set name = v_name, institution_name = v_inst where id = p_id;
+
+  insert into public.audit_logs
+    (actor_user_id, target_user_id, entity_type, entity_id, event_type,
+     before_data, after_data)
+  values
+    (p_user_id, p_user_id, 'account', p_id, 'account_updated',
+     jsonb_build_object('name', v_acc.name, 'institution', v_acc.institution_name,
+                        'payment_amount', v_ld.payment_amount::text,
+                        'payment_frequency', v_ld.payment_frequency,
+                        'next_due_date', v_ld.next_due_date),
+     jsonb_build_object('name', v_name, 'institution', v_inst,
+                        'payment_amount', p_payment_amount::numeric(18,2)::text,
+                        'payment_frequency', p_payment_frequency,
+                        'next_due_date', p_next_due_date));
+end;
+$$;
+
+revoke all on function public.update_account_details from public, anon, authenticated;
+grant execute on function public.update_account_details to service_role;
+
+create or replace function public.upsert_bank_details(
+  p_user_id    uuid,
+  p_account_id uuid,
+  p_last4      text default null,
+  p_kind       text default null
+) returns void language plpgsql security definer set search_path = '' as $$
+declare
+  v_last4 text := nullif(btrim(coalesce(p_last4, '')), '');
+  v_kind  text := nullif(btrim(coalesce(p_kind, '')), '');
+begin
+  if not exists (
+    select 1 from public.accounts
+    where id = p_account_id and user_id = p_user_id and type = 'bank'
+  ) then
+    raise exception 'ACCOUNT_NOT_FOUND' using errcode = 'P0002';
+  end if;
+  if exists (select 1 from public.accounts where id = p_account_id and is_archived) then
+    raise exception 'ACCOUNT_ARCHIVED' using errcode = 'P0001';
+  end if;
+
+  if v_last4 is null and v_kind is null then
+    delete from public.account_details where account_id = p_account_id;
+    return;
+  end if;
+
+  insert into public.account_details (account_id, user_id, last4, kind)
+  values (p_account_id, p_user_id, v_last4, v_kind)
+  on conflict (account_id) do update
+    set last4 = excluded.last4, kind = excluded.kind;
+end;
+$$;
+
+revoke all on function public.upsert_bank_details from public, anon, authenticated;
+grant execute on function public.upsert_bank_details to service_role;
+
+
+-- ======================================================================
+-- 20261103000700_deletion_guards_newer_tables.sql
+-- ======================================================================
+
+-- HP-035: extend the account-deletion write guards to everything added since.
+--
+-- 20260923000200 attached reject_writes_during_deletion to every public table
+-- with a user_id column that existed then. loan_details and account_details
+-- came later and had no guard, so an in-flight loan or bank edit could write
+-- rows for a user being deleted. The same loop runs again here and covers any
+-- table it finds without the trigger.
+--
+-- reject_storage_during_deletion reads the owner from the first path segment,
+-- so staged uploads under incoming/<uid>/ passed it. A second trigger reads
+-- the owner of staged paths. It is separate rather than a new body for the
+-- first, so re-running 20260923000200 cannot quietly remove it.
+
+do $$ declare t text; begin
+  for t in
+    select c.table_name from information_schema.columns c
+    where c.table_schema = 'public' and c.column_name = 'user_id'
+      and c.table_name not in ('account_deletions', 'deletion_challenges')
+      and exists (
+        select 1 from information_schema.tables it
+        where it.table_schema = 'public' and it.table_name = c.table_name
+          and it.table_type = 'BASE TABLE')
+      and not exists (
+        select 1 from pg_trigger tg
+        where tg.tgname = 'reject_writes_during_deletion'
+          and tg.tgrelid = format('public.%I', c.table_name)::regclass)
+  loop
+    execute format('create trigger reject_writes_during_deletion before insert or update on public.%I for each row execute function public.reject_writes_during_deletion()', t);
+  end loop;
+end $$;
+
+create or replace function public.reject_staged_storage_during_deletion() returns trigger
+language plpgsql security definer set search_path='' as $$
+declare v_user uuid; v_owner text;
+begin
+  if new.bucket_id <> 'hello-pera-documents' or split_part(new.name, '/', 1) <> 'incoming' then
+    return new;
+  end if;
+  v_owner := split_part(new.name, '/', 2);
+  if v_owner !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then return new; end if;
+  v_user := v_owner::uuid;
+  perform 1 from public.profiles where id = v_user for share;
+  if exists (select 1 from public.account_deletions where user_id = v_user) then
+    raise exception 'ACCOUNT_DELETION_IN_PROGRESS';
+  end if;
+  return new;
+end $$;
+revoke all on function public.reject_staged_storage_during_deletion() from public, anon, authenticated;
+drop trigger if exists reject_staged_storage_during_deletion on storage.objects;
+create trigger reject_staged_storage_during_deletion before insert or update on storage.objects
+  for each row execute function public.reject_staged_storage_during_deletion();
+
+
+-- ======================================================================
+-- 20261103000800_freeze_financial_writes.sql
+-- ======================================================================
+
+-- HP-025: the ledger freeze, enforced by the database on every write path.
+--
+-- financial_writes_enabled was checked by the server actions and by the
+-- scheduled generator, but not by the ordinary write RPCs or the admin-client
+-- inserts, so a path that forgot the action-level check could still write
+-- while the ledger was frozen. A statement-level trigger on each financial
+-- table now calls assert_financial_writes_enabled(), which fails closed when
+-- the flag is off or missing.
+--
+-- Inserts and updates only. Deletes stay possible, so account deletion and
+-- the removal of a never-used account still work during a freeze. One check
+-- per statement, so a bulk write costs one flag read.
+
+create or replace function public.reject_writes_while_frozen() returns trigger
+language plpgsql security definer set search_path = '' as $$
+begin
+  perform public.assert_financial_writes_enabled();
+  return null;
+end $$;
+revoke all on function public.reject_writes_while_frozen() from public, anon, authenticated;
+
+do $$ declare t text; begin
+  foreach t in array array[
+    'accounts', 'transactions', 'bills', 'receivables', 'expected_income',
+    'bill_payments', 'receivable_payments', 'expected_income_receipts',
+    'recurring_rules', 'expected_events', 'loan_details', 'account_details'
+  ] loop
+    execute format('drop trigger if exists reject_writes_while_frozen on public.%I', t);
+    execute format('create trigger reject_writes_while_frozen before insert or update on public.%I for each statement execute function public.reject_writes_while_frozen()', t);
+  end loop;
+end $$;
+
+
+-- ======================================================================
+-- 20261103000900_money_as_text.sql
+-- ======================================================================
+
+-- HP-005: the last two places money left the database as a JSON number.
+--
+--   * read_obligations built each row with to_jsonb(o), which turns numeric
+--     into a JSON number. amount and the applied total were already overridden
+--     with text; bills.installment_amount, added later, was not.
+--   * check_financial_integrity returns numeric columns, which PostgREST sends
+--     as JSON numbers, so a large or trailing-zero figure reached the admin
+--     report already rounded. The function is renamed and wrapped by one that
+--     returns the same rows with expected and actual as text, so its body and
+--     run_financial_integrity_check stay as they are.
+
+create or replace function public.read_obligations(
+  p_kind text, p_archived boolean default false, p_open boolean default false,
+  p_from date default null, p_to date default null, p_id uuid default null,
+  p_offset integer default 0, p_limit integer default null
+) returns jsonb language plpgsql stable security invoker set search_path='' as $$
+declare t text; links text; fk text; date_col text; extra text := ''; result jsonb;
+begin
+  case p_kind
+    when 'bill' then t:='bills'; links:='bill_payments'; fk:='bill_id'; date_col:='due_date';
+      extra:=',''installment_amount'',o.installment_amount::text';
+    when 'receivable' then t:='receivables'; links:='receivable_payments'; fk:='receivable_id'; date_col:='due_date';
+    when 'expected_income' then t:='expected_income'; links:='expected_income_receipts'; fk:='expected_income_id'; date_col:='expected_date';
+    else raise exception 'UNKNOWN_OBLIGATION_TYPE';
+  end case;
+  execute format('select coalesce(jsonb_agg(to_jsonb(o) || jsonb_build_object(''amount'',o.amount::text%s,%L,
+    jsonb_build_array(jsonb_build_object(''amount_applied'',(select coalesce(sum(l.amount_applied),0)::text from public.%I l where l.%I=o.id))))
+    order by o.%I,o.id),''[]''::jsonb) from (select * from public.%I
+    where ($1 or not is_archived) and (not $2 or status in (''open'',''partially_paid''))
+    and ($3 is null or %I >= $3) and ($4 is null or %I <= $4) and ($5 is null or id=$5)
+    order by %I,id limit $7 offset $6) o',extra,links,links,fk,date_col,t,date_col,date_col,date_col)
+    into result using p_archived,p_open,p_from,p_to,p_id,p_offset,p_limit;
+  return result;
+end $$;
+revoke all on function public.read_obligations(text,boolean,boolean,date,date,uuid,integer,integer) from public,anon;
+grant execute on function public.read_obligations(text,boolean,boolean,date,date,uuid,integer,integer) to authenticated;
+
+alter function public.check_financial_integrity(uuid) rename to financial_integrity_findings;
+
+create function public.check_financial_integrity(p_user_id uuid default null)
+returns table (
+  check_name  text,
+  user_id     uuid,
+  entity_type text,
+  entity_id   uuid,
+  detail      text,
+  expected    text,
+  actual      text
+)
+language sql stable security definer set search_path = '' as $$
+  select f.check_name, f.user_id, f.entity_type, f.entity_id, f.detail,
+         f.expected::text, f.actual::text
+  from public.financial_integrity_findings(p_user_id) f;
+$$;
+
+comment on function public.check_financial_integrity(uuid) is
+  'PHASE-14 section 64. Reports every integrity mismatch. Writes nothing, ever. Money as text (HP-005).';
+revoke all on function public.check_financial_integrity(uuid) from public, anon, authenticated;
+grant execute on function public.check_financial_integrity(uuid) to service_role;

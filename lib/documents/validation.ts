@@ -9,6 +9,12 @@
 export const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 export const MAX_PDF_BYTES = 20 * 1024 * 1024;
 
+/**
+ * HP-031. Every stored rendition and staged upload counts. Archiving keeps a
+ * document's files, so it does not free space.
+ */
+export const MAX_STORAGE_BYTES = 1024 * 1024 * 1024;
+
 /** The larger of the two, for checks made before the file type is known. */
 export const MAX_UPLOAD_BYTES = Math.max(MAX_IMAGE_BYTES, MAX_PDF_BYTES);
 
@@ -31,7 +37,14 @@ export function maxBytesFor(isPdf: boolean): number {
   return isPdf ? MAX_PDF_BYTES : MAX_IMAGE_BYTES;
 }
 
-export const MAX_IMAGE_DIMENSION = 12_000;
+export const MAX_IMAGE_DIMENSION = 10_000;
+
+/**
+ * The ceiling on decoded size. A decoded pixel costs about 4 bytes, so this
+ * holds one decode near 200 MB, where 12,000px on both sides was over 0.5 GB.
+ * A 48 MP phone photo (8064x6048) still fits.
+ */
+export const MAX_IMAGE_PIXELS = 50_000_000;
 
 export type DetectedType =
   'image/jpeg' | 'image/png' | 'image/webp' | 'image/heic' | 'application/pdf';
@@ -147,6 +160,12 @@ export function validateDimensions(
     return {
       ok: false,
       message: `That image is too large (${width}x${height}). The maximum is ${MAX_IMAGE_DIMENSION}px on a side.`,
+    };
+  }
+  if (width * height > MAX_IMAGE_PIXELS) {
+    return {
+      ok: false,
+      message: `That image is too large (${width}x${height}). The maximum is ${MAX_IMAGE_PIXELS / 1_000_000} megapixels.`,
     };
   }
   return null;

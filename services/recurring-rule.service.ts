@@ -2,6 +2,7 @@ import 'server-only';
 
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { insertOwned, type CreateOptions } from '@/services/insert-owned';
 import { fromDatabase, parseDecimal, toDecimalString } from '@/lib/money';
 import { describeRule, initialCursor as firstCursor } from '@/lib/recurring/schedule';
 import type { Frequency } from '@/lib/recurring/schedule';
@@ -180,39 +181,41 @@ export async function createRule(
   userId: string,
   input: CreateRecurringRuleInput,
   today: string,
-): Promise<string> {
-  const admin = createAdminClient();
-
+  options: CreateOptions = {},
+): Promise<{ id: string; created: boolean }> {
   const cursor = initialCursor(input, today);
 
-  const { data, error } = await admin
-    .from('recurring_rules')
-    .insert({
-      user_id: userId,
-      rule_type: input.ruleType,
-      name: input.name,
-      description: optional(input.description),
-      amount: toDecimalString(parseDecimal(input.amount)),
-      currency_code: input.currencyCode,
-      frequency: input.frequency,
-      interval_count: input.intervalCount,
-      day_of_month: input.dayOfMonth ?? null,
-      day_of_week: input.dayOfWeek ?? null,
-      start_date: input.startDate,
-      end_date: optional(input.endDate),
-      next_occurrence_date: cursor,
-      account_id: optional(input.accountId),
-      category_id: optional(input.categoryId),
-      provider_name: optional(input.providerName),
-      source_name: optional(input.sourceName),
-      is_active: true,
-      is_paused: false,
-    })
-    .select('id')
-    .single();
-
-  if (error) throw new Error(`Could not create this rule: ${error.code}`);
-  return String(data.id);
+  try {
+    return await insertOwned(
+      'recurring_rules',
+      userId,
+      {
+        rule_type: input.ruleType,
+        name: input.name,
+        description: optional(input.description),
+        amount: toDecimalString(parseDecimal(input.amount)),
+        currency_code: input.currencyCode,
+        frequency: input.frequency,
+        interval_count: input.intervalCount,
+        day_of_month: input.dayOfMonth ?? null,
+        day_of_week: input.dayOfWeek ?? null,
+        start_date: input.startDate,
+        end_date: optional(input.endDate),
+        next_occurrence_date: cursor,
+        account_id: optional(input.accountId),
+        category_id: optional(input.categoryId),
+        provider_name: optional(input.providerName),
+        source_name: optional(input.sourceName),
+        is_active: true,
+        is_paused: false,
+      },
+      options.id,
+    );
+  } catch (error) {
+    throw new Error(
+      `Could not create this rule: ${error instanceof Error ? error.message : '?'}`,
+    );
+  }
 }
 
 /**

@@ -9,6 +9,7 @@ import { AdminForm } from '@/components/admin/admin-form';
 import { buttonClass } from '@/components/ui/button';
 import { requireAdmin } from '@/lib/auth/guards';
 import { getUserDetail } from '@/services/admin.service';
+import { Unavailable } from '@/components/admin/unavailable';
 import { ENTITLEMENT_KEYS } from '@/lib/monetization/entitlements';
 import { METERED_FEATURES } from '@/lib/monetization/limits';
 import {
@@ -40,7 +41,16 @@ export default async function AdminUserPage({
   await requireAdmin();
   const { id } = await params;
 
-  const detail = await getUserDetail(id);
+  const result = await getUserDetail(id);
+  if (result.state === 'unavailable') {
+    return (
+      <div className="mx-auto max-w-3xl">
+        <PageHeader title="User" />
+        <Unavailable what="This user" reference={result.reference} />
+      </div>
+    );
+  }
+  const detail = result.data;
   if (!detail) notFound();
 
   const { user, plan, usage, overrides, notes, events, recordCounts } = detail;

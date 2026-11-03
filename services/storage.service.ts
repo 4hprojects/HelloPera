@@ -121,6 +121,14 @@ export async function createStagedUpload(
   return { path, token: data.token };
 }
 
+/** Bytes this user holds in the bucket, staged uploads included. */
+export async function storageUsedBytes(userId: string): Promise<number> {
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc('user_storage_bytes', { p_user_id: userId });
+  if (error) throw new Error('Storage usage could not be read.');
+  return Number(data ?? 0);
+}
+
 /** True when `path` is a staging path this user could have been given. */
 export function isOwnStagedPath(userId: string, path: string): boolean {
   const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';

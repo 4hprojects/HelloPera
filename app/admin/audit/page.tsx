@@ -4,6 +4,7 @@ import { PageHeader } from '@/components/ui/page-header';
 import { Cell, DataTable } from '@/components/admin/data-table';
 import { requireAdmin } from '@/lib/auth/guards';
 import { listAuditLog } from '@/services/admin.service';
+import { Unavailable } from '@/components/admin/unavailable';
 
 export const metadata: Metadata = { title: 'Audit · Admin' };
 
@@ -25,7 +26,8 @@ export default async function AdminAuditPage({
 }) {
   await requireAdmin();
   const params = await searchParams;
-  const rows = await listAuditLog(params);
+  const result = await listAuditLog(params);
+  const rows = result.state === 'ok' ? result.data : [];
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -49,34 +51,38 @@ export default async function AdminAuditPage({
         ))}
       </div>
 
-      <DataTable
-        headers={['Event', 'Actor', 'Target', 'Reason', 'When']}
-        rowCount={rows.length}
-        empty="Nothing recorded yet."
-      >
-        {rows.map((row) => (
-          <tr key={row.id}>
-            <Cell>{row.eventType.replace(/_/g, ' ')}</Cell>
-            <Cell>{row.actorUserId ? row.actorUserId.slice(0, 8) : 'system'}</Cell>
-            <Cell>
-              {row.targetUserId ? (
-                <Link
-                  href={`/admin/users/${row.targetUserId}`}
-                  className="text-primary-text underline"
-                >
-                  {row.targetUserId.slice(0, 8)}
-                </Link>
-              ) : (
-                '—'
-              )}
-            </Cell>
-            <Cell>
-              {typeof row.metadata.reason === 'string' ? row.metadata.reason : '—'}
-            </Cell>
-            <Cell>{new Date(row.createdAt).toLocaleString()}</Cell>
-          </tr>
-        ))}
-      </DataTable>
+      {result.state === 'unavailable' ? (
+        <Unavailable what="The audit log" reference={result.reference} />
+      ) : (
+        <DataTable
+          headers={['Event', 'Actor', 'Target', 'Reason', 'When']}
+          rowCount={rows.length}
+          empty="Nothing recorded yet."
+        >
+          {rows.map((row) => (
+            <tr key={row.id}>
+              <Cell>{row.eventType.replace(/_/g, ' ')}</Cell>
+              <Cell>{row.actorUserId ? row.actorUserId.slice(0, 8) : 'system'}</Cell>
+              <Cell>
+                {row.targetUserId ? (
+                  <Link
+                    href={`/admin/users/${row.targetUserId}`}
+                    className="text-primary-text underline"
+                  >
+                    {row.targetUserId.slice(0, 8)}
+                  </Link>
+                ) : (
+                  '—'
+                )}
+              </Cell>
+              <Cell>
+                {typeof row.metadata.reason === 'string' ? row.metadata.reason : '—'}
+              </Cell>
+              <Cell>{new Date(row.createdAt).toLocaleString()}</Cell>
+            </tr>
+          ))}
+        </DataTable>
+      )}
     </div>
   );
 }

@@ -1,69 +1,79 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { rpc, from } = vi.hoisted(() => ({ rpc: vi.fn(), from: vi.fn() }));
-vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: () => ({ rpc, from }) }));
+/**
+ * HP-013: a failed admin read must surface as unavailable, never as an empty
+ * list or a zero, because "no failed jobs" during an outage is believed.
+ */
+
+const m = vi.hoisted(() => ({
+  results: {} as Record<string, { data: unknown; error: unknown; count?: number }>,
+}));
+
+vi.mock('server-only', () => ({}));
+vi.mock('@/lib/log', () => ({ log: { error: vi.fn(), warn: vi.fn(), info: vi.fn() } }));
+vi.mock('@/lib/supabase/admin', () => ({
+  createAdminClient: () => ({
+    from: (table: string) => {
+      const result = () => m.results[table] ?? { data: [], error: null, count: 0 };
+      const chain: Record<string, unknown> = {};
+      for (const k of ['select', 'eq', 'in', 'order', 'limit', 'or'])
+        chain[k] = () => chain;
+      chain.maybeSingle = async () => result();
+      chain.then = (resolve: (v: unknown) => unknown) => resolve(result());
+      return chain;
+    },
+  }),
+}));
 
 import {
-  getAdminOverview,
-  getAiOverview,
-  getNotificationOverview,
-  listJobRuns,
-} from '@/services/admin.service';
+  getUserDetail,
+  listAuditLog,
+  listFlags,
+  listOcrJobs,
+  listUsers,
+} from './admin.service';
 
-const failing = { data: null, error: { code: '57014', message: 'timeout' } };
+const failed = { data: null, error: { code: '57014' } };
 
 beforeEach(() => {
-  vi.clearAllMocks();
-  const chain: Record<string, unknown> = {};
-  for (const m of ['select', 'gte', 'neq', 'eq', 'order']) chain[m] = vi.fn(() => chain);
-  chain.limit = vi.fn(() => Promise.resolve(failing));
-  from.mockReturnValue(chain);
+  m.results = {};
 });
 
-describe('admin reads report unavailable, never zero', () => {
-  it('overview', async () => {
-    rpc.mockResolvedValue(failing);
-    const result = await getAdminOverview();
+describe('admin reads report failure instead of emptiness', () => {
+  it.each([
+    ['audit log', 'audit_logs', () => listAuditLog({})],
+    ['flags', 'feature_flags', () => listFlags()],
+    ['ocr jobs', 'ocr_jobs', () => listOcrJobs()],
+    ['users', 'profiles', () => listUsers({})],
+  ])('%s', async (_label, table, read) => {
+    m.results[table] = failed;
+    const result = await read();
     expect(result.state).toBe('unavailable');
-    if (result.state === 'unavailable') expect(result.reference).toMatch(/^adm-/);
   });
 
-  it('ai overview, notifications and job runs', async () => {
-    rpc.mockResolvedValue(failing);
-    expect((await getAiOverview(true)).state).toBe('unavailable');
-    expect((await getNotificationOverview()).state).toBe('unavailable');
-    expect((await listJobRuns()).state).toBe('unavailable');
+  it('returns the rows when the read works', async () => {
+    m.results.feature_flags = {
+      data: [{ key: 'ocr_enabled', enabled: true, config: {}, updated_at: 'now' }],
+      error: null,
+    };
+    const result = await listFlags();
+    expect(result.state === 'ok' && result.data.map((f) => f.key)).toEqual([
+      'ocr_enabled',
+    ]);
   });
 
-  it('maps exact database totals through unchanged', async () => {
-    rpc.mockResolvedValue({
+  it('does not show a user with zero records when a count failed', async () => {
+    m.results.profiles = {
       data: {
-        users_total: 1500,
-        users_active: 1400,
-        users_suspended: 60,
-        users_disabled: 40,
-        admins: 2,
-        ocr_today: 0,
-        ocr_failed: 0,
-        ai_today: 1200,
-        ai_failed: 300,
-        notifications_pending: 1000,
-        notifications_failed: 500,
-        jobs_last_run_at: null,
-        jobs_failed: 3,
+        id: 'u',
+        email: 'u@example.test',
+        role: 'user',
+        status: 'active',
+        created_at: 'now',
       },
       error: null,
-    });
-    const result = await getAdminOverview();
-    expect(result.state).toBe('ok');
-    if (result.state === 'ok') {
-      expect(result.data.users.total).toBe(1500);
-      expect(result.data.notifications.pending).toBe(1000);
-      expect(result.data.jobs).toEqual({
-        lastRunAt: null,
-        failedInWindow: 3,
-        windowHours: 24,
-      });
-    }
+    };
+    m.results.transactions = { data: null, error: { code: '57014' }, count: undefined };
+    expect((await getUserDetail('u')).state).toBe('unavailable');
   });
 });
