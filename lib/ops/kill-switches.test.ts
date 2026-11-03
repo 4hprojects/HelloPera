@@ -1,5 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { isMaintenanceMode } from '@/lib/ops/kill-switches';
+
+const m = vi.hoisted(() => ({ readFlagStrict: vi.fn() }));
+
+vi.mock('server-only', () => ({}));
+vi.mock('@/lib/log', () => ({ log: { error: vi.fn(), warn: vi.fn(), info: vi.fn() } }));
+vi.mock('@/services/plan.service', () => ({ readFlagStrict: m.readFlagStrict }));
+
+import {
+  assertWritesEnabled,
+  isMaintenanceMode,
+  WritesDisabledError,
+} from '@/lib/ops/kill-switches';
 
 /**
  * PHASE-14 §22, §85 — "every kill switch works, exercised at least once."
@@ -43,5 +54,23 @@ describe('maintenance mode reads only an explicit yes', () => {
       process.env.MAINTENANCE_MODE = value;
       expect(isMaintenanceMode(), JSON.stringify(value)).toBe(false);
     }
+  });
+});
+
+describe('financial writes switch (HP-025)', () => {
+  it('allows a write while the flag is on', async () => {
+    m.readFlagStrict.mockResolvedValue(true);
+    await expect(assertWritesEnabled()).resolves.toBeUndefined();
+    expect(m.readFlagStrict).toHaveBeenCalledWith('financial_writes_enabled');
+  });
+
+  it('refuses a write while the flag is off', async () => {
+    m.readFlagStrict.mockResolvedValue(false);
+    await expect(assertWritesEnabled()).rejects.toBeInstanceOf(WritesDisabledError);
+  });
+
+  it('refuses a write when the flag cannot be read', async () => {
+    m.readFlagStrict.mockRejectedValue(new Error('missing'));
+    await expect(assertWritesEnabled()).rejects.toBeInstanceOf(WritesDisabledError);
   });
 });

@@ -354,6 +354,23 @@ try {
       db.query('select public.assert_financial_writes_enabled()'),
       /FINANCIAL_WRITES_DISABLED/,
     );
+    // HP-025: the tables refuse writes themselves while the ledger is frozen,
+    // whichever path writes. Deletes stay possible.
+    await assert.rejects(
+      db.query(
+        "insert into public.bills(user_id,provider_name,amount,currency_code,due_date) values($1,'Frozen',1,'PHP','2026-09-23')",
+        [b],
+      ),
+      /FINANCIAL_WRITES_DISABLED/,
+    );
+    await db.query("delete from public.bills where provider_name='never-there'");
+    await db.query(
+      "insert into public.feature_flags(key,enabled) values('financial_writes_enabled',true)",
+    );
+    await db.query(
+      "insert into public.bills(user_id,provider_name,amount,currency_code,due_date) values($1,'Thawed',1,'PHP','2026-09-23')",
+      [b],
+    );
     console.log(
       'PASS: scheduled generation fails closed when financial writes are off or unreadable',
     );
@@ -1172,9 +1189,6 @@ try {
   {
     // HP-033: "this and all later" changes the rule, its untouched later pay
     // dates and the audit log together, and leaves edited dates alone.
-    await db.query(
-      "insert into public.feature_flags(key,enabled) values('financial_writes_enabled',true) on conflict (key) do update set enabled=true",
-    );
     const [u, v] = [randomUUID(), randomUUID()];
     await db.query(
       "insert into auth.users(id,email) values($1,'inc-u@example.test'),($2,'inc-v@example.test')",

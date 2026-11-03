@@ -6,6 +6,7 @@ import { fromDatabase, type Money } from '@/lib/money';
 import { analyticsClass } from '@/lib/finance/balance';
 import { takeLookaheadPage } from '@/lib/pagination/lookahead';
 import { withServiceTiming } from '@/lib/performance/service-timing';
+import { WritesDisabledError } from '@/lib/ops/kill-switches';
 import type { Direction, TransactionStatus, TransactionType } from '@/lib/finance/types';
 import type {
   CreateTransactionInput,
@@ -128,6 +129,10 @@ export async function getTransaction(id: string): Promise<Transaction | null> {
  * The RPCs raise stable codes precisely so this mapping is not guesswork.
  */
 function friendlyError(message: string): string {
+  // The database's own copy of the ledger freeze (HP-025), for a write that
+  // started before the switch was flipped.
+  if (message.includes('FINANCIAL_WRITES_DISABLED'))
+    return new WritesDisabledError().message;
   if (message.includes('ACCOUNT_NOT_FOUND')) return 'That account is unavailable.';
   if (message.includes('ACCOUNT_ARCHIVED')) return 'That account is archived.';
   if (message.includes('CURRENCY_MISMATCH')) {

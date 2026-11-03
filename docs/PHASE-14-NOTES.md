@@ -84,12 +84,17 @@ than `{ user }`, so the pattern that inserted the other eight guards did not
 match it — and recording a payment is a financial write in the most literal
 sense. Every action is now enumerated and checked rather than assumed.
 
-**It fails open**, which is the opposite of how entitlements fail and
-deliberately so. `isFlagEnabled` returns false for an unreadable flag; for this
-flag that would mean an unreachable `feature_flags` table silently freezing
-every user's ability to record a transaction. Locking people out of their own
-finances because an operational table hiccuped is worse than briefly honouring a
-freeze less strictly than intended.
+**It fails closed.** This section used to say the opposite; the policy changed
+in October and the note did not. `assertWritesEnabled` reads the flag with
+`readFlagStrict`, and an unreadable or missing flag refuses the write: an
+incident switch whose state cannot be established cannot safely authorize a
+financial mutation. Reads and recovery stay available.
+
+**The database enforces it too** (HP-025, `20261103000800`). Every financial
+table carries a statement-level trigger that calls
+`assert_financial_writes_enabled()` on insert and update, so a write path that
+skips the action-level check is still refused. Deletes are not blocked, so
+account deletion keeps working during a freeze.
 
 ## 4. Liveness and readiness answer different questions
 
