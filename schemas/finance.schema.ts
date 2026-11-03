@@ -53,9 +53,17 @@ const loanFields = {
   nextDueDate: z.preprocess(blankToUndefined, isoDate.optional()),
   principal: z.preprocess(blankToUndefined, positiveAmount.optional()),
   loanStartDate: z.preprocess(blankToUndefined, isoDate.optional()),
+  // A decimal string with at most two places, kept as a string to the
+  // numeric(5,2) column. z.coerce.number took "1e1", "0x10" and "5.555", and
+  // its float could round on the way in (HP-038).
   interestRateApr: z.preprocess(
     blankToUndefined,
-    z.coerce.number().min(0, 'Use 0 to 100').max(100, 'Use 0 to 100').optional(),
+    z
+      .string()
+      .trim()
+      .regex(/^\d{1,3}(\.\d{1,2})?$/, 'Use 0 to 100, with at most 2 decimals')
+      .refine((v) => Number(v) <= 100, 'Use 0 to 100')
+      .optional(),
   ),
   termMonths: z.preprocess(
     blankToUndefined,
