@@ -59,6 +59,7 @@
 --   50. 20261103000800 freeze financial writes
 --   51. 20261103000900 money as text
 --   52. 20261103001000 balance recalc lock
+--   53. 20261103001100 shrink failed at
 --
 -- Prefer `npm run db:migrate` where you have DATABASE_URL: it applies each
 -- file in its own transaction and records what ran. This bundle is for the
@@ -8580,3 +8581,18 @@ $$;
 
 comment on function public.recalculate_account_balance(uuid) is
   'Locks the account, then derives via derive_account_balance and writes the cache. Called after every balance-affecting write.';
+
+
+-- ======================================================================
+-- 20261103001100_shrink_failed_at.sql
+-- ======================================================================
+
+-- HP-038: a document whose shrink failed is skipped for a while.
+--
+-- The storage sweep picks the 20 oldest unshrunk images each run. A file that
+-- cannot be shrunk (corrupt, or an unsupported variant) failed every run and
+-- stayed in that oldest 20, so 20 such files stopped the sweep for good. A
+-- failure now stamps shrink_failed_at, and the sweep skips the document until
+-- the stamp is a week old.
+
+alter table public.documents add column if not exists shrink_failed_at timestamptz;

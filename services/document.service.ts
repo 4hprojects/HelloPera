@@ -383,6 +383,9 @@ const UNREAD_SHRINK_AFTER_DAYS = 7;
 const STAGED_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 const SWEEP_BATCH = 20;
 
+/** A failed shrink is retried after this, not on every run (HP-038). */
+const SHRINK_RETRY_AFTER_DAYS = 7;
+
 /**
  * Scheduled storage housekeeping, run from `/api/scheduler`.
  *
@@ -401,6 +404,7 @@ export async function sweepDocumentStorage(): Promise<{
 }> {
   const admin = createAdminClient();
   const cutoff = new Date(Date.now() - UNREAD_SHRINK_AFTER_DAYS * 86_400_000);
+  const retryBefore = new Date(Date.now() - SHRINK_RETRY_AFTER_DAYS * 86_400_000);
 
   const { data: rows, error } = await admin
     .from('documents')
@@ -410,12 +414,23 @@ export async function sweepDocumentStorage(): Promise<{
     .in('original_mime_type', ['image/jpeg', 'image/png', 'image/webp'])
     .not('original_path', 'is', null)
     .lt('created_at', cutoff.toISOString())
+    .or(`shrink_failed_at.is.null,shrink_failed_at.lt.${retryBefore.toISOString()}`)
     .order('created_at', { ascending: true })
     .limit(SWEEP_BATCH)
     .returns<Array<{ id: string; original_path: string }>>();
   if (error) throw new Error(`Could not load documents to shrink: ${error.code}`);
 
   let shrunk = 0;
+  // Stamped so a file that cannot be shrunk leaves the oldest-first batch
+  // instead of holding a place in it on every run.
+  const markFailed = async (id: string) => {
+    const { error: markError } = await admin
+      .from('documents')
+      .update({ shrink_failed_at: new Date().toISOString() })
+      .eq('id', id);
+    if (markError)
+      log.warn('document sweep: could not mark failure', { document_id: id });
+  };
   for (const row of rows ?? []) {
     try {
       const bytes = await downloadObject(row.original_path);
@@ -427,6 +442,7 @@ export async function sweepDocumentStorage(): Promise<{
         jpeg,
       });
       if (outcome === 'shrunk') shrunk += 1;
+      else if (outcome === 'failed') await markFailed(row.id);
       // Already small: mark it so the sweep stops picking it up. The stored
       // file is unchanged, and it is no larger than the reader's copy.
       else if (outcome === 'not_worth_it')
@@ -438,6 +454,7 @@ export async function sweepDocumentStorage(): Promise<{
           .eq('original_path', row.original_path);
     } catch {
       log.warn('document sweep: could not shrink', { document_id: row.id });
+      await markFailed(row.id);
     }
   }
 
