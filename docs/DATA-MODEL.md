@@ -176,6 +176,23 @@ transaction_tags     transaction_id, tag_id   (composite PK)
 
 ---
 
+### Balance read contract
+
+`accounts.current_balance` is a cache of `derive_account_balance(account)`, the
+sum over confirmed, non-voided transactions. Every write that changes a balance
+calls `recalculate_account_balance`, which locks the account row before deriving
+(HP-007). A concurrent insert and void therefore serialise on the account, and
+the second derivation sees the first one's commit. Reads of `current_balance`
+are as of the last committed write. `check_financial_integrity` reports any
+account where the cache and the derivation disagree.
+
+Idempotent writes (`create_transaction_idempotent`, `create_account_idempotent`,
+`record_obligation_payment`) replay the first result for the same request id.
+They refuse the same id with a different payload or from another user, and they
+treat distinct ids as distinct entries.
+
+---
+
 ## Phase 03 — Obligations
 
 Shared pattern: an obligation holds a total; link tables hold `amount_applied`

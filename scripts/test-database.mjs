@@ -320,6 +320,47 @@ try {
       await scalar('select count(*)::int from public.transactions where user_id=$1', [c]),
       before + 1,
     );
+    // HP-006: the same key with a different payload is refused, not replayed;
+    // distinct keys with the same payload are two real entries; and another
+    // user cannot reuse or read back someone else's key.
+    await assert.rejects(
+      db.query(
+        "select public.create_transaction_idempotent($1,$2,'income',6,'PHP','2026-09-23',null,$3)",
+        [c, treq, acct],
+      ),
+      /REQUEST_ALREADY_USED|MISMATCH/,
+    );
+    // Dated outside September so the analytics check below still sees one.
+    const t2 = await scalar(
+      "select public.create_transaction_idempotent($1,$2,'income',5,'PHP','2026-10-23',null,$3)",
+      [c, randomUUID(), acct],
+    );
+    assert.notEqual(t2, t1);
+    assert.equal(
+      await scalar('select count(*)::int from public.transactions where user_id=$1', [c]),
+      before + 2,
+    );
+    const balanceOf = () =>
+      scalar('select current_balance::text from public.accounts where id=$1', [acct]);
+    const settled = await balanceOf();
+    await assert.rejects(
+      db.query(
+        "select public.create_transaction_idempotent($1,$2,'income',5,'PHP','2026-09-23',null,$3)",
+        [a, treq, acct],
+      ),
+    );
+    assert.equal(await balanceOf(), settled);
+    // HP-007: PGlite has one connection, so the race cannot run here. Pin
+    // the fix instead: the account lock is taken before the balance is
+    // derived, so the derivation sees any writer that held the lock.
+    const recalc = await scalar(
+      "select prosrc from pg_proc where proname='recalculate_account_balance'",
+    );
+    assert.ok(
+      recalc.indexOf('for update') > -1 &&
+        recalc.indexOf('for update') < recalc.indexOf('derive_account_balance'),
+      'recalculate_account_balance must lock before it derives',
+    );
     console.log(
       'PASS: idempotent account/transaction creation replays once and rejects mismatches',
     );
