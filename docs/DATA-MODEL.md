@@ -268,6 +268,18 @@ Object paths begin with the owner's uuid:
 
 `retention_status` governs whether OCR can be retried — see Phase 05.
 
+**Access.** Files are never public. `/api/documents/<id>/<rendition>` checks the
+session, then redirects to a signed URL that lives 120 seconds
+(`SIGNED_URL_TTL_SECONDS` in `services/storage.service.ts`). A URL is minted only
+when the document's `user_id` is the caller. Role plays no part, so an admin gets
+the same 404 as anyone else. Every response is `private, no-store`. Uploads are
+staged under `incoming/<user_uuid>/<uuid>` and moved into place on finalise.
+
+**Quota and deletion.** `user_storage_bytes(user)` sums `storage.objects` sizes
+under both prefixes, and uploads stop at 1 GB. Deleting a document removes its
+folder's files, then the row. `document_links`, `ocr_jobs`, `ocr_results` and
+`extraction_results` cascade with it.
+
 Index: `(user_id)`, `(user_id, content_hash)`, `(created_at)`, `(processing_status)`.
 
 ---
