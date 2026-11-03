@@ -1460,6 +1460,97 @@ try {
     console.log('PASS: document storage usage is per user and service-only');
   }
   {
+    // HP-008: behavioural isolation as a signed-in browser. Two users each
+    // hold a loan with details and a bank account with details. Signed in as
+    // one, every user-owned table shows only that user's rows; the other's
+    // ids read as nothing; and claiming another user's role in the JWT, or no
+    // session at all, changes nothing.
+    const [x, y] = [randomUUID(), randomUUID()];
+    await db.query(
+      "insert into auth.users(id,email) values($1,'iso-x@example.test'),($2,'iso-y@example.test')",
+      [x, y],
+    );
+    const seed = async (u) => {
+      const loan = await scalar(
+        "select public.create_account($1,'Loan','loan','liability','PHP',1000)",
+        [u],
+      );
+      await db.query(
+        "insert into public.loan_details(account_id,user_id,payment_amount,payment_frequency,next_due_date) values($1,$2,100,'monthly','2026-12-01')",
+        [loan, u],
+      );
+      const bank = await scalar(
+        "select public.create_account($1,'Bank','bank','asset','PHP',50)",
+        [u],
+      );
+      await db.query("select public.upsert_bank_details($1,$2,'4321','savings')", [
+        u,
+        bank,
+      ]);
+      return { loan, bank };
+    };
+    await seed(x);
+    const theirs = await seed(y);
+
+    const owned = (
+      await db.query(
+        `select c.table_name from information_schema.columns c
+         join information_schema.tables t on t.table_schema=c.table_schema and t.table_name=c.table_name
+         where c.table_schema='public' and c.column_name='user_id' and t.table_type='BASE TABLE'
+         order by 1`,
+      )
+    ).rows.map((r) => r.table_name);
+    assert.ok(owned.includes('loan_details') && owned.includes('account_details'));
+
+    await db.query("select set_config('request.jwt.claim.sub',$1,false)", [x]);
+    await db.exec('set role authenticated');
+    try {
+      for (const table of owned) {
+        const foreign = await scalar(
+          `select count(*)::int from public.${table} where user_id <> $1`,
+          [x],
+        ).catch((error) => {
+          // A table the browser cannot read at all is isolated too.
+          if (/permission denied/.test(error.message)) return 0;
+          throw error;
+        });
+        assert.equal(foreign, 0, `${table} shows another user's rows`);
+      }
+      for (const [table, key] of [
+        ['accounts', 'id'],
+        ['loan_details', 'account_id'],
+        ['account_details', 'account_id'],
+      ]) {
+        for (const id of [theirs.loan, theirs.bank]) {
+          assert.equal(
+            await scalar(`select count(*)::int from public.${table} where ${key}=$1`, [
+              id,
+            ]),
+            0,
+            `${table} returns a foreign id`,
+          );
+        }
+      }
+      await db.query("select set_config('request.jwt.claims',$1,false)", [
+        JSON.stringify({ sub: x, role: 'service_role' }),
+      ]);
+      assert.equal(
+        await scalar('select count(*)::int from public.accounts where user_id=$1', [y]),
+        0,
+        'a role claim does not lift RLS',
+      );
+      await db.query("select set_config('request.jwt.claim.sub','',false)");
+      assert.equal(await scalar('select count(*)::int from public.accounts'), 0);
+    } finally {
+      await db.exec('reset role');
+      await db.query("select set_config('request.jwt.claims','',false)");
+      await db.query("select set_config('request.jwt.claim.sub','',false)");
+    }
+    console.log(
+      'PASS: signed-in users see only their own rows in every user-owned table',
+    );
+  }
+  {
     // Browser roles may only read: no write privilege on any public table or
     // view, and no execute on service-only functions.
     const writable = (
