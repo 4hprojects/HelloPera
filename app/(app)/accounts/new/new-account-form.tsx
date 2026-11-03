@@ -46,7 +46,7 @@ export function NewAccountForm({
   const [name, setName] = useState('');
   const [nameTouched, setNameTouched] = useState(false);
   const suggest = (v: BankValues) => {
-    if (!nameTouched) setName(suggestAccountName(v.institution, v.kind, v.last4));
+    if (!nameTouched) setName(suggestAccountName(v.institution, v.kind));
   };
 
   // `other` has no sensible default, so the user must choose (§9).
