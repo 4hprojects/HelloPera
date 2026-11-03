@@ -1,6 +1,8 @@
 # HelloPera project audit checklist
 
-> Superseded for release readiness by [LAUNCH-IMPLEMENTATION.md](LAUNCH-IMPLEMENTATION.md).
+> Superseded for release readiness by [LAUNCH-IMPLEMENTATION.md](LAUNCH-IMPLEMENTATION.md),
+> and for task status by the 3 November re-audit,
+> [../to do/09-audit-2026-11-03.md](<../to do/09-audit-2026-11-03.md>).
 > Earlier completion marks describe the prior audit and must not substitute for
 > the current browser, database, staging, and recovery gates.
 

@@ -13,9 +13,10 @@ detail pages, corrections, retry-safe payments, and resumable deletion. Provider
 features remain disabled. Implementation is not evidence of production readiness.
 
 **Current readiness entrypoint: [to do/README.md](<to do/README.md>)** — the quality
-backlog (HP-001–HP-026), each task's status, and dated evidence in
-[to do/08-validation-and-evidence.md](<to do/08-validation-and-evidence.md>). A task
-is done only when its acceptance evidence is attached.
+backlog (HP-001–HP-038), each task's status, and dated evidence in
+[to do/08-validation-and-evidence.md](<to do/08-validation-and-evidence.md>). The
+latest re-audit is [to do/09-audit-2026-11-03.md](<to do/09-audit-2026-11-03.md>). A
+task is done only when its acceptance evidence is attached.
 
 **[docs/LAUNCH-IMPLEMENTATION.md](docs/LAUNCH-IMPLEMENTATION.md)** is the dated
 25 September 2026 readiness record (historical evidence). It still holds the
