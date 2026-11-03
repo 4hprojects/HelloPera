@@ -20,6 +20,7 @@ import {
   deleteAccount,
   getAccount,
   updateAccountDetails,
+  BankDetailsNotSavedError,
 } from '@/services/account.service';
 import { deriveTransactionCurrency } from '@/lib/finance/currency';
 import { generateOccurrences } from '@/services/recurring-rule.service';
@@ -102,6 +103,12 @@ export async function createAccountAction(
     log.error('account create failed', {
       message: error instanceof Error ? error.message : 'unknown',
     });
+    if (error instanceof BankDetailsNotSavedError) {
+      return {
+        error:
+          'Your account was created, but its bank details were not saved. Submit again to retry, or add them later by editing the account.',
+      };
+    }
     return { error: 'We could not create that account. Please try again.' };
   }
   if (parsed.data.type === 'loan') await generateLoanBills(user.id);

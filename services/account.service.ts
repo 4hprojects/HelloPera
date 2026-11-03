@@ -84,6 +84,13 @@ export function summarise(accounts: readonly Account[]) {
   );
 }
 
+/**
+ * The account was created but its bank extras were not saved. The create is
+ * idempotent on the request id, so submitting the same form again replays it
+ * and retries only the details.
+ */
+export class BankDetailsNotSavedError extends Error {}
+
 /** Writes go through the RPC so the account and its opening entry are atomic. */
 export async function createAccount(
   userId: string,
@@ -104,7 +111,13 @@ export async function createAccount(
   const id = data as string;
   if (input.type === 'bank' && (input.bankLast4 || input.bankKind)) {
     // Idempotent: a replayed create returns the same id and rewrites the same row.
-    await upsertBankDetails(userId, id, input.bankLast4, input.bankKind);
+    try {
+      await upsertBankDetails(userId, id, input.bankLast4, input.bankKind);
+    } catch (error) {
+      throw new BankDetailsNotSavedError(
+        error instanceof Error ? error.message : 'bank details failed',
+      );
+    }
   }
   return id;
 }
