@@ -5,6 +5,7 @@ import { requireUser } from '@/lib/auth/guards';
 import { log } from '@/lib/log';
 import type { ActionState } from '@/app/actions/auth';
 import { MAX_UPLOAD_BYTES } from '@/lib/documents/validation';
+import { enforceRateLimit, RateLimitError } from '@/services/rate-limit.service';
 import {
   archiveDocument,
   finalizeUpload,
@@ -46,8 +47,10 @@ export async function prepareUploadAction(
     };
   }
   try {
-    return await prepareUpload(user.id);
+    await enforceRateLimit('document_upload', `user:${user.id}`);
+    return await prepareUpload(user.id, size);
   } catch (error) {
+    if (error instanceof RateLimitError) return { error: error.userMessage };
     if (error instanceof UploadError) return { error: error.message };
     return { error: 'Upload failed. Please try again.' };
   }

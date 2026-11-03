@@ -41,6 +41,14 @@ export const RATE_LIMITED_ACTIONS = [
   'ocr_submit',
   'billing_webhook',
   'scheduler',
+  /**
+   * HP-031. Each upload can stage 25 MB in Storage and costs a full image
+   * decode, so a script could fill the bucket or pin the server. Keyed to the
+   * user: uploads need a session.
+   */
+  'document_upload',
+  // HP-031. One draft save creates up to 30 records.
+  'draft_save',
 ] as const;
 export type RateLimitedAction = (typeof RATE_LIMITED_ACTIONS)[number];
 
@@ -88,6 +96,10 @@ export const POLICIES: Record<RateLimitedAction, RateLimitPolicy> = {
    */
   billing_webhook: { limit: 120, windowSeconds: 60 },
   scheduler: { limit: 30, windowSeconds: 60 },
+  // A person scanning a stack of receipts uploads a few dozen at most.
+  document_upload: { limit: 30, windowSeconds: 60 * 60 },
+  // One save per uploaded document, so the same ceiling as uploads.
+  draft_save: { limit: 30, windowSeconds: 60 * 60 },
 };
 
 export type RateLimitResult = {

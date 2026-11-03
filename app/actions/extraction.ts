@@ -21,6 +21,7 @@ import { z } from 'zod';
 import { isoDate, positiveAmount } from '@/schemas/primitives';
 import { isFlagEnabled } from '@/services/plan.service';
 import { assertWritesEnabled, WritesDisabledError } from '@/lib/ops/kill-switches';
+import { enforceRateLimit, RateLimitError } from '@/services/rate-limit.service';
 
 export async function runExtractionAction(
   _prev: ActionState,
@@ -150,6 +151,14 @@ export async function confirmDraftsAction(
     if (formData.get(`d${i}.selected`) === 'on') selected.push(i);
   }
   if (selected.length === 0) return { error: 'Tick at least one record to save.' };
+
+  // One save can create up to 30 records, so it is limited like an upload.
+  try {
+    await enforceRateLimit('draft_save', `user:${user.id}`);
+  } catch (error) {
+    if (error instanceof RateLimitError) return { error: error.userMessage };
+    throw error;
+  }
 
   const admin = createAdminClient();
   const { data: extraction } = await admin

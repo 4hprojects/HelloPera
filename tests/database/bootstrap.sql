@@ -11,7 +11,7 @@ create function auth.role() returns text language sql stable as $$ select curren
 grant usage on schema auth,public,storage to anon,authenticated,service_role;
 grant execute on function auth.uid(),auth.role() to anon,authenticated,service_role;
 create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);
-create table storage.objects(id uuid primary key default gen_random_uuid(),bucket_id text,name text);
+create table storage.objects(id uuid primary key default gen_random_uuid(),bucket_id text,name text,metadata jsonb);
 create table public.schema_migrations(version text primary key);
 -- Supabase grants broad default privileges on every new public object. Mirror
 -- that here so a migration that forgets to revoke is caught by the grant tests.

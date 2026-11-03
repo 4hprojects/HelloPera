@@ -8,6 +8,7 @@ const m = vi.hoisted(() => ({
   createReceivable: vi.fn(),
   createExpectedIncome: vi.fn(),
   createTransaction: vi.fn(),
+  rateLimit: vi.fn(),
 }));
 
 vi.mock('server-only', () => ({}));
@@ -24,6 +25,12 @@ vi.mock('@/lib/ops/kill-switches', () => ({
 vi.mock('@/services/ocr.service', () => ({
   OcrError: class extends Error {},
   runExtraction: vi.fn(),
+}));
+vi.mock('@/services/rate-limit.service', () => ({
+  enforceRateLimit: m.rateLimit,
+  RateLimitError: class extends Error {
+    userMessage = 'Too many attempts. Please try again in 1 hour.';
+  },
 }));
 vi.mock('@/services/usage.service', () => ({ UsageLimitError: class extends Error {} }));
 vi.mock('@/services/account.service', () => ({ getAccount: async () => null }));
@@ -45,6 +52,7 @@ vi.mock('@/lib/supabase/admin', () => {
   return { createAdminClient: () => ({ from: () => chain, rpc: m.rpc }) };
 });
 
+import { RateLimitError } from '@/services/rate-limit.service';
 import { confirmDraftsAction } from './extraction';
 
 const EX = '00000000-0000-4000-8000-000000000001';
@@ -86,6 +94,7 @@ beforeEach(() => {
   m.extraction = pending();
   m.createBill.mockResolvedValue('bill-id');
   m.rpc.mockResolvedValue({ data: {}, error: null });
+  m.rateLimit.mockResolvedValue(undefined);
 });
 
 describe('confirmDraftsAction', () => {
@@ -93,6 +102,14 @@ describe('confirmDraftsAction', () => {
     m.extraction = null;
     const state = await confirmDraftsAction({}, billDraft());
     expect(state.error).toMatch(/could not be found/);
+    expect(anyCreate()).toBe(0);
+  });
+
+  it('creates nothing once the user is over the save limit', async () => {
+    m.rateLimit.mockRejectedValue(new (RateLimitError as unknown as new () => Error)());
+    const state = await confirmDraftsAction({}, billDraft());
+    expect(state.error).toMatch(/Too many attempts/);
+    expect(m.rateLimit).toHaveBeenCalledWith('draft_save', 'user:user-1');
     expect(anyCreate()).toBe(0);
   });
 

@@ -1067,6 +1067,37 @@ try {
     console.log('PASS: transactions, obligations and accounts can be edited safely');
   }
   {
+    // HP-031: storage usage counts stored and staged objects of one user only.
+    const [u, v] = [randomUUID(), randomUUID()];
+    await db.query(
+      "insert into auth.users(id,email) values($1,'quota-u@example.test'),($2,'quota-v@example.test')",
+      [u, v],
+    );
+    const put = (name, size, bucket = 'hello-pera-documents') =>
+      db.query(
+        'insert into storage.objects(bucket_id,name,metadata) values($1,$2,$3)',
+        [bucket, name, JSON.stringify({ size })],
+      );
+    await put(`${u}/2026/11/doc/original.jpg`, 1000);
+    await put(`${u}/2026/11/doc/display.webp`, 200);
+    await put(`incoming/${u}/staged`, 30);
+    await put(`${v}/2026/11/doc/original.jpg`, 5000);
+    await put(`incoming/${v}/staged`, 7);
+    await put(`${u}/elsewhere`, 9999, 'other-bucket');
+    const used = async (id) =>
+      Number(await scalar('select public.user_storage_bytes($1)', [id]));
+    assert.equal(await used(u), 1230);
+    assert.equal(await used(v), 5007);
+    assert.equal(await used(randomUUID()), 0);
+    assert.equal(
+      await scalar(
+        "select has_function_privilege('authenticated','public.user_storage_bytes(uuid)','execute')",
+      ),
+      false,
+    );
+    console.log('PASS: document storage usage is per user and service-only');
+  }
+  {
     // Browser roles may only read: no write privilege on any public table or
     // view, and no execute on service-only functions.
     const writable = (
