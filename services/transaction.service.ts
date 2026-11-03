@@ -141,9 +141,12 @@ function friendlyError(message: string): string {
   if (message.includes('TRANSACTION_NOT_FOUND'))
     return 'That transaction no longer exists.';
   if (message.includes('TRANSACTION_LINKED')) {
-    return 'This transaction settles a bill or receivable, so its amount is locked. Void it and record a corrected one.';
+    return 'This transaction settles a bill, receivable or planned payment, so its amount is locked. Void it and record a corrected one.';
   }
   if (message.includes('CATEGORY_NOT_FOUND')) return 'That category is unavailable.';
+  if (message.includes('CATEGORY_TYPE_MISMATCH')) {
+    return 'Choose a category for this kind of entry: an income category for income, an expense category for spending.';
+  }
   if (message.includes('AMOUNT_NOT_POSITIVE')) return 'Amount must be greater than zero.';
   if (message.includes('INCOME_REQUIRES_ASSET')) {
     return 'Income must go into an account you own, not one you owe on. Money arriving on a credit card is a refund or a transfer.';

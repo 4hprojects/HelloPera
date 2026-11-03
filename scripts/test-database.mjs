@@ -1067,6 +1067,79 @@ try {
     console.log('PASS: transactions, obligations and accounts can be edited safely');
   }
   {
+    // HP-034: edits cannot misfile an entry, move a linked entry's amount, or
+    // touch an archived account.
+    const w = randomUUID();
+    await db.query("insert into auth.users(id,email) values($1,'edit-w@example.test')", [
+      w,
+    ]);
+    const acct = await scalar(
+      "select public.create_account($1,'Wallet','cash','asset','PHP',1000)",
+      [w],
+    );
+    const tid = await scalar(
+      "insert into public.transactions(user_id,type,amount,currency_code,transaction_date,source_account_id,status) values($1,'expense',100,'PHP','2026-10-01',$2,'confirmed') returning id",
+      [w, acct],
+    );
+    await db.query('select public.recalculate_account_balance($1)', [acct]);
+    const cat = (type) =>
+      scalar(
+        'insert into public.categories(user_id,name,type) values($1,$2,$3) returning id',
+        [w, `Edit ${type}`, type],
+      );
+    const [incomeCat, expenseCat, bothCat] = [
+      await cat('income'),
+      await cat('expense'),
+      await cat('both'),
+    ];
+    const edit = (amount, category = null, notes = '') =>
+      db.query(
+        "select public.update_transaction($1,$2,$3,'2026-10-01',$4,null,null,$5)",
+        [w, tid, amount, category, notes],
+      );
+    await assert.rejects(edit(100, incomeCat), /CATEGORY_TYPE_MISMATCH/);
+    await edit(100, expenseCat);
+    await edit(100, bothCat);
+
+    const event = await scalar(
+      "insert into public.expected_events(user_id,event_type,name,amount,currency_code,scheduled_date,status,actual_transaction_id) values($1,'expense','Planned',100,'PHP','2026-10-01','fulfilled',$2) returning id",
+      [w, tid],
+    );
+    await assert.rejects(edit(120, bothCat), /TRANSACTION_LINKED/);
+    await edit(100, bothCat, 'notes only');
+    await db.query('delete from public.expected_events where id=$1', [event]);
+
+    await db.query('update public.accounts set is_archived=true where id=$1', [acct]);
+    await assert.rejects(edit(120, bothCat), /ACCOUNT_ARCHIVED/);
+    await edit(100, bothCat, 'still describable');
+    assert.equal(
+      await scalar('select current_balance::text from public.accounts where id=$1', [
+        acct,
+      ]),
+      '900.00',
+    );
+    await assert.rejects(
+      db.query("select public.update_account_details($1,$2,'Renamed')", [w, acct]),
+      /ACCOUNT_ARCHIVED/,
+    );
+    const bank = await scalar(
+      "select public.create_account($1,'Bank','bank','asset','PHP',0)",
+      [w],
+    );
+    await db.query("select public.upsert_bank_details($1,$2,'1234','savings')", [
+      w,
+      bank,
+    ]);
+    await db.query('update public.accounts set is_archived=true where id=$1', [bank]);
+    await assert.rejects(
+      db.query("select public.upsert_bank_details($1,$2,'9999','savings')", [w, bank]),
+      /ACCOUNT_ARCHIVED/,
+    );
+    console.log(
+      'PASS: edits refuse mismatched categories, linked amounts and archived accounts',
+    );
+  }
+  {
     // HP-033: "this and all later" changes the rule, its untouched later pay
     // dates and the audit log together, and leaves edited dates alone.
     await db.query(
