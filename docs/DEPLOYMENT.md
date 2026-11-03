@@ -63,6 +63,13 @@ Set these HelloDeploy environment entries separately for each project:
 | `NEXT_PUBLIC_APP_URL` | Exact HTTPS origin above; build and runtime |
 | `NEXT_PUBLIC_APP_NAME` | `HelloPera`; build and runtime |
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | That environment's Turnstile site key; build and runtime. Set it exactly when Supabase CAPTCHA is on |
+
+**Turnstile on staging.** The browser suites sign in through the real form, and
+a real widget would block them. Staging uses Cloudflare's always-pass test pair:
+site key `1x00000000000000000000AA` in HelloDeploy, and secret
+`1x0000000000000000000000000000000AA` in the staging Supabase project's CAPTCHA
+setting. Production uses the real pair. Never use the test pair in production:
+it passes every visitor.
 | `SUPABASE_SECRET_KEY` | That environment's privileged key; runtime only |
 | `HOSTNAME` | `0.0.0.0` (platform also enforces this for Next.js) |
 
