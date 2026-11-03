@@ -145,7 +145,12 @@ const schema = z
     // into the widget), so it is read on the server and handed to the auth
     // forms as a prop. The secret stays in Supabase, which verifies the token:
     // nothing in this app needs it.
-    TURNSTILE_SITE_KEY: z.string().min(1).optional(),
+    //
+    // NEXT_PUBLIC_ so it is inlined at build time: HelloDeploy passes only
+    // NEXT_PUBLIC_* into the build, and /forgot-password is prerendered. The
+    // widget and the token check in the auth actions then come from the same
+    // build and cannot disagree.
+    NEXT_PUBLIC_TURNSTILE_SITE_KEY: z.string().min(1).optional(),
   })
   .superRefine((value, ctx) => {
     const vapid = [
@@ -180,7 +185,7 @@ function load(): Env {
     VAPID_SUBJECT: process.env.VAPID_SUBJECT,
     SCHEDULER_SECRET: process.env.SCHEDULER_SECRET,
     NEXT_PUBLIC_ADSENSE_CLIENT_ID: process.env.NEXT_PUBLIC_ADSENSE_CLIENT_ID,
-    TURNSTILE_SITE_KEY: process.env.TURNSTILE_SITE_KEY,
+    NEXT_PUBLIC_TURNSTILE_SITE_KEY: process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY,
   });
 
   if (!parsed.success) {
@@ -276,5 +281,5 @@ export function isAdsConfigured(): boolean {
  * is not, they send none, which works only while Supabase CAPTCHA is off.
  */
 export function turnstileSiteKey(): string | undefined {
-  return env.TURNSTILE_SITE_KEY;
+  return env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 }

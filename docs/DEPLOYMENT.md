@@ -62,6 +62,7 @@ Set these HelloDeploy environment entries separately for each project:
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Publishable/anon key; build and runtime |
 | `NEXT_PUBLIC_APP_URL` | Exact HTTPS origin above; build and runtime |
 | `NEXT_PUBLIC_APP_NAME` | `HelloPera`; build and runtime |
+| `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | That environment's Turnstile site key; build and runtime. Set it exactly when Supabase CAPTCHA is on |
 | `SUPABASE_SECRET_KEY` | That environment's privileged key; runtime only |
 | `HOSTNAME` | `0.0.0.0` (platform also enforces this for Next.js) |
 
