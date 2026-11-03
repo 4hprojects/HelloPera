@@ -1273,6 +1273,44 @@ try {
     console.log('PASS: integrity findings and obligation reads carry money as text');
   }
   {
+    // HP-038: the first edit of a loan that predates loan_details creates its
+    // details and payment rule, instead of changing nothing.
+    const l = randomUUID();
+    await db.query(
+      "insert into auth.users(id,email) values($1,'legacy-l@example.test')",
+      [l],
+    );
+    const legacy = await scalar(
+      "select public.create_account($1,'Old loan','loan','liability','PHP',3000)",
+      [l],
+    );
+    assert.equal(
+      await scalar('select count(*)::int from public.loan_details where account_id=$1', [
+        legacy,
+      ]),
+      0,
+    );
+    await db.query(
+      "select public.update_account_details($1,$2,'Old loan','Bank',300,'monthly',current_date+7,null,null,null)",
+      [l, legacy],
+    );
+    assert.equal(
+      await scalar(
+        'select payment_amount::text from public.loan_details where account_id=$1',
+        [legacy],
+      ),
+      '300.00',
+    );
+    assert.equal(
+      await scalar(
+        "select count(*)::int from public.recurring_rules r join public.loan_details d on d.recurring_rule_id=r.id where d.account_id=$1 and r.rule_type='bill' and r.amount=300",
+        [legacy],
+      ),
+      1,
+    );
+    console.log('PASS: editing a legacy loan creates its details and payment rule');
+  }
+  {
     // HP-034: edits cannot misfile an entry, move a linked entry's amount, or
     // touch an archived account.
     const w = randomUUID();
