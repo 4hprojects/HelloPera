@@ -8,10 +8,17 @@ import { FormField } from '@/components/auth/form-field';
 import { GoogleButton } from '@/components/auth/google-button';
 import { PasswordField } from '@/components/auth/password-field';
 import { Button } from '@/components/ui/button';
+import { Turnstile } from '@/components/auth/turnstile';
 
 const initial: ActionState = {};
 
-export function LoginForm({ cancelled }: { cancelled: boolean }) {
+export function LoginForm({
+  cancelled,
+  siteKey,
+}: {
+  cancelled: boolean;
+  siteKey: string | undefined;
+}) {
   const [state, action, pending] = useActionState(loginWithEmail, initial);
 
   return (
@@ -53,6 +60,7 @@ export function LoginForm({ cancelled }: { cancelled: boolean }) {
             Forgot password?
           </Link>
         </div>
+        <Turnstile siteKey={siteKey} resetSignal={state} />
         {/* Disabled while pending so a double submit cannot fire twice. */}
         <Button type="submit" disabled={pending} className="w-full" size="lg">
           {pending ? 'Signing in…' : 'Sign in'}

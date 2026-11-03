@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { redirectIfAuthenticated } from '@/lib/auth/guards';
 import { AuthShell } from '@/components/auth/auth-shell';
+import { turnstileSiteKey } from '@/lib/env';
 import { RegisterForm } from './register-form';
 
 export const metadata: Metadata = { title: 'Create account' };
@@ -29,7 +30,7 @@ export default async function RegisterPage({
         Free to use. No bank connection required.
       </p>
 
-      <RegisterForm cancelled={cancelled} />
+      <RegisterForm cancelled={cancelled} siteKey={turnstileSiteKey()} />
 
       <p className="hp-small mt-4 text-center text-text-muted">
         Already have an account?{' '}

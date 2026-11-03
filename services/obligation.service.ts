@@ -297,15 +297,55 @@ export async function linkExpectedIncomeToRule(
   if (error) throw new Error(`Could not link this record to its rule: ${error.code}`);
 }
 
-export async function createBill(
+/**
+ * Optional caller-chosen id for a create.
+ *
+ * A retry that sends the same id lands on the row the first attempt made,
+ * instead of a second record. The document draft flow derives one per draft.
+ */
+export type CreateOptions = { id?: string };
+
+/**
+ * Insert one owned row and return its id.
+ *
+ * With `id`, a unique violation on a row this user already owns under that id
+ * is the same request arriving twice, so the existing id is returned. Any
+ * other failure, including that id belonging to someone else, is an error.
+ */
+async function insertOwned(
+  table: string,
   userId: string,
-  input: CreateBillInput,
+  row: Record<string, unknown>,
+  id: string | undefined,
 ): Promise<string> {
   const admin = createAdminClient();
   const { data, error } = await admin
-    .from('bills')
-    .insert({
-      user_id: userId,
+    .from(table)
+    .insert({ ...(id ? { id } : {}), user_id: userId, ...row })
+    .select('id')
+    .single<{ id: string }>();
+  if (!error) return data.id;
+  if (id && error.code === '23505') {
+    const { data: existing } = await admin
+      .from(table)
+      .select('id')
+      .eq('id', id)
+      .eq('user_id', userId)
+      .maybeSingle<{ id: string }>();
+    if (existing) return existing.id;
+  }
+  throw new Error(error.message);
+}
+
+export async function createBill(
+  userId: string,
+  input: CreateBillInput,
+  options: CreateOptions = {},
+): Promise<string> {
+  return insertOwned(
+    'bills',
+    userId,
+    {
       provider_name: input.providerName,
       description: input.description || null,
       amount: input.amount,
@@ -316,22 +356,20 @@ export async function createBill(
       installment_amount: input.installmentAmount ?? null,
       installment_count: input.installmentCount ?? null,
       installments_prior: input.installmentsPrior ?? 0,
-    })
-    .select('id')
-    .single<{ id: string }>();
-  if (error) throw new Error(error.message);
-  return data.id;
+    },
+    options.id,
+  );
 }
 
 export async function createReceivable(
   userId: string,
   input: CreateReceivableInput,
+  options: CreateOptions = {},
 ): Promise<string> {
-  const admin = createAdminClient();
-  const { data, error } = await admin
-    .from('receivables')
-    .insert({
-      user_id: userId,
+  return insertOwned(
+    'receivables',
+    userId,
+    {
       party_name: input.partyName,
       description: input.description || null,
       amount: input.amount,
@@ -339,22 +377,20 @@ export async function createReceivable(
       borrowed_date: input.borrowedDate || null,
       due_date: input.dueDate || null,
       notes: input.notes || null,
-    })
-    .select('id')
-    .single<{ id: string }>();
-  if (error) throw new Error(error.message);
-  return data.id;
+    },
+    options.id,
+  );
 }
 
 export async function createExpectedIncome(
   userId: string,
   input: CreateExpectedIncomeInput,
+  options: CreateOptions = {},
 ): Promise<string> {
-  const admin = createAdminClient();
-  const { data, error } = await admin
-    .from('expected_income')
-    .insert({
-      user_id: userId,
+  return insertOwned(
+    'expected_income',
+    userId,
+    {
       source_name: input.sourceName,
       description: input.description || null,
       amount: input.amount,
@@ -362,11 +398,9 @@ export async function createExpectedIncome(
       expected_date: input.expectedDate,
       category_id: input.categoryId ?? null,
       notes: input.notes || null,
-    })
-    .select('id')
-    .single<{ id: string }>();
-  if (error) throw new Error(error.message);
-  return data.id;
+    },
+    options.id,
+  );
 }
 
 export class AllocationError extends Error {}

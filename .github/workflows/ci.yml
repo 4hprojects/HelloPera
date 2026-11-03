@@ -38,6 +38,9 @@ jobs:
       - name: Verify Node.js runtime
         run: npm run check:node
 
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Typecheck
         run: npm run typecheck
 

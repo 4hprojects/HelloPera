@@ -722,17 +722,60 @@ try {
       ),
       /LOAN_PRINCIPAL_BELOW_BALANCE/,
     );
+    // Generated bills follow the schedule. Dates are relative to today because
+    // the edit refuses a new schedule that starts in the past.
+    const loanRule = await scalar(
+      'select recurring_rule_id from public.loan_details where account_id=$1',
+      [loan],
+    );
+    const loanBill = (offset, paid = false) =>
+      scalar(
+        `insert into public.bills(user_id,provider_name,amount,currency_code,due_date,status,recurring_rule_id,occurrence_date)
+         values($1,'BDO',450,'PHP',current_date+$3::int,$4,$2,current_date+$3::int) returning id`,
+        [u, loanRule, offset, paid ? 'paid' : 'open'],
+      );
+    const pastBill = await loanBill(-20);
+    const futureBill = await loanBill(10);
+    const paidFuture = await loanBill(20, true);
+    const billState = async (id) =>
+      scalar("select coalesce(max(amount::text),'gone') from public.bills where id=$1", [
+        id,
+      ]);
+
+    // Amount only: untouched future bills are repriced; past and paid are not.
     await db.query(
-      "select public.update_account_details($1,$2,'Car 2','Metrobank',500,'weekly','2026-11-08',6000,7.5,24)",
+      "select public.update_account_details($1,$2,'Car','BDO',475,'monthly','2026-11-01')",
+      [u, loan],
+    );
+    assert.equal(await billState(futureBill), '475.00', 'future open bill repriced');
+    assert.equal(await billState(pastBill), '450.00', 'overdue bill keeps its amount');
+    assert.equal(await billState(paidFuture), '450.00', 'paid bill keeps its amount');
+
+    await assert.rejects(
+      db.query(
+        "select public.update_account_details($1,$2,'Car','BDO',475,'weekly',current_date-1)",
+        [u, loan],
+      ),
+      /LOAN_NEXT_DUE_IN_PAST/,
+      'a new schedule cannot start in the past',
+    );
+
+    // New schedule: re-anchored at the next due date; the old schedule's
+    // untouched future bills are removed for the generator to recreate.
+    await db.query(
+      "select public.update_account_details($1,$2,'Car 2','Metrobank',500,'weekly',current_date+7,6000,7.5,24)",
       [u, loan],
     );
     assert.equal(
       await scalar(
-        "select count(*)::int from public.recurring_rules r join public.loan_details d on d.recurring_rule_id=r.id where d.account_id=$1 and r.amount=500 and r.frequency='weekly' and r.next_occurrence_date='2026-11-08' and r.provider_name='Metrobank'",
+        "select count(*)::int from public.recurring_rules r join public.loan_details d on d.recurring_rule_id=r.id where d.account_id=$1 and r.amount=500 and r.frequency='weekly' and r.start_date=current_date+7 and r.next_occurrence_date=current_date+7 and r.provider_name='Metrobank'",
         [loan],
       ),
       1,
     );
+    assert.equal(await billState(futureBill), 'gone', 'old schedule bill removed');
+    assert.equal(await billState(pastBill), '450.00', 'overdue bill kept');
+    assert.equal(await billState(paidFuture), '450.00', 'paid bill kept');
     assert.ok(
       (await scalar(
         "select count(*)::int from public.audit_logs where event_type in ('transaction_updated','obligation_updated','account_updated')",
@@ -895,6 +938,14 @@ try {
       'select recurring_rule_id from public.loan_details where account_id=$1',
       [delLoan],
     );
+    const delBill = (status) =>
+      scalar(
+        `insert into public.bills(user_id,provider_name,amount,currency_code,due_date,status,recurring_rule_id,occurrence_date)
+         values($1,'BDO',100,'PHP',current_date+$3::int,$4,$2,current_date+$3::int) returning id`,
+        [u, ruleBefore, status === 'open' ? 5 : 35, status],
+      );
+    const openLoanBill = await delBill('open');
+    const paidLoanBill = await delBill('paid');
     await db.query('select public.delete_account($1,$2)', [u, delLoan]);
     assert.equal(
       await scalar('select count(*)::int from public.recurring_rules where id=$1', [
@@ -902,6 +953,16 @@ try {
       ]),
       0,
       'the loan reminder rule is removed with the loan',
+    );
+    assert.equal(
+      await scalar('select count(*)::int from public.bills where id=$1', [openLoanBill]),
+      0,
+      "the loan's open bills are removed with it",
+    );
+    assert.equal(
+      await scalar('select count(*)::int from public.bills where id=$1', [paidLoanBill]),
+      1,
+      'a paid loan bill is history and stays',
     );
     // Multi-record extractions: each draft index is saved once; the extraction
     // is confirmed only when every draft is.
@@ -915,14 +976,21 @@ try {
          values($1,$2,'pending_review','{"drafts":[{"target":"transaction"},{"target":"bill"},{"target":"transaction"}]}') returning id`,
         [u, docId],
       );
-      const draft = (i, who = u, type = 'transaction') =>
+      const draft = (i, who = u, type = 'transaction', entity = tid) =>
         db.query('select public.confirm_extraction_draft($1,$2,$3,$4,$5)', [
           who,
           ex,
           i,
           type,
-          tid,
+          entity,
         ]);
+      const billFor = (owner) =>
+        scalar(
+          "insert into public.bills(user_id,provider_name,amount,currency_code,due_date) values($1,'Draft bill',10,'PHP','2026-11-01') returning id",
+          [owner],
+        );
+      const ownBill = await billFor(u);
+      const foreignBill = await billFor(v);
       await draft(0);
       await assert.rejects(draft(0), /DRAFT_ALREADY_SAVED/);
       await assert.rejects(draft(1, v), /EXTRACTION_NOT_FOUND/);
@@ -934,7 +1002,11 @@ try {
         'pending_review',
         'one of three saved: still pending',
       );
-      await draft(1, u, 'bill');
+      // The linked record must exist, be this user's, and be the claimed type.
+      await assert.rejects(draft(1, u, 'bill', tid), /ENTITY_NOT_FOUND/);
+      await assert.rejects(draft(1, u, 'bill', foreignBill), /ENTITY_NOT_FOUND/);
+      await assert.rejects(draft(1, u, 'bill', randomUUID()), /ENTITY_NOT_FOUND/);
+      await draft(1, u, 'bill', ownBill);
       await draft(2);
       assert.equal(
         await scalar('select status from public.extraction_results where id=$1', [ex]),
@@ -948,6 +1020,48 @@ try {
         ),
         2,
         'one link per distinct record (the same transaction is linked once)',
+      );
+    }
+    // Categories: a record may use a system category or its owner's own.
+    {
+      const category = (owner) =>
+        scalar(
+          "insert into public.categories(user_id,name,type) values($1,'Mine','expense') returning id",
+          [owner],
+        );
+      const mine = await category(u);
+      const theirs = await category(v);
+      const system = await scalar(
+        "insert into public.categories(name,type,is_system) values('Shared','expense',true) returning id",
+      );
+      const bill = (cat) =>
+        db.query(
+          "insert into public.bills(user_id,provider_name,amount,currency_code,due_date,category_id) values($1,'Cat',1,'PHP','2026-11-01',$2)",
+          [u, cat],
+        );
+      await bill(mine);
+      await bill(system);
+      await assert.rejects(bill(theirs), /CATEGORY_NOT_FOUND/);
+      await assert.rejects(
+        db.query(
+          "insert into public.expected_income(user_id,source_name,amount,currency_code,expected_date,category_id) values($1,'Cat',1,'PHP','2026-11-01',$2)",
+          [u, theirs],
+        ),
+        /CATEGORY_NOT_FOUND/,
+      );
+      await assert.rejects(
+        db.query(
+          "insert into public.recurring_rules(user_id,rule_type,name,amount,currency_code,frequency,interval_count,start_date,next_occurrence_date,provider_name,category_id) values($1,'bill','Cat',1,'PHP','monthly',1,'2026-11-01','2026-11-01','Cat',$2)",
+          [u, theirs],
+        ),
+        /CATEGORY_NOT_FOUND/,
+      );
+      await assert.rejects(
+        db.query('update public.transactions set category_id=$2 where id=$1', [
+          tid,
+          theirs,
+        ]),
+        /CATEGORY_NOT_FOUND/,
       );
     }
     console.log('PASS: transactions, obligations and accounts can be edited safely');

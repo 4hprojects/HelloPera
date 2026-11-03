@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { redirectIfAuthenticated } from '@/lib/auth/guards';
 import { AuthShell } from '@/components/auth/auth-shell';
+import { turnstileSiteKey } from '@/lib/env';
 import { LoginForm } from './login-form';
 
 export const metadata: Metadata = { title: 'Sign in' };
@@ -24,7 +25,7 @@ export default async function LoginPage({
       <h2 className="hp-h2 text-text">Sign in</h2>
       <p className="hp-body mb-6 mt-1 text-text-muted">Pick up where you left off.</p>
 
-      <LoginForm cancelled={Boolean(params.cancelled)} />
+      <LoginForm cancelled={Boolean(params.cancelled)} siteKey={turnstileSiteKey()} />
 
       <p className="hp-small mt-6 text-center text-text-muted">
         New here?{' '}

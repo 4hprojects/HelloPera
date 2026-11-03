@@ -1,37 +1,51 @@
 # Prioritized implementation backlog
 
+> **Re-audited 3 November 2026.** Current statuses and the new tasks HP-027 to HP-038 are in [09-audit-2026-11-03.md](09-audit-2026-11-03.md). Where the two disagree, that file wins. The task records below keep their original acceptance criteria.
+
 Audit: 1 October 2026. These are **future tasks**, not changes performed by the audit. Evidence labels describe the stated observation, not a production exploit claim. See [priority rules](README.md) and [check results](08-validation-and-evidence.md).
 
 ## Priority index
 
-| ID                | Priority | Phase | Status   | Task                                                              |
-| ----------------- | -------- | ----- | -------- | ----------------------------------------------------------------- |
-| [HP-001](#hp-001) | P1       | 1     | in progress | Patch the flagged Next.js dependency                              |
-| [HP-002](#hp-002) | P1       | 1     | in progress | Enforce account status on document downloads                      |
-| [HP-003](#hp-003) | P1       | 1     | in progress | Close the extraction confirmation write bypass                    |
-| [HP-004](#hp-004) | P1       | 1     | in progress | Canonicalize money and validate real dates                        |
-| [HP-005](#hp-005) | P1       | 1     | in progress | Preserve money precision across all database reads                |
-| [HP-006](#hp-006) | P1       | 1     | in progress | Make ordinary ledger creation retry-safe                          |
-| [HP-007](#hp-007) | P1       | 1     | in progress | Ensure analytics reads a consistent financial snapshot            |
-| [HP-008](#hp-008) | P1       | 1     | in progress | Complete authorization and privilege regression coverage          |
-| [HP-025](#hp-025) | P1       | 1     | in progress | Make the financial freeze comprehensive and explicit              |
-| [HP-026](#hp-026) | P1       | 1     | in progress | Make privileged administrative changes durably auditable          |
-| [HP-009](#hp-009) | P1       | 2     | in progress | Verify complete core journeys and fix currency selection          |
-| [HP-011](#hp-011) | P1       | 2     | open     | Prove export and resumable deletion on hosted storage             |
-| [HP-012](#hp-012) | P1       | 3     | open     | Establish realistic performance and capacity baselines            |
-| [HP-013](#hp-013) | P1       | 3     | in progress | Make admin metrics complete and failures visible                  |
-| [HP-016](#hp-016) | P1       | 4     | blocked  | Provision isolated staging and verify the release platform        |
-| [HP-017](#hp-017) | P1       | 4     | blocked  | Verify signup closure, email, OAuth and public production routing |
-| [HP-018](#hp-018) | P1       | 4     | blocked  | Complete a database and document restore drill                    |
-| [HP-019](#hp-019) | P1       | 4     | blocked  | Establish monitoring, scheduler and support ownership             |
-| [HP-010](#hp-010) | P2       | 2     | in progress | Improve document and payment recovery UX                          |
-| [HP-014](#hp-014) | P2       | 3     | in progress | Reconcile docs and streamline maintainability                     |
-| [HP-015](#hp-015) | P2       | 3     | open     | Review headers and rate-limit deployment assumptions              |
-| [HP-024](#hp-024) | P2       | 3     | open     | Broaden public-site and PWA quality coverage                      |
-| [HP-020](#hp-020) | P3       | 5     | deferred | Qualify OCR and AI before provider activation                     |
-| [HP-021](#hp-021) | P3       | 5     | deferred | Qualify push delivery and device lifecycle                        |
-| [HP-022](#hp-022) | P3       | 5     | deferred | Implement and qualify a billing provider                          |
-| [HP-023](#hp-023) | P3       | 5     | deferred | Qualify advertising and consent independently                     |
+| ID                                                       | Priority | Phase | Status      | Task                                                                                |
+| -------------------------------------------------------- | -------- | ----- | ----------- | ----------------------------------------------------------------------------------- |
+| [HP-001](#hp-001)                                        | P1       | 1     | done        | Patch the flagged Next.js dependency                                                |
+| [HP-002](#hp-002)                                        | P1       | 1     | in progress | Enforce account status on document downloads                                        |
+| [HP-003](#hp-003)                                        | P1       | 1     | in progress | Close the extraction confirmation write bypass                                      |
+| [HP-004](#hp-004)                                        | P1       | 1     | in progress | Canonicalize money and validate real dates                                          |
+| [HP-005](#hp-005)                                        | P1       | 1     | in progress | Preserve money precision across all database reads                                  |
+| [HP-006](#hp-006)                                        | P1       | 1     | in progress | Make ordinary ledger creation retry-safe                                            |
+| [HP-007](#hp-007)                                        | P1       | 1     | in progress | Ensure analytics reads a consistent financial snapshot                              |
+| [HP-008](#hp-008)                                        | P1       | 1     | in progress | Complete authorization and privilege regression coverage                            |
+| [HP-025](#hp-025)                                        | P1       | 1     | in progress | Make the financial freeze comprehensive and explicit                                |
+| [HP-026](#hp-026)                                        | P1       | 1     | in progress | Make privileged administrative changes durably auditable                            |
+| [HP-009](#hp-009)                                        | P1       | 2     | in progress | Verify complete core journeys and fix currency selection                            |
+| [HP-011](#hp-011)                                        | P1       | 2     | open        | Prove export and resumable deletion on hosted storage                               |
+| [HP-012](#hp-012)                                        | P1       | 3     | open        | Establish realistic performance and capacity baselines                              |
+| [HP-013](#hp-013)                                        | P1       | 3     | in progress | Make admin metrics complete and failures visible                                    |
+| [HP-016](#hp-016)                                        | P1       | 4     | blocked     | Provision isolated staging and verify the release platform                          |
+| [HP-017](#hp-017)                                        | P1       | 4     | blocked     | Verify signup closure, email, OAuth and public production routing                   |
+| [HP-018](#hp-018)                                        | P1       | 4     | blocked     | Complete a database and document restore drill                                      |
+| [HP-019](#hp-019)                                        | P1       | 4     | blocked     | Establish monitoring, scheduler and support ownership                               |
+| [HP-010](#hp-010)                                        | P2       | 2     | in progress | Improve document and payment recovery UX                                            |
+| [HP-014](#hp-014)                                        | P2       | 3     | in progress | Reconcile docs and streamline maintainability                                       |
+| [HP-015](#hp-015)                                        | P2       | 3     | open        | Review headers and rate-limit deployment assumptions                                |
+| [HP-024](#hp-024)                                        | P2       | 3     | open        | Broaden public-site and PWA quality coverage                                        |
+| [HP-020](#hp-020)                                        | P3       | 5     | deferred    | Qualify OCR and AI before provider activation                                       |
+| [HP-021](#hp-021)                                        | P3       | 5     | deferred    | Qualify push delivery and device lifecycle                                          |
+| [HP-022](#hp-022)                                        | P3       | 5     | deferred    | Implement and qualify a billing provider                                            |
+| [HP-023](#hp-023)                                        | P3       | 5     | deferred    | Qualify advertising and consent independently                                       |
+| [HP-027](09-audit-2026-11-03.md#fixed-on-this-branch-p0) | P0       | 1     | in progress | Send Turnstile CAPTCHA tokens with password auth (code done; staging check pending) |
+| [HP-028](09-audit-2026-11-03.md#fixed-on-this-branch-p0) | P0       | 1     | done        | Draft saves cannot duplicate or orphan records                                      |
+| [HP-029](09-audit-2026-11-03.md#fixed-on-this-branch-p0) | P0       | 1     | done        | Loan bills follow schedule edits and deletion                                       |
+| [HP-030](09-audit-2026-11-03.md#fixed-on-this-branch-p0) | P0       | 1     | done        | Refuse another user's category on every write path                                  |
+| [HP-031](09-audit-2026-11-03.md#hp-031)                  | P1       | 1     | open        | Bound image decoding and upload volume                                              |
+| [HP-032](09-audit-2026-11-03.md#hp-032)                  | P1       | 1     | open        | Throttle public routes that do real work                                            |
+| [HP-033](09-audit-2026-11-03.md#hp-033)                  | P1       | 1     | open        | Make recurring expected income retry-safe and atomic                                |
+| [HP-034](09-audit-2026-11-03.md#hp-034)                  | P1       | 1     | open        | Close update_transaction and account-edit gaps                                      |
+| [HP-035](09-audit-2026-11-03.md#hp-035)                  | P1       | 1     | open        | Extend deletion guards to newer tables                                              |
+| [HP-036](09-audit-2026-11-03.md#hp-036)                  | P2       | 3     | open        | Clear dev-only dependency advisories                                                |
+| [HP-037](09-audit-2026-11-03.md#hp-037)                  | P2       | 3     | open        | Test server actions and untested services                                           |
+| [HP-038](09-audit-2026-11-03.md#hp-038)                  | P2       | 3     | open        | Low-severity findings                                                               |
 
 P0: none demonstrated. P1 items are free-launch gates; P2 items may be scheduled after launch; P3 activation remains deferred. HP-016 provisioning can start immediately to unblock staging evidence. Dependency ranges such as HP-002–HP-008 mean the relevant tasks in that inclusive range.
 

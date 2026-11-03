@@ -5,10 +5,11 @@ import { requestPasswordReset, type ActionState } from '@/app/actions/auth';
 import { FormAlert } from '@/components/auth/form-alert';
 import { FormField } from '@/components/auth/form-field';
 import { Button } from '@/components/ui/button';
+import { Turnstile } from '@/components/auth/turnstile';
 
 const initial: ActionState = {};
 
-export function ForgotPasswordForm() {
+export function ForgotPasswordForm({ siteKey }: { siteKey: string | undefined }) {
   const [state, action, pending] = useActionState(requestPasswordReset, initial);
 
   // The success message is identical whether or not the account exists —
@@ -26,6 +27,7 @@ export function ForgotPasswordForm() {
         required
         error={state.fieldErrors?.email}
       />
+      <Turnstile siteKey={siteKey} resetSignal={state} />
       <Button type="submit" disabled={pending} className="w-full" size="lg">
         {pending ? 'Sending…' : 'Send reset link'}
       </Button>

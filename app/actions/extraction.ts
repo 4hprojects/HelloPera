@@ -17,6 +17,7 @@ import {
 import { missingRequiredFieldsForDraft, type TargetType } from '@/lib/ocr/schema';
 import { draftRequestId } from '@/lib/ocr/drafts';
 import { getAccount } from '@/services/account.service';
+import { z } from 'zod';
 import { isoDate, positiveAmount } from '@/schemas/primitives';
 import { isFlagEnabled } from '@/services/plan.service';
 import { assertWritesEnabled, WritesDisabledError } from '@/lib/ops/kill-switches';
@@ -93,6 +94,19 @@ export type DraftsState = ActionState & { results?: DraftResult[] };
 
 const FIELD_LABELS = { name: 'name', amount: 'amount', date: 'date' } as const;
 
+/** What a draft may become. 'unknown' is a reading result, not a record. */
+const draftTarget = z.enum(['transaction', 'bill', 'receivable', 'expected_income']);
+const draftCurrency = z
+  .string()
+  .regex(/^[A-Za-z]{3}$/)
+  .transform((v) => v.toUpperCase());
+
+type ReviewableExtraction = {
+  status: string;
+  structured_data: { drafts?: unknown[] } | null;
+  corrected_data: { saved?: Record<string, unknown> } | null;
+};
+
 /**
  * Save the drafts a person ticked.
  *
@@ -100,6 +114,14 @@ const FIELD_LABELS = { name: 'name', amount: 'amount', date: 'date' } as const;
  * what was read), then recorded with confirm_extraction_draft, which accepts a
  * draft index once. Drafts are independent: one that fails does not undo the
  * ones already saved, and the result says which is which.
+ *
+ * Creating and linking cannot share a database transaction, so two things
+ * keep a retry from leaving duplicates behind:
+ *   * the extraction is checked BEFORE anything is created, so a foreign,
+ *     discarded or already-saved one creates nothing;
+ *   * every record gets an id derived from (extraction, draft index), so a
+ *     double-click or a retry after a lost response lands on the record the
+ *     first attempt made rather than inserting a second.
  */
 export async function confirmDraftsAction(
   _prev: DraftsState,
@@ -129,13 +151,46 @@ export async function confirmDraftsAction(
   }
   if (selected.length === 0) return { error: 'Tick at least one record to save.' };
 
+  const admin = createAdminClient();
+  const { data: extraction } = await admin
+    .from('extraction_results')
+    .select('status, structured_data, corrected_data')
+    .eq('id', extractionId)
+    .eq('user_id', user.id)
+    .maybeSingle<ReviewableExtraction>();
+  if (!extraction) return { error: 'That document could not be found.' };
+  if (extraction.status !== 'pending_review') {
+    return {
+      error: 'These drafts were already saved or discarded. Reload the page to see them.',
+    };
+  }
+  // An older extraction with no drafts array is one implicit draft.
+  const total = Math.max(extraction.structured_data?.drafts?.length ?? 0, 1);
+  const saved = new Set(Object.keys(extraction.corrected_data?.saved ?? {}));
+
+  const currency = draftCurrency.safeParse(String(formData.get('currency') ?? 'PHP'));
+  if (!currency.success) return { error: 'Choose a valid currency.' };
+
   const account = sharedAccountId ? await getAccount(sharedAccountId) : null;
   const results: DraftResult[] = [];
-  const admin = createAdminClient();
 
   for (const i of selected) {
     const get = (key: string) => String(formData.get(`d${i}.${key}`) ?? '').trim();
-    const target = get('target') as Exclude<TargetType, 'unknown'>;
+    if (i >= total) {
+      results.push({ index: i, ok: false, message: 'This record is no longer here.' });
+      continue;
+    }
+    if (saved.has(String(i))) {
+      results.push({ index: i, ok: false, message: 'Already saved earlier.' });
+      continue;
+    }
+    const parsedTarget = draftTarget.safeParse(get('target'));
+    if (!parsedTarget.success) {
+      results.push({ index: i, ok: false, message: 'Choose what this record is.' });
+      continue;
+    }
+    const target: Exclude<TargetType, 'unknown'> = parsedTarget.data;
+    const recordId = draftRequestId(extractionId, i);
     const name = get('name');
     const amountRaw = get('amount');
     const dateRaw = get('date');
@@ -181,7 +236,7 @@ export async function confirmDraftsAction(
         }
         const income = get('direction') === 'income';
         entityId = await createTransaction(user.id, {
-          requestId: draftRequestId(extractionId, i),
+          requestId: recordId,
           type: income ? 'income' : 'expense',
           amount: amount.data,
           currencyCode: account.currency_code,
@@ -196,34 +251,46 @@ export async function confirmDraftsAction(
           refundOfTransactionId: null,
         });
       } else if (target === 'bill') {
-        entityId = await createBill(user.id, {
-          providerName: name,
-          description,
-          amount: amount.data,
-          currencyCode: currencyFor(account, formData),
-          dueDate: day,
-          categoryId,
-          notes: '',
-        });
+        entityId = await createBill(
+          user.id,
+          {
+            providerName: name,
+            description,
+            amount: amount.data,
+            currencyCode: account?.currency_code ?? currency.data,
+            dueDate: day,
+            categoryId,
+            notes: '',
+          },
+          { id: recordId },
+        );
       } else if (target === 'receivable') {
-        entityId = await createReceivable(user.id, {
-          partyName: name,
-          description,
-          amount: amount.data,
-          currencyCode: currencyFor(account, formData),
-          dueDate: day,
-          notes: '',
-        });
+        entityId = await createReceivable(
+          user.id,
+          {
+            partyName: name,
+            description,
+            amount: amount.data,
+            currencyCode: account?.currency_code ?? currency.data,
+            dueDate: day,
+            notes: '',
+          },
+          { id: recordId },
+        );
       } else {
-        entityId = await createExpectedIncome(user.id, {
-          sourceName: name,
-          description,
-          amount: amount.data,
-          currencyCode: currencyFor(account, formData),
-          expectedDate: day,
-          categoryId,
-          notes: '',
-        });
+        entityId = await createExpectedIncome(
+          user.id,
+          {
+            sourceName: name,
+            description,
+            amount: amount.data,
+            currencyCode: account?.currency_code ?? currency.data,
+            expectedDate: day,
+            categoryId,
+            notes: '',
+          },
+          { id: recordId },
+        );
       }
     } catch (error) {
       if (error instanceof TransactionError) {
@@ -252,7 +319,8 @@ export async function confirmDraftsAction(
         ok: false,
         message: error.message.includes('DRAFT_ALREADY_SAVED')
           ? 'Already saved earlier.'
-          : 'The record was created but could not be linked to the document. Check for a duplicate before retrying.',
+          : // Safe to retry: the same id finds the record made this time.
+            'The record was created but could not be linked to the document. Try saving it again.',
       });
     } else {
       results.push({ index: i, ok: true, message: 'Saved' });
@@ -284,12 +352,4 @@ export async function confirmDraftsAction(
         : `Saved ${ok}. ${failed} need${failed === 1 ? 's' : ''} attention.`,
     results,
   };
-}
-
-/** Non-ledger records take the shared account's currency, else the user's default. */
-function currencyFor(
-  account: { currency_code: string } | null,
-  formData: FormData,
-): string {
-  return account?.currency_code ?? (String(formData.get('currency') ?? '') || 'PHP');
 }

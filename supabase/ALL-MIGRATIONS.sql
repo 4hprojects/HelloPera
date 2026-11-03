@@ -48,6 +48,10 @@
 --   39. 20261004001100 bank details
 --   40. 20261004001200 delete account
 --   41. 20261004001300 extraction drafts
+--   42. 20261006000100 documents larger uploads
+--   43. 20261103000100 confirm draft entity check
+--   44. 20261103000200 loan schedule sync
+--   45. 20261103000300 category ownership
 --
 -- Prefer `npm run db:migrate` where you have DATABASE_URL: it applies each
 -- file in its own transaction and records what ran. This bundle is for the
@@ -7626,3 +7630,380 @@ $$;
 
 revoke all on function public.confirm_extraction_draft from public, anon, authenticated;
 grant execute on function public.confirm_extraction_draft to service_role;
+
+
+-- ======================================================================
+-- 20261006000100_documents_larger_uploads.sql
+-- ======================================================================
+
+-- Larger document uploads.
+--
+-- Images may now be up to 25 MB and PDFs up to 20 MB (lib/documents/validation.ts).
+-- That is above HelloDeploy's 10 MB proxy limit, so files no longer pass
+-- through the app: the browser uploads straight to Storage with a signed
+-- upload URL, into `incoming/<user_id>/<uuid>`, and the server reads the bytes
+-- back and checks them before moving them into place.
+--
+-- The bucket limit is the hard ceiling on what a signed upload can send, so it
+-- matches the largest allowed file. Per-type limits are enforced by the server.
+--
+-- Large images do not stay large: after the first successful read, or after a
+-- week unread, the original is replaced with the OCR-grade JPEG and
+-- retention_status becomes 'optimized_only'.
+
+update storage.buckets
+   set file_size_limit = 26214400  -- 25 MB
+ where id = 'hello-pera-documents';
+
+
+-- ======================================================================
+-- 20261103000100_confirm_draft_entity_check.sql
+-- ======================================================================
+
+-- confirm_extraction_draft: verify the record being linked.
+--
+-- The function accepted any p_entity_id and wrote it into document_links and
+-- corrected_data. It is service-role only and the app passes ids it just
+-- created, so this is defence in depth: the id must now exist, belong to
+-- p_user_id, and be of p_entity_type (ENTITY_NOT_FOUND otherwise).
+--
+-- Unchanged otherwise; see 20261004001300_extraction_drafts.sql.
+
+create or replace function public.confirm_extraction_draft(
+  p_user_id       uuid,
+  p_extraction_id uuid,
+  p_draft_index   integer,
+  p_entity_type   text,
+  p_entity_id     uuid
+) returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  v_ex     public.extraction_results%rowtype;
+  v_saved  jsonb;
+  v_total  integer;
+  v_done   boolean;
+  v_owned  boolean;
+begin
+  select * into v_ex from public.extraction_results
+  where id = p_extraction_id for update;
+
+  if v_ex.id is null or v_ex.user_id <> p_user_id then
+    raise exception 'EXTRACTION_NOT_FOUND' using errcode = 'P0002';
+  end if;
+  if v_ex.status = 'confirmed' then
+    raise exception 'ALREADY_CONFIRMED' using errcode = 'P0001';
+  end if;
+  if v_ex.status <> 'pending_review' then
+    raise exception 'NOT_PENDING_REVIEW' using errcode = 'P0001';
+  end if;
+  if p_entity_type not in ('transaction', 'bill', 'receivable', 'expected_income') then
+    raise exception 'UNKNOWN_ENTITY_TYPE' using errcode = 'P0001';
+  end if;
+
+  -- The record must exist, belong to this user, and be the type it claims.
+  -- Without this, any id could be written into document_links.
+  v_owned := case p_entity_type
+    when 'transaction' then exists (select 1 from public.transactions
+                                    where id = p_entity_id and user_id = p_user_id)
+    when 'bill' then exists (select 1 from public.bills
+                             where id = p_entity_id and user_id = p_user_id)
+    when 'receivable' then exists (select 1 from public.receivables
+                                   where id = p_entity_id and user_id = p_user_id)
+    else exists (select 1 from public.expected_income
+                 where id = p_entity_id and user_id = p_user_id)
+  end;
+  if not v_owned then
+    raise exception 'ENTITY_NOT_FOUND' using errcode = 'P0002';
+  end if;
+
+  v_total := coalesce(jsonb_array_length(v_ex.structured_data -> 'drafts'), 0);
+  if p_draft_index < 0 or p_draft_index >= greatest(v_total, 1) then
+    raise exception 'DRAFT_NOT_FOUND' using errcode = 'P0001';
+  end if;
+
+  v_saved := coalesce(v_ex.corrected_data -> 'saved', '{}'::jsonb);
+  if v_saved ? p_draft_index::text then
+    raise exception 'DRAFT_ALREADY_SAVED' using errcode = 'P0001';
+  end if;
+
+  v_saved := v_saved || jsonb_build_object(
+    p_draft_index::text, jsonb_build_object('type', p_entity_type, 'id', p_entity_id));
+  -- An older extraction with no drafts array is one implicit draft.
+  v_done := (select count(*) from jsonb_object_keys(v_saved)) >= greatest(v_total, 1);
+
+  update public.extraction_results
+  set corrected_data = coalesce(corrected_data, '{}'::jsonb)
+                       || jsonb_build_object('saved', v_saved),
+      status = case when v_done then 'confirmed' else status end,
+      confirmed_at = case when v_done then now() else confirmed_at end
+  where id = p_extraction_id;
+
+  insert into public.document_links (user_id, document_id, entity_type, entity_id)
+  values (p_user_id, v_ex.document_id, p_entity_type, p_entity_id)
+  on conflict do nothing;
+
+  insert into public.audit_logs
+    (actor_user_id, target_user_id, entity_type, entity_id, event_type, after_data)
+  values
+    (p_user_id, p_user_id, 'extraction', p_extraction_id, 'extraction_draft_saved',
+     jsonb_build_object('draft_index', p_draft_index, 'entity_type', p_entity_type,
+                        'entity_id', p_entity_id, 'complete', v_done));
+
+  return jsonb_build_object('saved', (select count(*) from jsonb_object_keys(v_saved)),
+                            'total', greatest(v_total, 1), 'complete', v_done);
+end;
+$$;
+
+revoke all on function public.confirm_extraction_draft from public, anon, authenticated;
+grant execute on function public.confirm_extraction_draft to service_role;
+
+
+-- ======================================================================
+-- 20261103000200_loan_schedule_sync.sql
+-- ======================================================================
+
+-- Keep a loan's generated bills in step with its payment schedule.
+--
+-- Two gaps, both leaving bills from a schedule that no longer exists:
+--
+--   * update_account_details moved the reminder rule's amount, frequency and
+--     cursor, but occurrences are stepped from the rule's start_date, so a
+--     new due day or frequency kept the old dates, and bills already
+--     generated kept the old amount. A changed schedule now re-anchors the
+--     rule at the new next due date and removes the untouched future bills of
+--     the old one for the generator to recreate. An amount-only change
+--     updates those bills in place.
+--   * delete_account removed the rule, but bills.recurring_rule_id is
+--     `on delete set null`, so the loan's open bills stayed in the bill list,
+--     the forecast and the dashboard. They are now removed with it.
+--
+-- "Untouched" means generated by the rule, still open, and with no payment
+-- recorded against it. A bill with money against it is history and is never
+-- removed or repriced here. "Future" is from the user's local today, the same
+-- date the generator uses.
+
+create or replace function public.untouched_rule_bills(
+  p_user_id uuid,
+  p_rule_id uuid,
+  p_from    date
+) returns setof uuid language sql stable security definer set search_path = '' as $$
+  select b.id from public.bills b
+  where b.recurring_rule_id = p_rule_id
+    and b.user_id = p_user_id
+    and b.status = 'open'
+    and (p_from is null or b.due_date >= p_from)
+    and not exists (select 1 from public.bill_payments bp where bp.bill_id = b.id);
+$$;
+
+revoke all on function public.untouched_rule_bills from public, anon, authenticated;
+grant execute on function public.untouched_rule_bills to service_role;
+
+create or replace function public.update_account_details(
+  p_user_id           uuid,
+  p_id                uuid,
+  p_name              text,
+  p_institution_name  text default null,
+  p_payment_amount    numeric default null,
+  p_payment_frequency text default null,
+  p_next_due_date     date default null,
+  p_principal         numeric default null,
+  p_interest_rate_apr numeric default null,
+  p_term_months       integer default null
+) returns void language plpgsql security definer set search_path = '' as $$
+declare
+  v_acc   public.accounts%rowtype;
+  v_ld    public.loan_details%rowtype;
+  v_name  text := nullif(btrim(coalesce(p_name, '')), '');
+  v_inst  text := nullif(btrim(coalesce(p_institution_name, '')), '');
+  v_today date;
+begin
+  select * into v_acc from public.accounts
+  where id = p_id and user_id = p_user_id for update;
+  if v_acc.id is null then raise exception 'ACCOUNT_NOT_FOUND' using errcode = 'P0002'; end if;
+  if v_name is null then raise exception 'NAME_REQUIRED' using errcode = 'P0001'; end if;
+
+  if v_acc.type = 'loan' then
+    if v_inst is null then raise exception 'LOAN_LENDER_REQUIRED' using errcode = 'P0001'; end if;
+    if p_payment_amount is null or p_payment_amount <= 0
+       or p_payment_frequency is null or p_next_due_date is null then
+      raise exception 'LOAN_PAYMENT_REQUIRED' using errcode = 'P0001';
+    end if;
+    if p_principal is not null and p_principal < v_acc.current_balance then
+      raise exception 'LOAN_PRINCIPAL_BELOW_BALANCE' using errcode = 'P0001';
+    end if;
+
+    select * into v_ld from public.loan_details where account_id = p_id for update;
+
+    update public.loan_details
+      set payment_amount = p_payment_amount, payment_frequency = p_payment_frequency,
+          next_due_date = p_next_due_date, principal = p_principal,
+          interest_rate_apr = p_interest_rate_apr, term_months = p_term_months
+      where account_id = p_id;
+
+    if v_ld.recurring_rule_id is not null then
+      select (now() at time zone coalesce(p.timezone, 'Asia/Manila'))::date
+        into v_today from public.profiles p where p.id = p_user_id;
+      v_today := coalesce(v_today, current_date);
+
+      if v_ld.payment_frequency is distinct from p_payment_frequency
+         or v_ld.next_due_date is distinct from p_next_due_date then
+        -- A new schedule starts at its next due date. One in the past would
+        -- make the generator back-fill overdue bills that were never due.
+        if p_next_due_date < v_today then
+          raise exception 'LOAN_NEXT_DUE_IN_PAST' using errcode = 'P0001';
+        end if;
+        delete from public.bills where id in (
+          select public.untouched_rule_bills(p_user_id, v_ld.recurring_rule_id, v_today));
+        update public.recurring_rules
+          set name = v_name || ' payment', amount = p_payment_amount,
+              frequency = p_payment_frequency, interval_count = 1,
+              day_of_month = null, day_of_week = null,
+              start_date = p_next_due_date, next_occurrence_date = p_next_due_date,
+              provider_name = v_inst, updated_at = now()
+          where id = v_ld.recurring_rule_id and user_id = p_user_id;
+      else
+        if v_ld.payment_amount is distinct from p_payment_amount then
+          update public.bills set amount = p_payment_amount
+            where id in (
+              select public.untouched_rule_bills(p_user_id, v_ld.recurring_rule_id, v_today));
+        end if;
+        update public.recurring_rules
+          set name = v_name || ' payment', amount = p_payment_amount,
+              provider_name = v_inst, updated_at = now()
+          where id = v_ld.recurring_rule_id and user_id = p_user_id;
+      end if;
+    end if;
+  end if;
+
+  update public.accounts set name = v_name, institution_name = v_inst where id = p_id;
+
+  insert into public.audit_logs
+    (actor_user_id, target_user_id, entity_type, entity_id, event_type,
+     before_data, after_data)
+  values
+    (p_user_id, p_user_id, 'account', p_id, 'account_updated',
+     jsonb_build_object('name', v_acc.name, 'institution', v_acc.institution_name,
+                        'payment_amount', v_ld.payment_amount::text,
+                        'payment_frequency', v_ld.payment_frequency,
+                        'next_due_date', v_ld.next_due_date),
+     jsonb_build_object('name', v_name, 'institution', v_inst,
+                        'payment_amount', p_payment_amount::numeric(18,2)::text,
+                        'payment_frequency', p_payment_frequency,
+                        'next_due_date', p_next_due_date));
+end;
+$$;
+
+revoke all on function public.update_account_details from public, anon, authenticated;
+grant execute on function public.update_account_details to service_role;
+
+-- Removes, in one transaction: the account's opening-balance entry (the
+-- transactions FK is `on delete restrict`), a loan's untouched generated
+-- bills and its reminder rule, then the account. Bank/loan detail rows
+-- cascade. A loan bill with a payment against it is kept, unlinked from the
+-- rule, because that payment is history held by another account.
+create or replace function public.delete_account(
+  p_user_id uuid,
+  p_id      uuid
+) returns void language plpgsql security definer set search_path = '' as $$
+declare
+  v_acc  public.accounts%rowtype;
+  v_rule uuid;
+begin
+  select * into v_acc from public.accounts
+  where id = p_id and user_id = p_user_id for update;
+  if v_acc.id is null then
+    raise exception 'ACCOUNT_NOT_FOUND' using errcode = 'P0002';
+  end if;
+
+  if exists (
+    select 1 from public.transactions t
+    where (t.source_account_id = p_id or t.destination_account_id = p_id)
+      and t.type <> 'opening_balance'
+  ) then
+    raise exception 'ACCOUNT_HAS_HISTORY' using errcode = 'P0001';
+  end if;
+
+  -- Opening entries can be linked from nothing else, but be explicit.
+  if exists (
+    select 1 from public.transactions t
+    where (t.source_account_id = p_id or t.destination_account_id = p_id)
+      and (exists (select 1 from public.bill_payments where transaction_id = t.id)
+        or exists (select 1 from public.receivable_payments where transaction_id = t.id)
+        or exists (select 1 from public.expected_income_receipts where transaction_id = t.id))
+  ) then
+    raise exception 'ACCOUNT_HAS_HISTORY' using errcode = 'P0001';
+  end if;
+
+  select recurring_rule_id into v_rule from public.loan_details where account_id = p_id;
+
+  delete from public.transactions
+    where (source_account_id = p_id or destination_account_id = p_id)
+      and type = 'opening_balance';
+  if v_rule is not null then
+    delete from public.bills where id in (
+      select public.untouched_rule_bills(p_user_id, v_rule, null));
+    delete from public.recurring_rules where id = v_rule and user_id = p_user_id;
+  end if;
+  delete from public.accounts where id = p_id;
+
+  insert into public.audit_logs
+    (actor_user_id, target_user_id, entity_type, entity_id, event_type, before_data)
+  values
+    (p_user_id, p_user_id, 'account', p_id, 'account_deleted',
+     jsonb_build_object('name', v_acc.name, 'type', v_acc.type,
+                        'opening_balance', v_acc.opening_balance));
+end;
+$$;
+
+revoke all on function public.delete_account from public, anon, authenticated;
+grant execute on function public.delete_account to service_role;
+
+
+-- ======================================================================
+-- 20261103000300_category_ownership.sql
+-- ======================================================================
+
+-- A record may only use a system category or one its owner made.
+--
+-- Bills, expected income and recurring rules are created with the service
+-- role, which bypasses RLS, and only zod's uuid() check stood between a form
+-- field and another user's category id. The edit RPCs check ownership; the
+-- create paths did not. One trigger on every table with a category_id closes
+-- all of them, including paths added later.
+--
+-- Ownership only, deliberately not is_active: generate_occurrence copies a
+-- rule's category, and refusing a category deactivated after the rule was
+-- made would fail the whole scheduled run. Checked on insert, and on update
+-- only when the category changes, so existing rows are never re-judged.
+
+create or replace function public.assert_category_owned()
+returns trigger language plpgsql security definer set search_path = '' as $$
+begin
+  if new.category_id is null then return new; end if;
+  if tg_op = 'UPDATE' and new.category_id is not distinct from old.category_id then
+    return new;
+  end if;
+  if not exists (
+    select 1 from public.categories c
+    where c.id = new.category_id and (c.is_system or c.user_id = new.user_id)
+  ) then
+    raise exception 'CATEGORY_NOT_FOUND' using errcode = 'P0001';
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function public.assert_category_owned from public, anon, authenticated;
+
+do $$
+declare
+  t text;
+begin
+  foreach t in array array['transactions', 'bills', 'expected_income',
+                           'recurring_rules', 'expected_events'] loop
+    execute format('drop trigger if exists category_owned on public.%I', t);
+    execute format(
+      'create trigger category_owned before insert or update of category_id '
+      'on public.%I for each row execute function public.assert_category_owned()', t);
+  end loop;
+end;
+$$;

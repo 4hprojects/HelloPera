@@ -22,6 +22,7 @@ import {
   updateAccountDetails,
 } from '@/services/account.service';
 import { deriveTransactionCurrency } from '@/lib/finance/currency';
+import { generateOccurrences } from '@/services/recurring-rule.service';
 import {
   createTransaction,
   TransactionError,
@@ -39,6 +40,23 @@ function fieldErrorsFrom(error: {
     if (!out[key]) out[key] = issue.message;
   }
   return out;
+}
+
+/**
+ * Generate a loan's bills now rather than at the next scheduler run, so a new
+ * loan, or one whose schedule just changed, shows its next bill straight away.
+ *
+ * Best effort: the account change is already saved, and the scheduler
+ * generates the same bills later if this fails.
+ */
+async function generateLoanBills(userId: string): Promise<void> {
+  try {
+    await generateOccurrences(userId);
+  } catch (error) {
+    log.warn('loan bill generation deferred to scheduler', {
+      message: error instanceof Error ? error.message : 'unknown',
+    });
+  }
 }
 
 export async function createAccountAction(
@@ -86,6 +104,7 @@ export async function createAccountAction(
     });
     return { error: 'We could not create that account. Please try again.' };
   }
+  if (parsed.data.type === 'loan') await generateLoanBills(user.id);
 
   revalidatePath('/accounts');
   revalidatePath('/dashboard');
@@ -298,6 +317,7 @@ export async function updateAccountAction(
     });
     return { error: 'We could not save these changes. Please try again.' };
   }
+  if (account.type === 'loan') await generateLoanBills(user.id);
 
   revalidatePath('/accounts');
   revalidatePath('/dashboard');

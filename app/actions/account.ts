@@ -4,7 +4,8 @@ import { enforceRateLimit, RateLimitError } from '@/services/rate-limit.service'
 import { randomBytes } from 'node:crypto';
 import { cookies } from 'next/headers';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { appUrl } from '@/lib/env';
+import { appUrl, turnstileSiteKey } from '@/lib/env';
+import { CAPTCHA_REQUIRED_MESSAGE, captchaFrom } from '@/lib/auth/captcha';
 import { DELETION_COOKIE, deletionTokenHash } from '@/lib/auth/deletion-token';
 import { redirect } from 'next/navigation';
 import { requireUser } from '@/lib/auth/guards';
@@ -56,9 +57,13 @@ export async function deleteAccountAction(
   } else {
     if (!password || !user.email)
       return { fieldErrors: { password: 'Enter your password to continue.' } };
+    // Re-authentication is a password sign-in, so Supabase CAPTCHA applies.
+    const captcha = captchaFrom(formData, Boolean(turnstileSiteKey()));
+    if (!captcha.ok) return { error: CAPTCHA_REQUIRED_MESSAGE };
     const { data, error } = await supabase.auth.signInWithPassword({
       email: user.email,
       password,
+      options: { captchaToken: captcha.token },
     });
     if (error || data.user?.id !== user.id)
       return { fieldErrors: { password: 'That password is not correct.' } };

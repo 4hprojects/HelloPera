@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { turnstileSiteKey } from '@/lib/env';
 import { ForgotPasswordForm } from './forgot-password-form';
 import { AuthColumn } from '@/components/auth/auth-column';
 
@@ -12,7 +13,7 @@ export default function ForgotPasswordPage() {
       <p className="hp-body mb-6 text-text-muted">
         Enter your email and we&apos;ll send you a reset link.
       </p>
-      <ForgotPasswordForm />
+      <ForgotPasswordForm siteKey={turnstileSiteKey()} />
       <p className="hp-small mt-6 text-center text-text-muted">
         <Link href="/login" className="font-medium text-primary-text">
           Back to sign in
