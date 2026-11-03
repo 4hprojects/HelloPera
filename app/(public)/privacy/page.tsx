@@ -105,6 +105,10 @@ export default function PrivacyPage() {
           Images are stripped of embedded metadata, including location data, before they
           are stored.
         </P>
+        <P>
+          You can delete a document at any time. Its files are removed for good, and the
+          records you saved from it stay.
+        </P>
       </Section>
 
       <Section title="Advertising">

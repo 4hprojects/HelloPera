@@ -52,6 +52,8 @@ describe('processImage', { timeout: 30_000 }, () => {
   });
 
   it('refuses an image over the pixel limit before decoding it', async () => {
-    await expect(processImage(await png(8000, 7000))).rejects.toThrow(ImageProcessingError);
+    await expect(processImage(await png(8000, 7000))).rejects.toThrow(
+      ImageProcessingError,
+    );
   });
 });

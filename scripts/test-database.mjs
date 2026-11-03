@@ -1129,6 +1129,47 @@ try {
     console.log('PASS: transactions, obligations and accounts can be edited safely');
   }
   {
+    // Deleting a document takes its extraction and links with it, and leaves
+    // the records saved from it.
+    const d = randomUUID();
+    await db.query("insert into auth.users(id,email) values($1,'doc-d@example.test')", [
+      d,
+    ]);
+    const doc = await scalar(
+      "insert into public.documents(user_id,document_type) values($1,'receipt') returning id",
+      [d],
+    );
+    const saved = await scalar(
+      "insert into public.bills(user_id,provider_name,amount,currency_code,due_date) values($1,'From receipt',5,'PHP','2026-11-20') returning id",
+      [d],
+    );
+    await db.query(
+      "insert into public.document_links(user_id,document_id,entity_type,entity_id) values($1,$2,'bill',$3)",
+      [d, doc, saved],
+    );
+    await db.query(
+      'insert into public.extraction_results(user_id,document_id) values($1,$2)',
+      [d, doc],
+    );
+    await db.query('delete from public.documents where id=$1', [doc]);
+    for (const table of ['document_links', 'extraction_results']) {
+      assert.equal(
+        await scalar(`select count(*)::int from public.${table} where document_id=$1`, [
+          doc,
+        ]),
+        0,
+        table,
+      );
+    }
+    assert.equal(
+      await scalar('select count(*)::int from public.bills where id=$1', [saved]),
+      1,
+    );
+    console.log(
+      'PASS: deleting a document cascades its extraction and links, not its records',
+    );
+  }
+  {
     // HP-005: integrity findings carry money as text, not a rounded number.
     const z = randomUUID();
     await db.query("insert into auth.users(id,email) values($1,'int-z@example.test')", [

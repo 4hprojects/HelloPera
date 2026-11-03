@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const m = vi.hoisted(() => ({
   rateLimit: vi.fn(),
   prepare: vi.fn(),
+  del: vi.fn(),
+  audit: vi.fn(),
 }));
 
 vi.mock('server-only', () => ({}));
@@ -10,6 +12,7 @@ vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 vi.mock('@/lib/auth/guards', () => ({
   requireUser: async () => ({ user: { id: 'user-1' }, profile: {} }),
 }));
+vi.mock('@/lib/auth/audit', () => ({ recordAuditEvent: m.audit }));
 vi.mock('@/services/rate-limit.service', () => ({
   enforceRateLimit: m.rateLimit,
   RateLimitError: class extends Error {
@@ -19,13 +22,13 @@ vi.mock('@/services/rate-limit.service', () => ({
 vi.mock('@/services/document.service', () => ({
   prepareUpload: m.prepare,
   finalizeUpload: vi.fn(),
-  archiveDocument: vi.fn(),
+  deleteDocument: m.del,
   UploadError: class extends Error {},
 }));
 
 import { RateLimitError } from '@/services/rate-limit.service';
 import { UploadError } from '@/services/document.service';
-import { prepareUploadAction } from './documents';
+import { deleteDocumentAction, prepareUploadAction } from './documents';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -63,5 +66,52 @@ describe('prepareUploadAction', () => {
       error: 'Choose a file to upload.',
     });
     expect(m.rateLimit).not.toHaveBeenCalled();
+  });
+});
+
+describe('deleteDocumentAction', () => {
+  const ID = '00000000-0000-4000-8000-000000000001';
+  const form = (id: string) => {
+    const f = new FormData();
+    f.set('id', id);
+    return f;
+  };
+
+  it("deletes the user's document and audits it without the file name", async () => {
+    m.del.mockResolvedValue({ documentType: 'receipt', bytes: 1234 });
+    await expect(deleteDocumentAction({}, form(ID))).resolves.toEqual({});
+    expect(m.del).toHaveBeenCalledWith('user-1', ID);
+    expect(m.audit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'document_deleted',
+        entityId: ID,
+        metadata: { document_type: 'receipt', bytes: 1234 },
+      }),
+    );
+  });
+
+  it('refuses a malformed id without a lookup', async () => {
+    await expect(deleteDocumentAction({}, form('nope'))).resolves.toEqual({
+      error: 'That document is unavailable.',
+    });
+    expect(m.del).not.toHaveBeenCalled();
+  });
+
+  it("writes no audit row for a document that is not this user's", async () => {
+    m.del.mockResolvedValue(null);
+    await expect(deleteDocumentAction({}, form(ID))).resolves.toEqual({
+      error: 'That document is unavailable.',
+    });
+    expect(m.audit).not.toHaveBeenCalled();
+  });
+
+  it('shows the retry message when the files could not be removed', async () => {
+    m.del.mockRejectedValue(
+      new UploadError('We could not delete the file. Please try again.'),
+    );
+    await expect(deleteDocumentAction({}, form(ID))).resolves.toEqual({
+      error: 'We could not delete the file. Please try again.',
+    });
+    expect(m.audit).not.toHaveBeenCalled();
   });
 });

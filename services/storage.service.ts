@@ -101,6 +101,28 @@ export async function removeDocumentObjects(paths: Array<string | null>): Promis
 }
 
 /**
+ * Every object under a folder, and the given paths, removed or an error.
+ *
+ * For deleting a document, where a file left behind would keep counting
+ * against the user's quota with nothing in the app pointing at it, so a
+ * failure must reach the caller rather than a log line.
+ */
+export async function removeObjectsUnder(
+  folder: string,
+  paths: Array<string | null>,
+): Promise<void> {
+  const admin = createAdminClient();
+  const bucket = admin.storage.from(BUCKET);
+  const { data: listed, error: listError } = await bucket.list(folder, { limit: 100 });
+  if (listError) throw new Error('Storage list failed.');
+  const all = new Set(paths.filter((p): p is string => Boolean(p)));
+  for (const file of listed ?? []) all.add(`${folder}/${file.name}`);
+  if (all.size === 0) return;
+  const { error } = await bucket.remove([...all]);
+  if (error) throw new Error('Storage remove failed.');
+}
+
+/**
  * A one-time URL the browser can upload a single file to.
  *
  * Files go straight to Storage because HelloDeploy's proxy rejects request
@@ -159,14 +181,17 @@ export async function listStaleStagedObjects(
 ): Promise<string[]> {
   const admin = createAdminClient();
   const cutoff = Date.now() - olderThanMs;
-  const { data: users } = await admin.storage.from(BUCKET).list(STAGING_PREFIX, { limit });
+  const { data: users } = await admin.storage
+    .from(BUCKET)
+    .list(STAGING_PREFIX, { limit });
   const stale: string[] = [];
   for (const user of users ?? []) {
     const folder = `${STAGING_PREFIX}/${user.name}`;
     const { data: files } = await admin.storage.from(BUCKET).list(folder, { limit });
     for (const file of files ?? []) {
       const created = file.created_at ? Date.parse(file.created_at) : NaN;
-      if (Number.isFinite(created) && created < cutoff) stale.push(`${folder}/${file.name}`);
+      if (Number.isFinite(created) && created < cutoff)
+        stale.push(`${folder}/${file.name}`);
       if (stale.length >= limit) return stale;
     }
   }
