@@ -115,7 +115,7 @@ export async function createRecurringRuleAction(
 
   let id: string;
   try {
-    id = await createRule(user.id, parsed.data, today);
+    ({ id } = await createRule(user.id, parsed.data, today));
     await recordAuditEvent({
       eventType: 'recurring_rule_created',
       actorUserId: user.id,

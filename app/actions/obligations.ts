@@ -17,6 +17,8 @@ import {
   updateExpectedIncomeSchema,
   updateReceivableSchema,
 } from '@/schemas/obligation.schema';
+import { z } from 'zod';
+import { stableUuid } from '@/lib/utils/stable-uuid';
 import { createRecurringRuleSchema } from '@/schemas/recurring.schema';
 import { createRule, generateOccurrences } from '@/services/recurring-rule.service';
 import {
@@ -161,7 +163,7 @@ export async function createExpectedIncomeAction(
   if (!parsed.success) return { fieldErrors: fieldErrorsFrom(parsed.error) };
 
   try {
-    await createExpectedIncome(user.id, parsed.data);
+    await createExpectedIncome(user.id, parsed.data, { id: submissionId(formData) });
   } catch (error) {
     log.error('expected income create failed', {
       m: error instanceof Error ? error.message : '?',
@@ -205,14 +207,23 @@ async function createRecurringIncome(
   }
 
   try {
-    const id = await createRule(userId, parsed.data, todayInTimezone(timezone));
-    await recordAuditEvent({
-      eventType: 'recurring_rule_created',
-      actorUserId: userId,
-      entityType: 'recurring_rule',
-      entityId: id,
-      metadata: { rule_type: 'expected_income', frequency: parsed.data.frequency },
-    });
+    // The form's request id becomes the rule's id, so a double submit or a
+    // retry finds the first rule instead of making a second set of pay dates.
+    const { id, created } = await createRule(
+      userId,
+      parsed.data,
+      todayInTimezone(timezone),
+      { id: submissionId(formData) },
+    );
+    if (created) {
+      await recordAuditEvent({
+        eventType: 'recurring_rule_created',
+        actorUserId: userId,
+        entityType: 'recurring_rule',
+        entityId: id,
+        metadata: { rule_type: 'expected_income', frequency: parsed.data.frequency },
+      });
+    }
     await generateOccurrences(userId);
   } catch (error) {
     log.error('recurring income create failed', {
@@ -498,18 +509,34 @@ async function planRepeatChange(
   }
   return {
     run: async () => {
-      const ruleId = await createRule(userId, parsed.data, today);
-      await linkExpectedIncomeToRule(userId, input.id, ruleId, input.date);
-      await recordAuditEvent({
-        eventType: 'recurring_rule_created',
-        actorUserId: userId,
-        entityType: 'recurring_rule',
-        entityId: ruleId,
-        metadata: { rule_type: 'expected_income', frequency: parsed.data.frequency },
+      // Derived from the record, so saving the same edit twice finds the rule
+      // the first save made. Once linked, the record takes the branch above.
+      const { id: ruleId, created } = await createRule(userId, parsed.data, today, {
+        id: stableUuid(`repeat:${input.id}`),
       });
+      await linkExpectedIncomeToRule(userId, input.id, ruleId, input.date);
+      if (created) {
+        await recordAuditEvent({
+          eventType: 'recurring_rule_created',
+          actorUserId: userId,
+          entityType: 'recurring_rule',
+          entityId: ruleId,
+          metadata: { rule_type: 'expected_income', frequency: parsed.data.frequency },
+        });
+      }
       await generateOccurrences(userId);
     },
   };
+}
+
+/**
+ * The form's one-per-submission request id, or undefined if it is missing or
+ * malformed (a page loaded before the field existed). Without one, a create
+ * behaves as before: the database chooses the id.
+ */
+function submissionId(formData: FormData): string | undefined {
+  const parsed = z.string().uuid().safeParse(formData.get('requestId'));
+  return parsed.success ? parsed.data : undefined;
 }
 
 /** The edit form uses generic `name` / `date` inputs for all three kinds. */

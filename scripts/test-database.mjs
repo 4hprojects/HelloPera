@@ -1067,6 +1067,91 @@ try {
     console.log('PASS: transactions, obligations and accounts can be edited safely');
   }
   {
+    // HP-033: "this and all later" changes the rule, its untouched later pay
+    // dates and the audit log together, and leaves edited dates alone.
+    await db.query(
+      "insert into public.feature_flags(key,enabled) values('financial_writes_enabled',true) on conflict (key) do update set enabled=true",
+    );
+    const [u, v] = [randomUUID(), randomUUID()];
+    await db.query(
+      "insert into auth.users(id,email) values($1,'inc-u@example.test'),($2,'inc-v@example.test')",
+      [u, v],
+    );
+    const rule = await scalar(
+      "insert into public.recurring_rules(user_id,rule_type,name,source_name,amount,currency_code,frequency,interval_count,start_date,next_occurrence_date) values($1,'expected_income','Salary','Salary',1000,'PHP','monthly',1,'2026-01-15','2026-01-15') returning id",
+      [u],
+    );
+    const row = (date, extra = {}) =>
+      scalar(
+        `insert into public.expected_income(user_id,source_name,amount,currency_code,expected_date,status,recurring_rule_id,occurrence_date)
+         values($1,$2,$3,'PHP',$4,$5,$6,$4) returning id`,
+        [
+          u,
+          extra.name ?? 'Salary',
+          extra.amount ?? 1000,
+          date,
+          extra.status ?? 'open',
+          rule,
+        ],
+      );
+    const earlier = await row('2026-01-15');
+    const later = await row('2026-02-15');
+    const edited = await row('2026-03-15', { amount: 1500 });
+    const received = await row('2026-04-15', { status: 'paid' });
+    const call = (amount, owner = u) =>
+      db.query(
+        "select public.update_future_expected_income($1,$2,'2026-01-15','Salary+',$3,'net','00000000-0000-4000-8000-000000000000'::uuid) as n",
+        [owner, rule, amount],
+      );
+    // A category that does not exist fails the FK after the row updates ran:
+    // the whole call must roll back.
+    await assert.rejects(call(1200));
+    const amountOf = (id) =>
+      scalar('select amount::text from public.expected_income where id=$1', [id]);
+    assert.equal(await amountOf(later), '1000.00');
+    assert.equal(
+      await scalar('select amount::text from public.recurring_rules where id=$1', [rule]),
+      '1000.00',
+    );
+    await assert.rejects(call(0), /AMOUNT_INVALID/);
+    await assert.rejects(call(1200, v), /RULE_NOT_FOUND/);
+
+    const ok = (owner = u) =>
+      db.query(
+        "select public.update_future_expected_income($1,$2,'2026-01-15','Salary+',1200,'net',null) as n",
+        [owner, rule],
+      );
+    assert.equal((await ok()).rows[0].n, 1);
+    assert.equal(await amountOf(earlier), '1000.00');
+    assert.equal(await amountOf(later), '1200.00');
+    assert.equal(await amountOf(edited), '1500.00');
+    assert.equal(await amountOf(received), '1000.00');
+    assert.equal(
+      await scalar('select source_name from public.expected_income where id=$1', [later]),
+      'Salary+',
+    );
+    // Replaying the same edit changes nothing more and stays consistent.
+    assert.equal((await ok()).rows[0].n, 1);
+    assert.equal(await amountOf(later), '1200.00');
+    assert.equal(
+      await scalar(
+        "select count(*)::int from public.audit_logs where entity_id=$1 and event_type='recurring_rule_updated'",
+        [rule],
+      ),
+      2,
+    );
+    await db.query(
+      "update public.feature_flags set enabled=false where key='financial_writes_enabled'",
+    );
+    await assert.rejects(ok(), /FINANCIAL_WRITES_DISABLED/);
+    await db.query(
+      "update public.feature_flags set enabled=true where key='financial_writes_enabled'",
+    );
+    console.log(
+      'PASS: later pay dates follow the rule atomically and keep their own edits',
+    );
+  }
+  {
     // HP-031: storage usage counts stored and staged objects of one user only.
     const [u, v] = [randomUUID(), randomUUID()];
     await db.query(
@@ -1074,10 +1159,11 @@ try {
       [u, v],
     );
     const put = (name, size, bucket = 'hello-pera-documents') =>
-      db.query(
-        'insert into storage.objects(bucket_id,name,metadata) values($1,$2,$3)',
-        [bucket, name, JSON.stringify({ size })],
-      );
+      db.query('insert into storage.objects(bucket_id,name,metadata) values($1,$2,$3)', [
+        bucket,
+        name,
+        JSON.stringify({ size }),
+      ]);
     await put(`${u}/2026/11/doc/original.jpg`, 1000);
     await put(`${u}/2026/11/doc/display.webp`, 200);
     await put(`incoming/${u}/staged`, 30);

@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { randomUUID } from 'node:crypto';
 import { PageHeader } from '@/components/ui/page-header';
 import { requireUser } from '@/lib/auth/guards';
 import { listCategories } from '@/services/category.service';
@@ -13,6 +14,7 @@ export default async function NewExpectedIncomePage() {
     <div className="mx-auto max-w-lg">
       <PageHeader title="Add expected income" />
       <NewExpectedIncomeForm
+        requestId={randomUUID()}
         defaultCurrency={profile.default_currency}
         categories={categories.map((c) => ({ id: c.id, name: c.name }))}
       />
