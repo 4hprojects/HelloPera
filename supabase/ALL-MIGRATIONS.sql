@@ -58,6 +58,10 @@
 --   49. 20261103000700 deletion guards newer tables
 --   50. 20261103000800 freeze financial writes
 --   51. 20261103000900 money as text
+--   52. 20261103001000 balance recalc lock
+--   53. 20261103001100 shrink failed at
+--   54. 20261103001200 export newer data
+--   55. 20261103001300 legacy loan details
 --
 -- Prefer `npm run db:migrate` where you have DATABASE_URL: it applies each
 -- file in its own transaction and records what ran. This bundle is for the
@@ -8539,3 +8543,231 @@ comment on function public.check_financial_integrity(uuid) is
   'PHASE-14 section 64. Reports every integrity mismatch. Writes nothing, ever. Money as text (HP-005).';
 revoke all on function public.check_financial_integrity(uuid) from public, anon, authenticated;
 grant execute on function public.check_financial_integrity(uuid) to service_role;
+
+
+-- ======================================================================
+-- 20261103001000_balance_recalc_lock.sql
+-- ======================================================================
+
+-- HP-007: take the account lock before deriving its balance.
+--
+-- recalculate_account_balance derived the balance, then updated the account.
+-- Under READ COMMITTED a concurrent writer can be holding that row: for
+-- example create_transaction, which locks its accounts, inserts, and
+-- recalculates. A void or edit running at the same time derived its figure
+-- from a snapshot without the new entry, waited on the row lock, and then
+-- wrote that stale figure over the correct one once the insert committed. The
+-- balance silently missed a transaction until the next write to the account.
+--
+-- Locking first makes the derivation a later statement, with a snapshot taken
+-- after any concurrent writer has committed. The worst case left is a
+-- deadlock between two writers that lock the same two accounts in opposite
+-- order. Postgres detects it and fails one of them, which the user retries.
+-- That is an error, not a wrong balance.
+
+create or replace function public.recalculate_account_balance(p_account_id uuid)
+returns numeric
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_balance numeric(18, 2);
+begin
+  perform 1 from public.accounts where id = p_account_id for update;
+  v_balance := public.derive_account_balance(p_account_id);
+  update public.accounts set current_balance = v_balance where id = p_account_id;
+  return v_balance;
+end;
+$$;
+
+comment on function public.recalculate_account_balance(uuid) is
+  'Locks the account, then derives via derive_account_balance and writes the cache. Called after every balance-affecting write.';
+
+
+-- ======================================================================
+-- 20261103001100_shrink_failed_at.sql
+-- ======================================================================
+
+-- HP-038: a document whose shrink failed is skipped for a while.
+--
+-- The storage sweep picks the 20 oldest unshrunk images each run. A file that
+-- cannot be shrunk (corrupt, or an unsupported variant) failed every run and
+-- stayed in that oldest 20, so 20 such files stopped the sweep for good. A
+-- failure now stamps shrink_failed_at, and the sweep skips the document until
+-- the stamp is a week old.
+
+alter table public.documents add column if not exists shrink_failed_at timestamptz;
+
+
+-- ======================================================================
+-- 20261103001200_export_newer_data.sql
+-- ======================================================================
+
+-- HP-038: the export leaves out data added after September.
+--
+-- loan_details and account_details came with loans and bank accounts, and
+-- bills gained installment columns, receivables a borrowed_date, and
+-- generated rows a recurring_rule_id. None of it reached the export, so a
+-- user taking their data away lost their loan terms. Same snapshot function,
+-- with those columns and two new sections. Money stays text.
+
+create or replace function public.export_financial_snapshot() returns jsonb
+language sql stable security invoker set search_path='' as $$
+select jsonb_build_object(
+  'accounts', (select coalesce(jsonb_agg(r order by r.id),'[]'::jsonb) from (select id, name, type, nature, currency_code, opening_balance::text as opening_balance, current_balance::text as current_balance, institution_name, is_active, is_archived, created_at from public.accounts) r),
+  'categories', (select coalesce(jsonb_agg(r order by r.id),'[]'::jsonb) from (select id, name, type, is_system, is_active, created_at from public.categories) r),
+  'transactions', (select coalesce(jsonb_agg(r order by r.id),'[]'::jsonb) from (select id, type, direction, amount::text as amount, currency_code, transaction_date, source_account_id, destination_account_id, category_id, merchant_name, description, notes, status, void_reason, created_at from public.transactions) r),
+  'bills', (select coalesce(jsonb_agg(r order by r.id),'[]'::jsonb) from (select id, provider_name, description, category_id, amount::text as amount, currency_code, due_date, status, notes, installment_amount::text as installment_amount, installment_count, installments_prior, recurring_rule_id, created_at from public.bills) r),
+  'receivables', (select coalesce(jsonb_agg(r order by r.id),'[]'::jsonb) from (select id, party_name, description, amount::text as amount, currency_code, borrowed_date, due_date, status, notes, created_at from public.receivables) r),
+  'expected_income', (select coalesce(jsonb_agg(r order by r.id),'[]'::jsonb) from (select id, source_name, description, category_id, amount::text as amount, currency_code, expected_date, status, notes, recurring_rule_id, created_at from public.expected_income) r),
+  'recurring_rules', (select coalesce(jsonb_agg(r order by r.id),'[]'::jsonb) from (select id, rule_type, name, description, amount::text as amount, currency_code, frequency, interval_count, day_of_month, day_of_week, start_date, end_date, is_active, is_paused, created_at from public.recurring_rules) r),
+  'documents', (select coalesce(jsonb_agg(r order by r.id),'[]'::jsonb) from (select id, document_type, original_filename, original_mime_type, original_size_bytes, processing_status, retention_status, created_at from public.documents) r),
+  'bill_payments', (select coalesce(jsonb_agg(r order by r.id),'[]'::jsonb) from (select id, bill_id, transaction_id, amount_applied::text as amount_applied, created_at from public.bill_payments) r),
+  'receivable_payments', (select coalesce(jsonb_agg(r order by r.id),'[]'::jsonb) from (select id, receivable_id, transaction_id, amount_applied::text as amount_applied, created_at from public.receivable_payments) r),
+  'expected_income_receipts', (select coalesce(jsonb_agg(r order by r.id),'[]'::jsonb) from (select id, expected_income_id, transaction_id, amount_applied::text as amount_applied, created_at from public.expected_income_receipts) r),
+  'expected_events', (select coalesce(jsonb_agg(r order by r.id),'[]'::jsonb) from (select id, recurring_rule_id, event_type, name, amount::text as amount, currency_code, scheduled_date, status, account_id, category_id, actual_transaction_id, include_in_forecast, detached_from_rule, source_entity_type, source_entity_id, created_at from public.expected_events) r),
+  'loan_details', (select coalesce(jsonb_agg(r order by r.account_id),'[]'::jsonb) from (select account_id, principal::text as principal, start_date, interest_rate_apr::text as interest_rate_apr, term_months, payment_amount::text as payment_amount, payment_frequency, next_due_date, recurring_rule_id, created_at from public.loan_details) r),
+  'account_details', (select coalesce(jsonb_agg(r order by r.account_id),'[]'::jsonb) from (select account_id, last4, kind, created_at from public.account_details) r)
+) where auth.uid() is not null;
+$$;
+revoke all on function public.export_financial_snapshot() from public,anon;
+grant execute on function public.export_financial_snapshot() to authenticated;
+
+
+-- ======================================================================
+-- 20261103001300_legacy_loan_details.sql
+-- ======================================================================
+
+-- HP-038: editing a loan created before loan_details existed lost the edit.
+--
+-- update_account_details updated the loan's loan_details row, and a loan from
+-- before 20261004000600 has none, so the schedule edit changed zero rows and
+-- reported success. The first edit now creates the row and the payment rule,
+-- as create_loan_account does for a new loan. The body is otherwise that of
+-- 20261103000600.
+
+create or replace function public.update_account_details(
+  p_user_id           uuid,
+  p_id                uuid,
+  p_name              text,
+  p_institution_name  text default null,
+  p_payment_amount    numeric default null,
+  p_payment_frequency text default null,
+  p_next_due_date     date default null,
+  p_principal         numeric default null,
+  p_interest_rate_apr numeric default null,
+  p_term_months       integer default null
+) returns void language plpgsql security definer set search_path = '' as $$
+declare
+  v_acc   public.accounts%rowtype;
+  v_ld    public.loan_details%rowtype;
+  v_name  text := nullif(btrim(coalesce(p_name, '')), '');
+  v_inst  text := nullif(btrim(coalesce(p_institution_name, '')), '');
+  v_today date;
+  v_rule  uuid;
+begin
+  select * into v_acc from public.accounts
+  where id = p_id and user_id = p_user_id for update;
+  if v_acc.id is null then raise exception 'ACCOUNT_NOT_FOUND' using errcode = 'P0002'; end if;
+  if v_acc.is_archived then raise exception 'ACCOUNT_ARCHIVED' using errcode = 'P0001'; end if;
+  if v_name is null then raise exception 'NAME_REQUIRED' using errcode = 'P0001'; end if;
+
+  if v_acc.type = 'loan' then
+    if v_inst is null then raise exception 'LOAN_LENDER_REQUIRED' using errcode = 'P0001'; end if;
+    if p_payment_amount is null or p_payment_amount <= 0
+       or p_payment_frequency is null or p_next_due_date is null then
+      raise exception 'LOAN_PAYMENT_REQUIRED' using errcode = 'P0001';
+    end if;
+    if p_principal is not null and p_principal < v_acc.current_balance then
+      raise exception 'LOAN_PRINCIPAL_BELOW_BALANCE' using errcode = 'P0001';
+    end if;
+
+    select * into v_ld from public.loan_details where account_id = p_id for update;
+
+    if v_ld.account_id is null then
+      -- A loan created before loan_details existed has no row, so the update
+      -- below would change nothing and the edit would vanish. Give it the
+      -- details and payment rule a new loan gets (create_loan_account).
+      select (now() at time zone coalesce(p.timezone, 'Asia/Manila'))::date
+        into v_today from public.profiles p where p.id = p_user_id;
+      v_today := coalesce(v_today, current_date);
+      if p_next_due_date < v_today then
+        raise exception 'LOAN_NEXT_DUE_IN_PAST' using errcode = 'P0001';
+      end if;
+      insert into public.recurring_rules
+        (user_id, rule_type, name, amount, currency_code, frequency, interval_count,
+         start_date, next_occurrence_date, account_id, provider_name)
+      values
+        (p_user_id, 'bill', v_name || ' payment', p_payment_amount, v_acc.currency_code,
+         p_payment_frequency, 1, p_next_due_date, p_next_due_date, p_id, v_inst)
+      returning id into v_rule;
+      insert into public.loan_details
+        (account_id, user_id, principal, interest_rate_apr, term_months,
+         payment_amount, payment_frequency, next_due_date, recurring_rule_id)
+      values
+        (p_id, p_user_id, p_principal, p_interest_rate_apr, p_term_months,
+         p_payment_amount, p_payment_frequency, p_next_due_date, v_rule);
+    end if;
+
+    update public.loan_details
+      set payment_amount = p_payment_amount, payment_frequency = p_payment_frequency,
+          next_due_date = p_next_due_date, principal = p_principal,
+          interest_rate_apr = p_interest_rate_apr, term_months = p_term_months
+      where account_id = p_id;
+
+    if v_ld.recurring_rule_id is not null then
+      select (now() at time zone coalesce(p.timezone, 'Asia/Manila'))::date
+        into v_today from public.profiles p where p.id = p_user_id;
+      v_today := coalesce(v_today, current_date);
+
+      if v_ld.payment_frequency is distinct from p_payment_frequency
+         or v_ld.next_due_date is distinct from p_next_due_date then
+        -- A new schedule starts at its next due date. One in the past would
+        -- make the generator back-fill overdue bills that were never due.
+        if p_next_due_date < v_today then
+          raise exception 'LOAN_NEXT_DUE_IN_PAST' using errcode = 'P0001';
+        end if;
+        delete from public.bills where id in (
+          select public.untouched_rule_bills(p_user_id, v_ld.recurring_rule_id, v_today));
+        update public.recurring_rules
+          set name = v_name || ' payment', amount = p_payment_amount,
+              frequency = p_payment_frequency, interval_count = 1,
+              day_of_month = null, day_of_week = null,
+              start_date = p_next_due_date, next_occurrence_date = p_next_due_date,
+              provider_name = v_inst, updated_at = now()
+          where id = v_ld.recurring_rule_id and user_id = p_user_id;
+      else
+        if v_ld.payment_amount is distinct from p_payment_amount then
+          update public.bills set amount = p_payment_amount
+            where id in (
+              select public.untouched_rule_bills(p_user_id, v_ld.recurring_rule_id, v_today));
+        end if;
+        update public.recurring_rules
+          set name = v_name || ' payment', amount = p_payment_amount,
+              provider_name = v_inst, updated_at = now()
+          where id = v_ld.recurring_rule_id and user_id = p_user_id;
+      end if;
+    end if;
+  end if;
+
+  update public.accounts set name = v_name, institution_name = v_inst where id = p_id;
+
+  insert into public.audit_logs
+    (actor_user_id, target_user_id, entity_type, entity_id, event_type,
+     before_data, after_data)
+  values
+    (p_user_id, p_user_id, 'account', p_id, 'account_updated',
+     jsonb_build_object('name', v_acc.name, 'institution', v_acc.institution_name,
+                        'payment_amount', v_ld.payment_amount::text,
+                        'payment_frequency', v_ld.payment_frequency,
+                        'next_due_date', v_ld.next_due_date),
+     jsonb_build_object('name', v_name, 'institution', v_inst,
+                        'payment_amount', p_payment_amount::numeric(18,2)::text,
+                        'payment_frequency', p_payment_frequency,
+                        'next_due_date', p_next_due_date));
+end;
+$$;
+
+revoke all on function public.update_account_details from public, anon, authenticated;
+grant execute on function public.update_account_details to service_role;

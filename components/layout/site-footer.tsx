@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { BRAND } from '@/lib/constants/brand';
 import { footerRoutes } from '@/lib/seo/routes';
+import { ThemeToggle } from '@/components/ui/theme-toggle';
 
 /**
  * §11, §36 — footer navigation from the route registry.
@@ -34,6 +35,10 @@ export function SiteFooter() {
             </Link>
           ))}
         </nav>
+        {/* The header shows the theme toggle from `sm` up; on a phone it is here. */}
+        <div className="sm:hidden">
+          <ThemeToggle />
+        </div>
       </div>
     </footer>
   );

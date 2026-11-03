@@ -320,6 +320,47 @@ try {
       await scalar('select count(*)::int from public.transactions where user_id=$1', [c]),
       before + 1,
     );
+    // HP-006: the same key with a different payload is refused, not replayed;
+    // distinct keys with the same payload are two real entries; and another
+    // user cannot reuse or read back someone else's key.
+    await assert.rejects(
+      db.query(
+        "select public.create_transaction_idempotent($1,$2,'income',6,'PHP','2026-09-23',null,$3)",
+        [c, treq, acct],
+      ),
+      /REQUEST_ALREADY_USED|MISMATCH/,
+    );
+    // Dated outside September so the analytics check below still sees one.
+    const t2 = await scalar(
+      "select public.create_transaction_idempotent($1,$2,'income',5,'PHP','2026-10-23',null,$3)",
+      [c, randomUUID(), acct],
+    );
+    assert.notEqual(t2, t1);
+    assert.equal(
+      await scalar('select count(*)::int from public.transactions where user_id=$1', [c]),
+      before + 2,
+    );
+    const balanceOf = () =>
+      scalar('select current_balance::text from public.accounts where id=$1', [acct]);
+    const settled = await balanceOf();
+    await assert.rejects(
+      db.query(
+        "select public.create_transaction_idempotent($1,$2,'income',5,'PHP','2026-09-23',null,$3)",
+        [a, treq, acct],
+      ),
+    );
+    assert.equal(await balanceOf(), settled);
+    // HP-007: PGlite has one connection, so the race cannot run here. Pin
+    // the fix instead: the account lock is taken before the balance is
+    // derived, so the derivation sees any writer that held the lock.
+    const recalc = await scalar(
+      "select prosrc from pg_proc where proname='recalculate_account_balance'",
+    );
+    assert.ok(
+      recalc.indexOf('for update') > -1 &&
+        recalc.indexOf('for update') < recalc.indexOf('derive_account_balance'),
+      'recalculate_account_balance must lock before it derives',
+    );
     console.log(
       'PASS: idempotent account/transaction creation replays once and rejects mismatches',
     );
@@ -1129,6 +1170,75 @@ try {
     console.log('PASS: transactions, obligations and accounts can be edited safely');
   }
   {
+    // HP-004: the largest amount the schemas accept round-trips exactly, and
+    // one cent more is refused by the column, not rounded.
+    const p = randomUUID();
+    await db.query("insert into auth.users(id,email) values($1,'max-p@example.test')", [
+      p,
+    ]);
+    const big = await scalar(
+      "insert into public.bills(user_id,provider_name,amount,currency_code,due_date) values($1,'Max',$2,'PHP','2024-02-29') returning amount::text",
+      [p, '9999999999999999.99'],
+    );
+    assert.equal(big, '9999999999999999.99');
+    await assert.rejects(
+      db.query(
+        "insert into public.bills(user_id,provider_name,amount,currency_code,due_date) values($1,'Over',$2,'PHP','2026-01-01')",
+        [p, '10000000000000000.00'],
+      ),
+      /numeric field overflow/,
+    );
+    await assert.rejects(
+      db.query(
+        "insert into public.bills(user_id,provider_name,amount,currency_code,due_date) values($1,'Leap',1,'PHP','2023-02-29')",
+        [p],
+      ),
+      /date/,
+    );
+    console.log('PASS: money and date limits match the schemas at the column');
+  }
+  {
+    // Deleting a document takes its extraction and links with it, and leaves
+    // the records saved from it.
+    const d = randomUUID();
+    await db.query("insert into auth.users(id,email) values($1,'doc-d@example.test')", [
+      d,
+    ]);
+    const doc = await scalar(
+      "insert into public.documents(user_id,document_type) values($1,'receipt') returning id",
+      [d],
+    );
+    const saved = await scalar(
+      "insert into public.bills(user_id,provider_name,amount,currency_code,due_date) values($1,'From receipt',5,'PHP','2026-11-20') returning id",
+      [d],
+    );
+    await db.query(
+      "insert into public.document_links(user_id,document_id,entity_type,entity_id) values($1,$2,'bill',$3)",
+      [d, doc, saved],
+    );
+    await db.query(
+      'insert into public.extraction_results(user_id,document_id) values($1,$2)',
+      [d, doc],
+    );
+    await db.query('delete from public.documents where id=$1', [doc]);
+    for (const table of ['document_links', 'extraction_results']) {
+      assert.equal(
+        await scalar(`select count(*)::int from public.${table} where document_id=$1`, [
+          doc,
+        ]),
+        0,
+        table,
+      );
+    }
+    assert.equal(
+      await scalar('select count(*)::int from public.bills where id=$1', [saved]),
+      1,
+    );
+    console.log(
+      'PASS: deleting a document cascades its extraction and links, not its records',
+    );
+  }
+  {
     // HP-005: integrity findings carry money as text, not a rounded number.
     const z = randomUUID();
     await db.query("insert into auth.users(id,email) values($1,'int-z@example.test')", [
@@ -1161,6 +1271,44 @@ try {
       false,
     );
     console.log('PASS: integrity findings and obligation reads carry money as text');
+  }
+  {
+    // HP-038: the first edit of a loan that predates loan_details creates its
+    // details and payment rule, instead of changing nothing.
+    const l = randomUUID();
+    await db.query(
+      "insert into auth.users(id,email) values($1,'legacy-l@example.test')",
+      [l],
+    );
+    const legacy = await scalar(
+      "select public.create_account($1,'Old loan','loan','liability','PHP',3000)",
+      [l],
+    );
+    assert.equal(
+      await scalar('select count(*)::int from public.loan_details where account_id=$1', [
+        legacy,
+      ]),
+      0,
+    );
+    await db.query(
+      "select public.update_account_details($1,$2,'Old loan','Bank',300,'monthly',current_date+7,null,null,null)",
+      [l, legacy],
+    );
+    assert.equal(
+      await scalar(
+        'select payment_amount::text from public.loan_details where account_id=$1',
+        [legacy],
+      ),
+      '300.00',
+    );
+    assert.equal(
+      await scalar(
+        "select count(*)::int from public.recurring_rules r join public.loan_details d on d.recurring_rule_id=r.id where d.account_id=$1 and r.rule_type='bill' and r.amount=300",
+        [legacy],
+      ),
+      1,
+    );
+    console.log('PASS: editing a legacy loan creates its details and payment rule');
   }
   {
     // HP-034: edits cannot misfile an entry, move a linked entry's amount, or
@@ -1348,6 +1496,109 @@ try {
       false,
     );
     console.log('PASS: document storage usage is per user and service-only');
+  }
+  {
+    // HP-008: behavioural isolation as a signed-in browser. Two users each
+    // hold a loan with details and a bank account with details. Signed in as
+    // one, every user-owned table shows only that user's rows; the other's
+    // ids read as nothing; and claiming another user's role in the JWT, or no
+    // session at all, changes nothing.
+    const [x, y] = [randomUUID(), randomUUID()];
+    await db.query(
+      "insert into auth.users(id,email) values($1,'iso-x@example.test'),($2,'iso-y@example.test')",
+      [x, y],
+    );
+    const seed = async (u) => {
+      const loan = await scalar(
+        "select public.create_account($1,'Loan','loan','liability','PHP',1000)",
+        [u],
+      );
+      await db.query(
+        "insert into public.loan_details(account_id,user_id,payment_amount,payment_frequency,next_due_date) values($1,$2,100,'monthly','2026-12-01')",
+        [loan, u],
+      );
+      const bank = await scalar(
+        "select public.create_account($1,'Bank','bank','asset','PHP',50)",
+        [u],
+      );
+      await db.query("select public.upsert_bank_details($1,$2,'4321','savings')", [
+        u,
+        bank,
+      ]);
+      return { loan, bank };
+    };
+    await seed(x);
+    const theirs = await seed(y);
+
+    // HP-038: the export carries loan terms and bank extras, money as text.
+    await db.query("select set_config('request.jwt.claim.sub',$1,false)", [x]);
+    await db.exec('set role authenticated');
+    const exported = await scalar('select public.export_financial_snapshot()');
+    await db.exec('reset role');
+    assert.equal(exported.loan_details.length, 1);
+    assert.equal(exported.loan_details[0].payment_amount, '100.00');
+    assert.deepEqual(
+      exported.account_details.map((d) => [d.last4, d.kind]),
+      [['4321', 'savings']],
+    );
+
+    const owned = (
+      await db.query(
+        `select c.table_name from information_schema.columns c
+         join information_schema.tables t on t.table_schema=c.table_schema and t.table_name=c.table_name
+         where c.table_schema='public' and c.column_name='user_id' and t.table_type='BASE TABLE'
+         order by 1`,
+      )
+    ).rows.map((r) => r.table_name);
+    assert.ok(owned.includes('loan_details') && owned.includes('account_details'));
+
+    await db.query("select set_config('request.jwt.claim.sub',$1,false)", [x]);
+    await db.exec('set role authenticated');
+    try {
+      for (const table of owned) {
+        const foreign = await scalar(
+          `select count(*)::int from public.${table} where user_id <> $1`,
+          [x],
+        ).catch((error) => {
+          // A table the browser cannot read at all is isolated too.
+          if (/permission denied/.test(error.message)) return 0;
+          throw error;
+        });
+        assert.equal(foreign, 0, `${table} shows another user's rows`);
+      }
+      for (const [table, key] of [
+        ['accounts', 'id'],
+        ['loan_details', 'account_id'],
+        ['account_details', 'account_id'],
+      ]) {
+        for (const id of [theirs.loan, theirs.bank]) {
+          assert.equal(
+            await scalar(`select count(*)::int from public.${table} where ${key}=$1`, [
+              id,
+            ]),
+            0,
+            `${table} returns a foreign id`,
+          );
+        }
+      }
+      await db.query("select set_config('request.jwt.claims',$1,false)", [
+        JSON.stringify({ sub: x, role: 'service_role' }),
+      ]);
+      assert.equal(
+        await scalar('select count(*)::int from public.accounts where user_id=$1', [y]),
+        0,
+        'a role claim does not lift RLS',
+      );
+      await db.query("select set_config('request.jwt.claim.sub','',false)");
+      assert.equal(await scalar('select count(*)::int from public.accounts'), 0);
+    } finally {
+      await db.exec('reset role');
+      await db.query("select set_config('request.jwt.claims','',false)");
+      await db.query("select set_config('request.jwt.claim.sub','',false)");
+    }
+    console.log(
+      'PASS: signed-in users see only their own rows in every user-owned table',
+    );
   }
   {
     // Browser roles may only read: no write privilege on any public table or

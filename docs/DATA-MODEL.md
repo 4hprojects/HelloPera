@@ -176,6 +176,23 @@ transaction_tags     transaction_id, tag_id   (composite PK)
 
 ---
 
+### Balance read contract
+
+`accounts.current_balance` is a cache of `derive_account_balance(account)`, the
+sum over confirmed, non-voided transactions. Every write that changes a balance
+calls `recalculate_account_balance`, which locks the account row before deriving
+(HP-007). A concurrent insert and void therefore serialise on the account, and
+the second derivation sees the first one's commit. Reads of `current_balance`
+are as of the last committed write. `check_financial_integrity` reports any
+account where the cache and the derivation disagree.
+
+Idempotent writes (`create_transaction_idempotent`, `create_account_idempotent`,
+`record_obligation_payment`) replay the first result for the same request id.
+They refuse the same id with a different payload or from another user, and they
+treat distinct ids as distinct entries.
+
+---
+
 ## Phase 03 — Obligations
 
 Shared pattern: an obligation holds a total; link tables hold `amount_applied`
@@ -267,6 +284,18 @@ Object paths begin with the owner's uuid:
 `<user_uuid>/<year>/<month>/<document_uuid>/display.webp`
 
 `retention_status` governs whether OCR can be retried — see Phase 05.
+
+**Access.** Files are never public. `/api/documents/<id>/<rendition>` checks the
+session, then redirects to a signed URL that lives 120 seconds
+(`SIGNED_URL_TTL_SECONDS` in `services/storage.service.ts`). A URL is minted only
+when the document's `user_id` is the caller. Role plays no part, so an admin gets
+the same 404 as anyone else. Every response is `private, no-store`. Uploads are
+staged under `incoming/<user_uuid>/<uuid>` and moved into place on finalise.
+
+**Quota and deletion.** `user_storage_bytes(user)` sums `storage.objects` sizes
+under both prefixes, and uploads stop at 1 GB. Deleting a document removes its
+folder's files, then the row. `document_links`, `ocr_jobs`, `ocr_results` and
+`extraction_results` cascade with it.
 
 Index: `(user_id)`, `(user_id, content_hash)`, `(created_at)`, `(processing_status)`.
 

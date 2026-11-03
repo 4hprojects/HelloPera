@@ -6,8 +6,9 @@ import { log } from '@/lib/log';
 import type { ActionState } from '@/app/actions/auth';
 import { MAX_UPLOAD_BYTES } from '@/lib/documents/validation';
 import { enforceRateLimit, RateLimitError } from '@/services/rate-limit.service';
+import { recordAuditEvent } from '@/lib/auth/audit';
 import {
-  archiveDocument,
+  deleteDocument,
   finalizeUpload,
   prepareUpload,
   UploadError,
@@ -93,11 +94,38 @@ export async function finalizeUploadAction(input: {
   }
 }
 
-export async function archiveDocumentAction(formData: FormData): Promise<void> {
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export type DeleteDocumentState = { error?: string };
+
+/** Delete a document for good, freeing its share of the storage quota. */
+export async function deleteDocumentAction(
+  _prev: DeleteDocumentState,
+  formData: FormData,
+): Promise<DeleteDocumentState> {
   const { user } = await requireUser();
   const id = String(formData.get('id') ?? '');
-  const archived = String(formData.get('archived') ?? '') === 'true';
-  if (!id) return;
-  await archiveDocument(user.id, id, archived);
+  if (!UUID.test(id)) return { error: 'That document is unavailable.' };
+
+  let deleted: Awaited<ReturnType<typeof deleteDocument>>;
+  try {
+    deleted = await deleteDocument(user.id, id);
+  } catch (error) {
+    if (error instanceof UploadError) return { error: error.message };
+    log.error('document delete failed', {
+      message: error instanceof Error ? error.message : 'unknown',
+    });
+    return { error: 'We could not delete that document. Please try again.' };
+  }
+  if (!deleted) return { error: 'That document is unavailable.' };
+
+  await recordAuditEvent({
+    eventType: 'document_deleted',
+    actorUserId: user.id,
+    entityType: 'document',
+    entityId: id,
+    metadata: { document_type: deleted.documentType, bytes: deleted.bytes },
+  });
   revalidatePath('/documents');
+  return {};
 }

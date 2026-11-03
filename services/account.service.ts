@@ -66,7 +66,7 @@ export async function getAccount(id: string): Promise<Account | null> {
  *
  * Thin wrapper over `lib/analytics/position.summarisePositions`, which is
  * where the arithmetic lives so it can be unit-tested directly. (Service modules are
- * also testable: `vitest.config.ts` aliases `server-only` to its empty stub.)
+ * also testable: `vitest.config.mts` aliases `server-only` to its empty stub.)
  *
  * Note the default: this includes archived accounts, because the accounts
  * page shows them. The dashboard calls `summarisePositions` directly and
@@ -83,6 +83,13 @@ export function summarise(accounts: readonly Account[]) {
     { includeArchived: true },
   );
 }
+
+/**
+ * The account was created but its bank extras were not saved. The create is
+ * idempotent on the request id, so submitting the same form again replays it
+ * and retries only the details.
+ */
+export class BankDetailsNotSavedError extends Error {}
 
 /** Writes go through the RPC so the account and its opening entry are atomic. */
 export async function createAccount(
@@ -104,7 +111,13 @@ export async function createAccount(
   const id = data as string;
   if (input.type === 'bank' && (input.bankLast4 || input.bankKind)) {
     // Idempotent: a replayed create returns the same id and rewrites the same row.
-    await upsertBankDetails(userId, id, input.bankLast4, input.bankKind);
+    try {
+      await upsertBankDetails(userId, id, input.bankLast4, input.bankKind);
+    } catch (error) {
+      throw new BankDetailsNotSavedError(
+        error instanceof Error ? error.message : 'bank details failed',
+      );
+    }
   }
   return id;
 }

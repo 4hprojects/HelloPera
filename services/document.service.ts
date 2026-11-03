@@ -23,6 +23,7 @@ import {
   listStaleStagedObjects,
   moveObject,
   removeDocumentObjects,
+  removeObjectsUnder,
   storageUsedBytes,
   uploadObject,
 } from '@/services/storage.service';
@@ -156,7 +157,12 @@ export async function uploadDocument(params: {
   try {
     // The full-quality source is retained for Phase 05 OCR and its retries.
     if (stagedPath) await moveObject(stagedPath, originalPath);
-    else await uploadObject({ path: originalPath, body: bytes, contentType: validation.type });
+    else
+      await uploadObject({
+        path: originalPath,
+        body: bytes,
+        contentType: validation.type,
+      });
     uploaded.push(originalPath);
 
     if (validation.isPdf) {
@@ -237,7 +243,7 @@ export async function uploadDocument(params: {
   }
 }
 
-export const STORAGE_FULL_MESSAGE = `Your document storage is full (${MAX_STORAGE_BYTES / 1024 / 1024 / 1024} GB). Contact support to make room.`;
+export const STORAGE_FULL_MESSAGE = `Your document storage is full (${MAX_STORAGE_BYTES / 1024 / 1024 / 1024} GB). Delete documents you no longer need to make room.`;
 
 /**
  * Step one of a direct upload: where the browser should send the file.
@@ -331,7 +337,8 @@ export async function shrinkOriginal(params: {
   jpeg: Uint8Array;
 }): Promise<ShrinkOutcome> {
   const { documentId, originalPath, originalByteLength, jpeg } = params;
-  if (jpeg.byteLength > originalByteLength * (1 - SHRINK_MIN_SAVING)) return 'not_worth_it';
+  if (jpeg.byteLength > originalByteLength * (1 - SHRINK_MIN_SAVING))
+    return 'not_worth_it';
 
   const newPath = `${originalPath.slice(0, originalPath.lastIndexOf('/'))}/ocr.jpg`;
   if (newPath === originalPath) return 'not_worth_it';
@@ -376,6 +383,9 @@ const UNREAD_SHRINK_AFTER_DAYS = 7;
 const STAGED_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 const SWEEP_BATCH = 20;
 
+/** A failed shrink is retried after this, not on every run (HP-038). */
+const SHRINK_RETRY_AFTER_DAYS = 7;
+
 /**
  * Scheduled storage housekeeping, run from `/api/scheduler`.
  *
@@ -394,6 +404,7 @@ export async function sweepDocumentStorage(): Promise<{
 }> {
   const admin = createAdminClient();
   const cutoff = new Date(Date.now() - UNREAD_SHRINK_AFTER_DAYS * 86_400_000);
+  const retryBefore = new Date(Date.now() - SHRINK_RETRY_AFTER_DAYS * 86_400_000);
 
   const { data: rows, error } = await admin
     .from('documents')
@@ -403,12 +414,23 @@ export async function sweepDocumentStorage(): Promise<{
     .in('original_mime_type', ['image/jpeg', 'image/png', 'image/webp'])
     .not('original_path', 'is', null)
     .lt('created_at', cutoff.toISOString())
+    .or(`shrink_failed_at.is.null,shrink_failed_at.lt.${retryBefore.toISOString()}`)
     .order('created_at', { ascending: true })
     .limit(SWEEP_BATCH)
     .returns<Array<{ id: string; original_path: string }>>();
   if (error) throw new Error(`Could not load documents to shrink: ${error.code}`);
 
   let shrunk = 0;
+  // Stamped so a file that cannot be shrunk leaves the oldest-first batch
+  // instead of holding a place in it on every run.
+  const markFailed = async (id: string) => {
+    const { error: markError } = await admin
+      .from('documents')
+      .update({ shrink_failed_at: new Date().toISOString() })
+      .eq('id', id);
+    if (markError)
+      log.warn('document sweep: could not mark failure', { document_id: id });
+  };
   for (const row of rows ?? []) {
     try {
       const bytes = await downloadObject(row.original_path);
@@ -420,6 +442,7 @@ export async function sweepDocumentStorage(): Promise<{
         jpeg,
       });
       if (outcome === 'shrunk') shrunk += 1;
+      else if (outcome === 'failed') await markFailed(row.id);
       // Already small: mark it so the sweep stops picking it up. The stored
       // file is unchanged, and it is no larger than the reader's copy.
       else if (outcome === 'not_worth_it')
@@ -431,6 +454,7 @@ export async function sweepDocumentStorage(): Promise<{
           .eq('original_path', row.original_path);
     } catch {
       log.warn('document sweep: could not shrink', { document_id: row.id });
+      await markFailed(row.id);
     }
   }
 
@@ -440,12 +464,54 @@ export async function sweepDocumentStorage(): Promise<{
   return { shrunk, staleUploadsRemoved: stale.length };
 }
 
-export async function archiveDocument(userId: string, id: string, archived: boolean) {
+/**
+ * Delete a document and every file stored for it.
+ *
+ * The files go first. If that fails, nothing changes and the user can try
+ * again. If the row went first, a failed removal would leave files counting
+ * against the quota with nothing left to delete them from. OCR results,
+ * extractions and record links cascade with the row. Records already saved
+ * from the document stay: they are the user's ledger, not the file.
+ *
+ * Returns null when there is no such document for this user.
+ */
+export async function deleteDocument(
+  userId: string,
+  id: string,
+): Promise<{ documentType: string; bytes: number } | null> {
   const admin = createAdminClient();
-  const { error } = await admin
+  const { data: row, error } = await admin
     .from('documents')
-    .update({ is_archived: archived })
+    .select(
+      'original_path, display_path, thumbnail_path, document_type, original_size_bytes',
+    )
+    .eq('id', id)
+    .eq('user_id', userId)
+    .maybeSingle<{
+      original_path: string | null;
+      display_path: string | null;
+      thumbnail_path: string | null;
+      document_type: string;
+      original_size_bytes: number | null;
+    }>();
+  if (error) throw new Error(error.message);
+  if (!row) return null;
+
+  const paths = [row.original_path, row.display_path, row.thumbnail_path];
+  const anyPath = paths.find((p): p is string => Boolean(p));
+  try {
+    if (anyPath) {
+      await removeObjectsUnder(anyPath.slice(0, anyPath.lastIndexOf('/')), paths);
+    }
+  } catch {
+    throw new UploadError('We could not delete the file. Please try again.');
+  }
+
+  const { error: deleteError } = await admin
+    .from('documents')
+    .delete()
     .eq('id', id)
     .eq('user_id', userId);
-  if (error) throw new Error(error.message);
+  if (deleteError) throw new Error(deleteError.message);
+  return { documentType: row.document_type, bytes: Number(row.original_size_bytes ?? 0) };
 }

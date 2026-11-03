@@ -72,10 +72,16 @@ export async function discardExtractionAction(formData: FormData): Promise<void>
   if (!extractionId) return;
 
   const admin = createAdminClient();
-  await admin.rpc('discard_extraction', {
+  const { error } = await admin.rpc('discard_extraction', {
     p_user_id: user.id,
     p_extraction_id: extractionId,
   });
+  // This action returns void, so the failure goes to the error boundary. A
+  // silent return would show the drafts as discarded until the next reload.
+  if (error) {
+    log.error('discard extraction failed', { code: error.code });
+    throw new Error('We could not discard these drafts. Please try again.');
+  }
 
   revalidatePath(`/documents/${documentId}/review`);
   revalidatePath('/documents');

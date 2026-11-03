@@ -105,6 +105,10 @@ export default function PrivacyPage() {
           Images are stripped of embedded metadata, including location data, before they
           are stored.
         </P>
+        <P>
+          You can delete a document at any time. Its files are removed for good, and the
+          records you saved from it stay.
+        </P>
       </Section>
 
       <Section title="Advertising">
@@ -149,9 +153,9 @@ export default function PrivacyPage() {
       <Section title="Getting your data back">
         <P>
           You can export everything at any time from your settings, as CSV or JSON. The
-          export includes your accounts, transactions, bills, receivables, expected
-          income, categories, recurring rules, occurrence states, payment links and the
-          details of your documents.
+          export includes your accounts, loan terms and bank account details,
+          transactions, bills, receivables, expected income, categories, recurring rules,
+          occurrence states, payment links and the details of your documents.
         </P>
         <P>
           The files you uploaded are not inside the export — download those from the

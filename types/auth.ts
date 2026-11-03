@@ -112,9 +112,13 @@ export const ADMIN_AUDIT_EVENTS = [
 ] as const;
 export type AdminAuditEvent = (typeof ADMIN_AUDIT_EVENTS)[number] | 'role_changed';
 
+/** Document events. Metadata carries the type and size, never the file name. */
+export const DOCUMENT_AUDIT_EVENTS = ['document_deleted'] as const;
+export type DocumentAuditEvent = (typeof DOCUMENT_AUDIT_EVENTS)[number];
+
 /** Everything `recordAuditEvent` will accept. */
 export type AnyAuditEvent =
-  AuditEvent | RecurringAuditEvent | AiAuditEvent | AdminAuditEvent;
+  AuditEvent | RecurringAuditEvent | AiAuditEvent | AdminAuditEvent | DocumentAuditEvent;
 
 /** Which domain a row belongs to — the `entity_type` column. */
 export const AUDIT_ENTITY_TYPES = [
@@ -123,5 +127,6 @@ export const AUDIT_ENTITY_TYPES = [
   'expected_event',
   'ai',
   'admin',
+  'document',
 ] as const;
 export type AuditEntityType = (typeof AUDIT_ENTITY_TYPES)[number];

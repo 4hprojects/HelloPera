@@ -63,6 +63,13 @@ Set these HelloDeploy environment entries separately for each project:
 | `NEXT_PUBLIC_APP_URL` | Exact HTTPS origin above; build and runtime |
 | `NEXT_PUBLIC_APP_NAME` | `HelloPera`; build and runtime |
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | That environment's Turnstile site key; build and runtime. Set it exactly when Supabase CAPTCHA is on |
+
+**Turnstile on staging.** The browser suites sign in through the real form, and
+a real widget would block them. Staging uses Cloudflare's always-pass test pair:
+site key `1x00000000000000000000AA` in HelloDeploy, and secret
+`1x0000000000000000000000000000000AA` in the staging Supabase project's CAPTCHA
+setting. Production uses the real pair. Never use the test pair in production:
+it passes every visitor.
 | `SUPABASE_SECRET_KEY` | That environment's privileged key; runtime only |
 | `HOSTNAME` | `0.0.0.0` (platform also enforces this for Next.js) |
 
@@ -70,6 +77,24 @@ Leave optional provider settings absent. Changing public configuration requires 
 new build; restarting an existing image cannot change its browser configuration.
 Runtime secrets can rotate on redeploy; rollback uses current runtime secrets and
 the old image's public snapshot. Keep database changes backward compatible.
+
+### Origin lock and client IP (HP-015)
+
+Rate limits key unauthenticated requests by client IP, read from
+`CF-Connecting-IP` behind Cloudflare. A request that reaches the origin directly,
+not through Cloudflare, can set that header to any value and get a fresh limit
+on every request. To close that:
+
+1. Allow inbound 80/443 on the origin only from
+   [Cloudflare's published ranges](https://www.cloudflare.com/ips/), in the host
+   firewall or the provider's security group. Alternatively, use Cloudflare
+   Tunnel or Authenticated Origin Pulls.
+2. Check it from outside Cloudflare: `curl -sk --resolve hellopera.online:443:<origin-ip> https://hellopera.online/api/health` must fail to connect.
+3. Then set `TRUSTED_CLIENT_IP_HEADER=cf-connecting-ip` (runtime). The app then
+   trusts only that header and ignores `X-Forwarded-For` and `X-Real-IP`.
+
+Until step 2 passes, leave the variable unset. The default chain still prefers
+`CF-Connecting-IP`.
 
 ## 3. GitHub configuration
 

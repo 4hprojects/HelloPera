@@ -358,7 +358,12 @@ export async function listExtractionSummaries(
       ((row.corrected_data as { saved?: Record<string, unknown> } | null)?.saved ??
         {}) as Record<string, unknown>,
     ).length;
-    out.set(row.document_id, { documentId: row.document_id, status: row.status, drafts, saved });
+    out.set(row.document_id, {
+      documentId: row.document_id,
+      status: row.status,
+      drafts,
+      saved,
+    });
   }
   return out;
 }

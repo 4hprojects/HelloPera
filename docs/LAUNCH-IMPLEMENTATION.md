@@ -1,5 +1,12 @@
 # Deployment readiness record — 25 September 2026
 
+> **Current status, 3 November 2026.** The figures below are from 25 September
+> and are kept as history. Now: 55 migrations. On the stacked fix branches
+> (PRs #2 to #4): 1,015 unit tests, the PGlite DB suite over all migrations, and
+> 15 public browser checks pass. The production dependency audit is clean.
+> Nothing has run against a hosted database since, and HP-016 to HP-019 remain
+> open. Task status lives in [../to do/09-audit-2026-11-03.md](<../to do/09-audit-2026-11-03.md>).
+
 **Public launch: not yet verified.** Historical record; current task status and evidence are in [../to do/README.md](<../to do/README.md>). This record supersedes historical phase status
 and the previous checklist. Deployment steps and exact settings live in
 [DEPLOYMENT.md](DEPLOYMENT.md).

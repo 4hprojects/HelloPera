@@ -8,9 +8,8 @@ import { requireUser } from '@/lib/auth/guards';
 import { listDocuments } from '@/services/document.service';
 import { listExtractionSummaries } from '@/services/ocr.service';
 import { isFlagEnabled } from '@/services/plan.service';
-import { Button } from '@/components/ui/button';
-import { archiveDocumentAction } from '@/app/actions/documents';
 import { UploadForm } from './upload-form';
+import { DeleteDocument } from './delete-document';
 import { ReadAndDraft } from './read-and-draft';
 
 export const metadata: Metadata = { title: 'Documents' };
@@ -151,6 +150,9 @@ export default async function DocumentsPage({
                     ) : (
                       <Badge tone="info">Processing</Badge>
                     )}
+                    {doc.processing_status !== 'failed' ? (
+                      <DeleteDocument documentId={doc.id} label="Delete" />
+                    ) : null}
                   </div>
 
                   {doc.processing_status === 'failed' ? (
@@ -168,13 +170,7 @@ export default async function DocumentsPage({
                         >
                           Upload again as {TYPE_LABELS[doc.document_type] ?? 'document'}
                         </Link>
-                        <form action={archiveDocumentAction}>
-                          <input type="hidden" name="id" value={doc.id} />
-                          <input type="hidden" name="archived" value="true" />
-                          <Button type="submit" variant="secondary">
-                            Remove failed entry
-                          </Button>
-                        </form>
+                        <DeleteDocument documentId={doc.id} label="Remove failed entry" />
                       </div>
                     </div>
                   ) : null}

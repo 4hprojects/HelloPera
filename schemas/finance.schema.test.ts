@@ -43,23 +43,39 @@ describe('createAccountSchema — loans', () => {
   });
 
   it('requires an amount owed above zero', () => {
-    expect(fields(createAccountSchema.safeParse({ ...base, openingBalance: '0' }))).toContain(
-      'openingBalance',
-    );
+    expect(
+      fields(createAccountSchema.safeParse({ ...base, openingBalance: '0' })),
+    ).toContain('openingBalance');
   });
 
   it('rejects an original amount below what is owed', () => {
-    expect(fields(createAccountSchema.safeParse({ ...base, principal: '1000' }))).toContain(
-      'principal',
-    );
+    expect(
+      fields(createAccountSchema.safeParse({ ...base, principal: '1000' })),
+    ).toContain('principal');
   });
 
   it('rejects out-of-range rate and term', () => {
-    expect(fields(createAccountSchema.safeParse({ ...base, interestRateApr: '101' }))).toContain(
-      'interestRateApr',
-    );
+    expect(
+      fields(createAccountSchema.safeParse({ ...base, interestRateApr: '101' })),
+    ).toContain('interestRateApr');
     expect(fields(createAccountSchema.safeParse({ ...base, termMonths: '0' }))).toContain(
       'termMonths',
+    );
+  });
+
+  it.each(['1e1', '0x10', '5.555', '-1', '100.01', 'abc'])(
+    'rejects the rate %j rather than coercing it',
+    (rate) => {
+      expect(
+        fields(createAccountSchema.safeParse({ ...base, interestRateApr: rate })),
+      ).toContain('interestRateApr');
+    },
+  );
+
+  it('keeps an accepted rate as the exact string', () => {
+    const r = createAccountSchema.safeParse({ ...base, interestRateApr: ' 7.25 ' });
+    expect(r.success && r.data.type === 'loan' ? r.data.interestRateApr : null).toBe(
+      '7.25',
     );
   });
 

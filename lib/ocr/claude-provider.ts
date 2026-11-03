@@ -23,7 +23,11 @@ import { ProviderError } from '@/lib/ocr/provider';
  * that matters is that neither one may write a balance.
  */
 
-const MODEL = 'claude-opus-5';
+/**
+ * Overridable by environment, like the assistant's models (`lib/ai/model.ts`),
+ * so changing the reader for cost or accuracy is a deployment decision.
+ */
+const MODEL = process.env.OCR_MODEL || 'claude-opus-5';
 
 const SYSTEM_PROMPT = `You read financial documents and return structured data.
 
