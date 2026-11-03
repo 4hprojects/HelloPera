@@ -61,21 +61,21 @@ const TABLES: Array<{ key: string; table: string; columns: string; orderBy: stri
     key: 'bills',
     table: 'bills',
     columns:
-      'id, provider_name, description, category_id, amount, currency_code, due_date, status, notes, created_at',
+      'id, provider_name, description, category_id, amount, currency_code, due_date, status, notes, installment_amount, installment_count, installments_prior, recurring_rule_id, created_at',
     orderBy: 'due_date',
   },
   {
     key: 'receivables',
     table: 'receivables',
     columns:
-      'id, party_name, description, amount, currency_code, due_date, status, notes, created_at',
+      'id, party_name, description, amount, currency_code, borrowed_date, due_date, status, notes, created_at',
     orderBy: 'created_at',
   },
   {
     key: 'expected_income',
     table: 'expected_income',
     columns:
-      'id, source_name, description, category_id, amount, currency_code, expected_date, status, notes, created_at',
+      'id, source_name, description, category_id, amount, currency_code, expected_date, status, notes, recurring_rule_id, created_at',
     orderBy: 'expected_date',
   },
   {
@@ -115,6 +115,19 @@ const TABLES: Array<{ key: string; table: string; columns: string; orderBy: stri
     table: 'expected_events',
     columns:
       'id, recurring_rule_id, event_type, name, amount, currency_code, scheduled_date, status, account_id, category_id, actual_transaction_id, include_in_forecast, detached_from_rule, source_entity_type, source_entity_id, created_at',
+    orderBy: 'created_at',
+  },
+  {
+    key: 'loan_details',
+    table: 'loan_details',
+    columns:
+      'account_id, principal, start_date, interest_rate_apr, term_months, payment_amount, payment_frequency, next_due_date, recurring_rule_id, created_at',
+    orderBy: 'created_at',
+  },
+  {
+    key: 'account_details',
+    table: 'account_details',
+    columns: 'account_id, last4, kind, created_at',
     orderBy: 'created_at',
   },
 ];

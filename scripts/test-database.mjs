@@ -1492,6 +1492,18 @@ try {
     await seed(x);
     const theirs = await seed(y);
 
+    // HP-038: the export carries loan terms and bank extras, money as text.
+    await db.query("select set_config('request.jwt.claim.sub',$1,false)", [x]);
+    await db.exec('set role authenticated');
+    const exported = await scalar('select public.export_financial_snapshot()');
+    await db.exec('reset role');
+    assert.equal(exported.loan_details.length, 1);
+    assert.equal(exported.loan_details[0].payment_amount, '100.00');
+    assert.deepEqual(
+      exported.account_details.map((d) => [d.last4, d.kind]),
+      [['4321', 'savings']],
+    );
+
     const owned = (
       await db.query(
         `select c.table_name from information_schema.columns c
