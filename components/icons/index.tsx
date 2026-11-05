@@ -201,6 +201,14 @@ export function ChevronRightIcon(p: IconProps) {
   );
 }
 
+export function ChevronUpIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="m5.5 14.5 6.5-6.5 6.5 6.5" />
+    </Svg>
+  );
+}
+
 export function ArrowRightIcon(p: IconProps) {
   return (
     <Svg {...p}>

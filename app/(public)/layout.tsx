@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { SiteFooter } from '@/components/layout/site-footer';
 import { SiteHeader } from '@/components/layout/site-header';
 import { ConsentBanner } from '@/components/consent/consent-banner';
+import { BackToTop } from '@/components/navigation/back-to-top';
 
 /**
  * PHASE-10 §33 — the public site is the ONLY part of HelloPera that is
@@ -35,11 +36,14 @@ export default function PublicLayout({ children }: { children: React.ReactNode }
     <div className="flex min-h-dvh flex-col">
       <SiteHeader />
 
-      <main id="main" className="flex-1">
+      {/* tabIndex -1: focus target for the skip link and Back to top. */}
+      <main id="main" tabIndex={-1} className="flex-1">
         {children}
       </main>
 
       <SiteFooter />
+
+      <BackToTop />
 
       {/*
         §49 — public site only. The authenticated app uses only the session
