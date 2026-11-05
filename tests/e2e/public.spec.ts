@@ -75,3 +75,32 @@ test('dark theme remains readable and navigation targets are touch-sized', async
   for (const target of await targets.all())
     expect((await target.boundingBox())?.height).toBeGreaterThanOrEqual(44);
 });
+
+for (const reducedMotion of ['no-preference', 'reduce'] as const) {
+  test(`back to top appears after scrolling and returns to the top (${reducedMotion})`, async ({
+    page,
+  }) => {
+    await page.emulateMedia({ reducedMotion });
+    // The home page is the longest at every viewport; /features fits on one
+    // desktop screen, where the button correctly never appears.
+    await page.goto('/');
+    const button = page.getByRole('button', { name: 'Back to top' });
+    await expect(button).toHaveCount(0);
+
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await expect(button).toBeVisible();
+
+    // Must not sit underneath the consent banner while it is open.
+    const banner = page.getByRole('region', { name: 'Cookie choices' });
+    if (await banner.isVisible()) {
+      const b = (await button.boundingBox())!;
+      const c = (await banner.boundingBox())!;
+      expect(b.y + b.height).toBeLessThanOrEqual(c.y);
+    }
+
+    await button.click();
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+    await expect(page.locator('#main')).toBeFocused();
+    await expect(button).toHaveCount(0);
+  });
+}

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import {
@@ -29,6 +29,24 @@ import {
  */
 export function ConsentBanner() {
   const [state, setState] = useState<ConsentState | null>(null);
+  const bannerRef = useRef<HTMLDivElement>(null);
+  const open = state !== null && !hasDecided(state);
+
+  // Publish the banner's height so fixed controls (Back to top) can sit above
+  // it instead of underneath. Cleared once the banner goes away.
+  useEffect(() => {
+    const el = bannerRef.current;
+    if (!open || !el) return;
+    const root = document.documentElement;
+    const observer = new ResizeObserver(() => {
+      root.style.setProperty('--hp-consent-h', `${el.offsetHeight}px`);
+    });
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty('--hp-consent-h');
+    };
+  }, [open]);
 
   useEffect(() => {
     let cancelled = false;
@@ -71,10 +89,11 @@ export function ConsentBanner() {
   }
 
   // Not yet read, or already answered.
-  if (!state || hasDecided(state)) return null;
+  if (!open) return null;
 
   return (
     <div
+      ref={bannerRef}
       role="region"
       aria-label="Cookie choices"
       className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface p-4 shadow-lg"
